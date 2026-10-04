@@ -1,5 +1,7 @@
 # Changelog
 
+English | [简体中文](CHANGELOG.zh-CN.md)
+
 Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/OpenInputLagPatch).
 
 Only changes that have been tested in-game and confirmed working are listed here, so this file
