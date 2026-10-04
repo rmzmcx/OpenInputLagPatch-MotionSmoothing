@@ -6,6 +6,18 @@
 
 只记录已经在游戏里实测确认可用的改动，因此本文件同时也是「哪些修改真正被验证过」的凭证。
 
+## 2026-10-05
+
+### 新增
+
+- **窗口模式：与 vpatch 相同的 `[Window]` 配置，并新增开机询问是否全屏**（`26b310a`）
+
+  `openinputlagpatch.ini` 现在带有 vpatch 的 `[Window]` 段：`AskWindowMode`、`enabled`、`X`、`Y`、`Width`、`Height`、`TitleBar`、`AlwaysOnTop`，含义与 `vpatch.ini` 相同。游戏处于窗口模式时会按这些设置移动与缩放窗口，并应用标题栏、窗口置顶。
+
+  开启 `AskWindowMode` 后，th06 到 th09.5 会在创建窗口之前询问是否以全屏启动，不必再去改游戏自己的显示设置。答案会写进游戏自己的「窗口模式」标志位——和 vpatch 的做法一样——而不是只强制 D3D 呈现参数：dgVoodoo2 配置成把独占全屏转成无边框窗口时（`AppControlledScreenMode = false`、`FullscreenAttributes = fake`）会忽略该请求，游戏自身设置仍是窗口模式的话，行为也依旧是窗口模式。
+
+  询问会在游戏创建单实例互斥体之后立刻弹出，这是 thprac 等工具仍能检测到游戏的最早时机；之后用游戏内菜单切换模式也不会被强制回去。只有 th06 到 th09.5 会询问，因为之后的作品自己就有该选项。
+
 ## 2026-10-04
 
 ### 修复
