@@ -81,6 +81,13 @@ void th6_install_patches() {
         BYTE patch[] = { 0x00, 0x00, 0x00, 0x00, 0x74 };
         patch_bytes(0x0041DC58, patch, sizeof(patch));
     }
+    if (Config::AlwaysBlt) {
+        // GameWindow::Render returns early when [this+8] (isAppActive) is 0, which stops
+        // rendering entirely once the window loses focus and freezes the picture.
+        // Turn that conditional jump into an unconditional one (same idea as vpatch's AlwaysBlt).
+        BYTE patch[] = { 0xEB, 0x07 }; // jne 004206F9 -> jmp 004206F9
+        patch_bytes(0x004206F0, patch, sizeof(patch));
+    }
 }
 
 FPSTarget th6_replay_callback() {

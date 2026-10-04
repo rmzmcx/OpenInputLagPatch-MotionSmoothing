@@ -15,6 +15,7 @@ BOOL Config::ShowOverlay = TRUE;
 BOOL Config::DebugConsole = FALSE;
 BOOL Config::DebugWait = FALSE;
 BOOL Config::FixInputGlitching = FALSE;
+BOOL Config::AlwaysBlt = TRUE;
 TouhouGame Config::GameOverride = TouhouGame::Unknown;
 
 // Helper macro for loading a specific setting value
@@ -41,6 +42,7 @@ bool Config::Load() {
 	LOAD_SETTING(DebugConsole);
 	LOAD_SETTING(DebugWait);
 	LOAD_SETTING(FixInputGlitching);
+	LOAD_SETTING(AlwaysBlt);
 	LOAD_SETTING(GameOverride);
 
 	// Validate options

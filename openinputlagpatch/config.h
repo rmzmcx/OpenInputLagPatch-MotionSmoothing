@@ -32,5 +32,9 @@ public:
 	static BOOL DebugConsole;
 	static BOOL DebugWait;
 	static BOOL FixInputGlitching;
+	// Keep rendering (and presenting) while the game window isn't active, so the picture
+	// doesn't freeze after alt-tabbing. Equivalent to vpatch's AlwaysBlt.
+	// Only implemented for th06 and th07.
+	static BOOL AlwaysBlt;
 	static TouhouGame GameOverride;
 };
