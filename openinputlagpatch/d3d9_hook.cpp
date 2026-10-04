@@ -269,22 +269,103 @@ IDirect3D9* WINAPI Direct3DCreate9_hook(UINT SDKVersion) {
 	return d3d9;
 }
 
+// Case-insensitive substring search (no extra includes needed)
+static bool contains_ci(const wchar_t* haystack, const wchar_t* needle) {
+	if (needle[0] == L'\0')
+		return true;
+	for (size_t start = 0; haystack[start] != L'\0'; start++) {
+		size_t i = 0;
+		for (; needle[i] != L'\0'; i++) {
+			wchar_t a = haystack[start + i];
+			wchar_t b = needle[i];
+			if (a == L'\0')
+				return false;
+			if (a >= L'A' && a <= L'Z')
+				a = (wchar_t)(a - L'A' + L'a');
+			if (b >= L'A' && b <= L'Z')
+				b = (wchar_t)(b - L'A' + L'a');
+			if (a != b)
+				break;
+		}
+		if (needle[i] == L'\0')
+			return true;
+	}
+	return false;
+}
+
+// True only if the loaded d3d8.dll really is dgVoodoo2.
+// We identify it by its version resource: dgVoodoo2's D3D8.dll reports
+// ProductName "dgVoodoo" and FileDescription "dgVoodoo <version> - Direct3D8".
+// This is a precise check on purpose - an unknown wrapper should still get the warning.
+static bool loaded_d3d8_is_dgvoodoo2() {
+	HMODULE mod = GetModuleHandleA("d3d8.dll");
+	if (mod == NULL)
+		return false;
+
+	wchar_t path[MAX_PATH] = {};
+	if (GetModuleFileNameW(mod, path, MAX_PATH) == 0)
+		return false;
+
+	DWORD handle = 0;
+	DWORD size = GetFileVersionInfoSizeW(path, &handle);
+	if (size == 0 || size > 4096)
+		return false;
+
+	BYTE buffer[4096];
+	if (!GetFileVersionInfoW(path, 0, size, buffer))
+		return false;
+
+	// Walk every language/codepage block and look at ProductName
+	struct LangAndCodePage {
+		WORD language;
+		WORD codePage;
+	} *translations = NULL;
+	UINT translations_size = 0;
+	if (!VerQueryValueW(buffer, L"\\VarFileInfo\\Translation", (LPVOID*)&translations, &translations_size))
+		return false;
+	if (translations == NULL || translations_size < sizeof(LangAndCodePage))
+		return false;
+
+	const UINT count = translations_size / sizeof(LangAndCodePage);
+	for (UINT i = 0; i < count; i++) {
+		wchar_t sub_block[128];
+		wsprintfW(sub_block, L"\\StringFileInfo\\%04x%04x\\ProductName", translations[i].language,
+		          translations[i].codePage);
+
+		wchar_t* product_name = NULL;
+		UINT product_name_size = 0;
+		if (VerQueryValueW(buffer, sub_block, (LPVOID*)&product_name, &product_name_size) && product_name != NULL &&
+		    product_name_size > 0) {
+			if (contains_ci(product_name, L"dgVoodoo"))
+				return true;
+		}
+	}
+	return false;
+}
+
 // Intercepts Direct3DCreate9 to Direct3DCreate9Ex
 void hook_d3d9() {
 	// Try to IAT hook Direct3DCreate9 from the main executable
 	if (!iat_hook(NULL, "d3d9.dll", "Direct3DCreate9", (void*)&Direct3DCreate9_hook)) {
 		// Try to IAT hook the D3D8 wrapper
 		if (!iat_hook(L"d3d8.dll", "d3d9.dll", "Direct3DCreate9", (void*)&Direct3DCreate9_hook)) {
-			// Okay, something went wrong
-			MessageBox(
-				NULL,
-				L"Couldn't hook Direct3DCreate9.\n"
-				L"This usually means you don't have a D3D8 wrapper installed or the one you have is incompatible.\n"
-				L"The game will now likely run much worse than it should because certain D3D9 functions can't be intercepted\n"
-				L"Please install d3d8to9 for best results.",
-				L"OpenInputLagPatch",
-				MB_ICONWARNING
-			);
+			// dgVoodoo2 translates D3D8 to D3D11 instead of D3D9, so there is no
+			// Direct3DCreate9 import to hook. It is a known-good wrapper though, so we only
+			// skip the D3D9Ex upgrade quietly instead of warning the user.
+			if (loaded_d3d8_is_dgvoodoo2()) {
+				printf("dgVoodoo2 detected - it doesn't go through d3d9.dll. Skipping D3D9Ex upgrade.\n");
+			} else {
+				// Okay, something went wrong
+				MessageBox(
+					NULL,
+					L"Couldn't hook Direct3DCreate9.\n"
+					L"This usually means you don't have a D3D8 wrapper installed or the one you have is incompatible.\n"
+					L"The game will now likely run much worse than it should because certain D3D9 functions can't be intercepted\n"
+					L"Please install d3d8to9 for best results.",
+					L"OpenInputLagPatch",
+					MB_ICONWARNING
+				);
+			}
 		}
 	}
 }
