@@ -34,7 +34,9 @@ int __fastcall th7_update_calc_chain_hook() {
 }
 
 int __fastcall th7_window_update_hook() {
-    if (!CWindowManager::Instance->activated) {
+    // Same as th06: the window update is what drives rendering, so with AlwaysBlt we must
+    // keep calling it even while the window isn't active.
+    if (!CWindowManager::Instance->activated && !Config::AlwaysBlt) {
         Sleep(16);
         return 0;
     }
@@ -66,6 +68,12 @@ void th7_install_patches() {
         // Fix input glitching
         BYTE patch[] = { 0x00, 0x00, 0x00, 0x00, 0x74 };
         patch_bytes(0x00430F03, patch, sizeof(patch));
+    }
+    if (Config::AlwaysBlt) {
+        // GameWindow::Render bails out when [this+8] is 0, freezing the picture once the
+        // window loses focus. Turn that conditional jump into an unconditional one.
+        BYTE patch[] = { 0xEB, 0x07 }; // jne 004346F9 -> jmp 004346F9
+        patch_bytes(0x004346F0, patch, sizeof(patch));
     }
 }
 
