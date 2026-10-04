@@ -48,7 +48,9 @@ int __fastcall th6_update_calc_chain_hook() {
 }
 
 int __fastcall th6_window_update_hook() {
-    if (!CWindowManager::Instance->activated) {
+    // Skipping the window update while the window isn't active saves CPU, but the window
+    // update is also what drives rendering, so with AlwaysBlt we have to keep calling it.
+    if (!CWindowManager::Instance->activated && !Config::AlwaysBlt) {
         Sleep(16);
         return 0;
     }
