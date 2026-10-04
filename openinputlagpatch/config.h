@@ -37,4 +37,20 @@ public:
 	// Only implemented for th06 and th07.
 	static BOOL AlwaysBlt;
 	static TouhouGame GameOverride;
+
+	// [Window] section - same idea as vpatch's window mode support
+	// Ask whether the game should run in fullscreen mode on boot, so the game's own
+	// fullscreen setting doesn't have to be edited
+	static BOOL AskWindowMode;
+	// Whether the settings below should be applied while the game runs in window mode
+	static BOOL WindowEnabled;
+	// Position and size of the game's window, in pixels. CW_USEDEFAULT (0x80000000) lets
+	// Windows pick the position, and a width or height of 0 keeps the game's own size
+	static UINT WindowX;
+	static UINT WindowY;
+	static UINT WindowWidth;
+	static UINT WindowHeight;
+	// Whether the window keeps its title bar, and whether it's always on top
+	static BOOL WindowTitleBar;
+	static BOOL WindowAlwaysOnTop;
 };

@@ -100,6 +100,43 @@ FixInputGlitching = 0
 ; CHANGING THIS WILL PROBABLY BREAK EVERYTHING. Only use this if you are 100% sure that the game's offsets are exactly the same!
 ; Default: -1
 GameOverride = -1
+
+[Window]
+
+; Asks whether the game should run in fullscreen mode on boot, so the game's own
+; fullscreen setting doesn't have to be changed.
+; Answering no makes the game run in window mode, answering yes makes it run in fullscreen
+; Only Touhou 6 to 9.5 are asked, because the later games have their own option for this
+; Default: 0
+AskWindowMode = 0
+
+; Whether the settings below are applied to the game's window
+; They only take effect while the game runs in window mode
+; Default: 0
+enabled = 0
+
+; Position of the top left corner of the window, in pixels
+; 2147483648 (0x80000000) lets Windows pick the position
+; Default: 2147483648
+X = 2147483648
+Y = 2147483648
+
+; Size of the window, in pixels
+; 0 keeps the size the game would normally use
+; Default: 640
+Width = 640
+
+; Default: 480
+Height = 480
+
+; Whether the window keeps its title bar
+; Default: 1
+TitleBar = 1
+
+; Whether the window is always on top of other windows
+; This can cover the taskbar while enabled
+; Default: 0
+AlwaysOnTop = 0
 ```
 
 # Technical details

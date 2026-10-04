@@ -32,6 +32,12 @@
     <ClCompile Include="d3d9_hook.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="d3d8_hook.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="window_mode.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="oilp_api.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -131,6 +137,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="d3d9_hook.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="d3d8_hook.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="window_mode.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="sha256.h">

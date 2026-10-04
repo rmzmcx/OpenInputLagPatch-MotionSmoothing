@@ -7,6 +7,7 @@
 #include "common.h"
 #include "config.h"
 #include "d3d9_overlay.h"
+#include "window_mode.h"
 
 static IDirect3D9* d3d9 = nullptr;
 static IDirect3DDevice9* d3d9_device = nullptr;
@@ -83,6 +84,16 @@ UINT get_target_refresh_rate(D3DPRESENT_PARAMETERS* present_params) {
 
 // Modifies presentation parameters to work properly with Direct3D9Ex
 void modify_presentation_parameters(D3DPRESENT_PARAMETERS* params) {
+	// Window mode: force the mode that was picked on boot, if the question is enabled
+	switch (WindowMode::GetEffectiveOverride()) {
+	case WindowMode::Override::Windowed:
+		params->Windowed = TRUE;
+		break;
+	case WindowMode::Override::Fullscreen:
+		params->Windowed = FALSE;
+		break;
+	}
+
 	params->PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
 	params->FullScreen_RefreshRateInHz = params->Windowed ? D3DPRESENT_RATE_DEFAULT : get_target_refresh_rate(params);
 	params->SwapEffect = D3DSWAPEFFECT_DISCARD;
@@ -148,6 +159,17 @@ HRESULT __stdcall Reset_hook(IDirect3DDevice9* self, D3DPRESENT_PARAMETERS* pPre
 	}
 
 	printf("Reset returned 0x%lx\n", ret);
+
+	// Window mode: the game may have switched between fullscreen and window mode, so the
+	// window has to be fixed up again
+	if (SUCCEEDED(ret)) {
+		D3DDEVICE_CREATION_PARAMETERS creation_params = {};
+		self->GetCreationParameters(&creation_params);
+		WindowMode::Apply(
+			pPresentationParameters->hDeviceWindow ? pPresentationParameters->hDeviceWindow : creation_params.hFocusWindow,
+			pPresentationParameters->Windowed
+		);
+	}
 
 	if (Config::ShowOverlay && SUCCEEDED(ret)) {
 		D3D9Overlay::Instance = new D3D9Overlay(d3d9_device, pPresentationParameters->BackBufferWidth, pPresentationParameters->BackBufferHeight);
@@ -244,12 +266,22 @@ HRESULT __stdcall CreateDevice_hook(IDirect3D9* self, UINT Adapter, D3DDEVTYPE D
 	D3D9Overlay::Instance = new D3D9Overlay(device, pPresentationParameters->BackBufferWidth, pPresentationParameters->BackBufferHeight);
 	d3d9_device = device;
 
+	// Window mode: the game's window already exists at this point, so it can be adjusted
+	WindowMode::Apply(
+		hFocusWindow ? hFocusWindow : pPresentationParameters->hDeviceWindow,
+		pPresentationParameters->Windowed
+	);
+
 	return 0;
 }
 
 // Upgrades IDirect3D9 to IDirect3D9Ex
 IDirect3D9* WINAPI Direct3DCreate9_hook(UINT SDKVersion) {
 	printf("Direct3DCreate9 intercepted!\n");
+
+	// Window mode: only a fallback for the games that get the window mode question - those
+	// are all D3D8 titles, so this normally does nothing
+	WindowMode::AskIfNeeded();
 
 	if (Config::D3D9Ex) {
 		auto create_ret = Direct3DCreate9Ex(D3D_SDK_VERSION, (IDirect3D9Ex**)&d3d9);

@@ -17,9 +17,19 @@ BOOL Config::DebugWait = FALSE;
 BOOL Config::FixInputGlitching = FALSE;
 BOOL Config::AlwaysBlt = TRUE;
 TouhouGame Config::GameOverride = TouhouGame::Unknown;
+BOOL Config::AskWindowMode = FALSE;
+BOOL Config::WindowEnabled = FALSE;
+UINT Config::WindowX = CW_USEDEFAULT;
+UINT Config::WindowY = CW_USEDEFAULT;
+UINT Config::WindowWidth = 640;
+UINT Config::WindowHeight = 480;
+BOOL Config::WindowTitleBar = TRUE;
+BOOL Config::WindowAlwaysOnTop = FALSE;
 
 // Helper macro for loading a specific setting value
 #define LOAD_SETTING(x) Config::x = (decltype(Config::x))GetPrivateProfileInt(TEXT("Option"), TEXT(#x), (int)Config::x, config_path)
+// Same as LOAD_SETTING, but for the [Window] section (the keys don't match the field names)
+#define LOAD_WINDOW_SETTING(x, key) Config::x = (decltype(Config::x))GetPrivateProfileInt(TEXT("Window"), TEXT(key), (int)Config::x, config_path)
 
 bool Config::Load() {
 	// Get the config file path
@@ -45,6 +55,16 @@ bool Config::Load() {
 	LOAD_SETTING(AlwaysBlt);
 	LOAD_SETTING(GameOverride);
 
+	// Load the [Window] section
+	LOAD_WINDOW_SETTING(AskWindowMode, "AskWindowMode");
+	LOAD_WINDOW_SETTING(WindowEnabled, "enabled");
+	LOAD_WINDOW_SETTING(WindowX, "X");
+	LOAD_WINDOW_SETTING(WindowY, "Y");
+	LOAD_WINDOW_SETTING(WindowWidth, "Width");
+	LOAD_WINDOW_SETTING(WindowHeight, "Height");
+	LOAD_WINDOW_SETTING(WindowTitleBar, "TitleBar");
+	LOAD_WINDOW_SETTING(WindowAlwaysOnTop, "AlwaysOnTop");
+
 	// Validate options
 	if (Config::GameFPS < 60)
 		Config::GameFPS = 60;
@@ -64,3 +84,4 @@ bool Config::Load() {
 }
 
 #undef LOAD_SETTING
+#undef LOAD_WINDOW_SETTING

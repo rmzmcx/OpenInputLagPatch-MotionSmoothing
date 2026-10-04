@@ -61,7 +61,7 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
-      <AdditionalDependencies>shlwapi.lib;d3d9.lib;winmm.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>shlwapi.lib;d3d9.lib;winmm.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <MinimumRequiredVersion>5.01</MinimumRequiredVersion>
       <ModuleDefinitionFile>openinputlagpatch.def</ModuleDefinitionFile>
     </Link>
@@ -94,6 +94,8 @@
     <ClCompile Include="d3dx9_hook.cpp" />
     <ClCompile Include="d3d9_hook.cpp" />
     <ClCompile Include="dllmain.cpp" />
+    <ClCompile Include="d3d8_hook.cpp" />
+    <ClCompile Include="window_mode.cpp" />
     <ClCompile Include="games.cpp" />
     <ClCompile Include="games\touhou11.cpp" />
     <ClCompile Include="games\touhou12.cpp" />
@@ -125,6 +127,8 @@
     <ClInclude Include="d3d8\d3d8.h" />
     <ClInclude Include="d3d8\d3d8caps.h" />
     <ClInclude Include="d3d8\d3d8types.h" />
+    <ClInclude Include="d3d8_hook.h" />
+    <ClInclude Include="window_mode.h" />
     <ClInclude Include="d3d9_overlay.h" />
     <ClInclude Include="d3dx9_hook.h" />
     <ClInclude Include="d3d9_hook.h" />

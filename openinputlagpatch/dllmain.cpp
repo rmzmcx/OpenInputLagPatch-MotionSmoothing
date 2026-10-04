@@ -6,10 +6,12 @@
 #include "games.h"
 #include "limiter.h"
 #include "d3d9_hook.h"
+#include "d3d8_hook.h"
 #include "d3dx9_hook.h"
 #include "config.h"
 #include "sha256.h"
 #include "common.h"
+#include "window_mode.h"
 
 // Allocates a console for debugging purposes
 void create_console() {
@@ -137,6 +139,7 @@ void install_patches() {
     Limiter::Initialize(get_replay_callback(game));
     hook_winmm_time_period();
     hook_gdi32();
+    D3D8Hook::HookDirect3DCreate8();
     hook_d3d9();
     if (Config::D3D9Ex)
         hook_d3dx9();
@@ -167,6 +170,7 @@ void patcher_main() {
     }
     if (Config::DebugConsole)
         create_console();
+    WindowMode::Hook();
     check_vpatch();
     install_patches();
 

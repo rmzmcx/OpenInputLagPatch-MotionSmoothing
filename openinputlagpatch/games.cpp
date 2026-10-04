@@ -9,7 +9,7 @@
 #include "games_def.h"
 
 // Try to detect the current game
-TouhouGame detect_game() {
+static TouhouGame detect_game_uncached() {
 	if (Config::GameOverride != TouhouGame::Unknown) {
 		printf("Game is being overridden to %s, things are probably about to break!\n", game_to_string[(size_t)Config::GameOverride]);
 		return Config::GameOverride;
@@ -49,6 +49,20 @@ TouhouGame detect_game() {
 		MB_ICONERROR
 	);
 	return TouhouGame::Unknown;
+}
+
+// Same as detect_game_uncached, but hashing the game's executable and showing an error if it
+// can't be identified only happens once
+TouhouGame detect_game() {
+	static bool detected = false;
+	static TouhouGame result = TouhouGame::Unknown;
+
+	if (detected)
+		return result;
+	detected = true;
+
+	result = detect_game_uncached();
+	return result;
 }
 
 // Get the per-game patch function for a specified game
