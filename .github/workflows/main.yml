@@ -20,7 +20,7 @@ jobs:
       with:
         name: openinputlagpatch
         path: |
-            Release/oilp_loader.exe
-            Release/oilp_loader.pdb
-            Release/openinputlagpatch.dll
-            Release/openinputlagpatch.pdb
+            build/oilp_loader.exe
+            build/oilp_loader.pdb
+            build/openinputlagpatch.dll
+            build/openinputlagpatch.pdb

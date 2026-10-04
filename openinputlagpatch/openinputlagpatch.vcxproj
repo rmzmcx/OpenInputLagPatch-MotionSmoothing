@@ -26,6 +26,11 @@
     <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
     <IncludePath>$(ProjectDir);$(VC_IncludePath);$(WindowsSDK_IncludePath)</IncludePath>
+    <!-- Build output goes to build/ so that Release/ only holds release packages. The
+         intermediate directory is per project because the patch and the loader compile
+         some of the same files with different settings. -->
+    <OutDir>$(MSBuildThisFileDirectory)..\build\</OutDir>
+    <IntDir>$(MSBuildThisFileDirectory)..\build\$(ProjectName)\$(Configuration)\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <UseDebugLibraries>false</UseDebugLibraries>

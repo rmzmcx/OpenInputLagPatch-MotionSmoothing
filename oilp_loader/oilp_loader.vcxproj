@@ -25,6 +25,11 @@
     <ConfigurationType>Application</ConfigurationType>
     <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
+    <!-- Build output goes to build/ so that Release/ only holds release packages. The
+         intermediate directory is per project because the patch and the loader compile
+         some of the same files with different settings. -->
+    <OutDir>$(MSBuildThisFileDirectory)..\build\</OutDir>
+    <IntDir>$(MSBuildThisFileDirectory)..\build\$(ProjectName)\$(Configuration)\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <UseDebugLibraries>false</UseDebugLibraries>
@@ -64,7 +69,7 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
-      <AdditionalLibraryDirectories>$(SolutionDir)$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(OutDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <MinimumRequiredVersion>5.01</MinimumRequiredVersion>
     </Link>
   </ItemDefinitionGroup>
