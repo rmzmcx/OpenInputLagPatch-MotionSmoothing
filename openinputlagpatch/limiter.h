@@ -11,6 +11,11 @@ public:
 
 	static bool SetGameFPS(int fps);
 
+	// Whether this frame's present should actually be submitted.
+	// True unless the current target framerate is above the display refresh rate,
+	// in which case we present every Nth frame so the present can't throttle the logic.
+	static bool ShouldPresent();
+
 private:
 	static bool UpdateTargetFPS();
 
@@ -24,4 +29,7 @@ private:
 	static ReplayCallback replay_callback;
 	static LARGE_INTEGER frame_start;
 	static LARGE_INTEGER frame_end;
+	static unsigned int present_every; // 1 = present every frame
+	static unsigned int display_refresh;
+	static bool refresh_queried;
 };

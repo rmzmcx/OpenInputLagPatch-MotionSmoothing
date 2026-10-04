@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include "patch_util.h"
 #include "limiter.h"
+#include "d3d8_hook.h"
 #include "touhou6.h"
 #include "config.h"
 
@@ -19,6 +20,8 @@ CGame* CGame::Instance = (CGame*)0x0069BCA0;
 // Doing it this way seems to work fine. More investigation required...
 int __fastcall th6_update_calc_chain_hook() {
 	auto engine = CEngine::Instance;
+    // The device only exists after the game initialises D3D, so install lazily (idempotent).
+    D3D8Hook::Install(engine->d3d8_device);
     Limiter::Tick();
 
     auto ret = CChainManager__UpdateCalcChain(CChainManager::Instance);

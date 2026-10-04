@@ -19,6 +19,15 @@ LARGE_INTEGER Limiter::perf_freq;
 ReplayCallback Limiter::replay_callback = nullptr;
 LARGE_INTEGER Limiter::frame_start;
 LARGE_INTEGER Limiter::frame_end;
+unsigned int Limiter::present_every = 1;
+unsigned int Limiter::display_refresh = 0;
+bool Limiter::refresh_queried = false;
+
+bool Limiter::ShouldPresent() {
+	if (present_every <= 1)
+		return true;
+	return (frame_num % present_every) == 0;
+}
 
 // Initializes the limiter's timers, settings, etc
 void Limiter::Initialize(ReplayCallback callback) {
@@ -52,6 +61,22 @@ bool Limiter::UpdateTargetFPS() {
 	}
 	wait_amount.QuadPart = (LONGLONG)((double)perf_freq.QuadPart / (double)target);
 	blt_prepare_time.QuadPart = min(wait_amount.QuadPart / 2, perf_freq.QuadPart / 1000 * (LONGLONG)Config::BltPrepareTime);
+
+	// When the target framerate goes above the display refresh rate (replay skip, thprac
+	// speedup), presenting every frame would throttle the logic down to the refresh rate -
+	// which is exactly what happens under dgVoodoo2, where the present blocks on the
+	// D3D11 flip queue and nothing else can pace the game. Present every Nth frame instead.
+	if (!refresh_queried) {
+		refresh_queried = true;
+		DEVMODEA mode = {};
+		mode.dmSize = sizeof(mode);
+		if (EnumDisplaySettingsA(NULL, ENUM_CURRENT_SETTINGS, &mode))
+			display_refresh = mode.dmDisplayFrequency;
+	}
+	present_every = 1;
+	if (display_refresh > 0 && target > display_refresh)
+		present_every = (target + display_refresh - 1) / display_refresh;
+
 	return target != Config::GameFPS;
 }
 
