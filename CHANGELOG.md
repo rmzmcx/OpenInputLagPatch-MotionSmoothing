@@ -30,3 +30,18 @@ is also the record of what has actually been verified rather than just what was 
 
   Currently installed for Touhou 6 only, since the cap appears to be specific to that game -
   the later D3D8 titles are unaffected and the D3D9 titles use a different present path.
+
+- **New `AlwaysBlt` option: keep rendering while the game window isn't active** (`12fe031`, `c41c53d`, `ea884df`)
+
+  Switching away from the window froze the picture. Two things caused it: the games stop
+  rendering on their own once they lose focus (`GameWindow::Render` returns immediately while
+  the window isn't active), and oilp's window update hook stopped calling the game's window
+  update while unfocused - which is also what drives rendering, so nothing was drawn at all.
+
+  AlwaysBlt now bypasses the early return (turning the conditional jump at `0x004206F0` for
+  th06 and `0x004346F0` for th07 into an unconditional one) and lets the window update keep
+  running while unfocused, the same behaviour as vpatch's AlwaysBlt option. It is enabled by
+  default and can be turned off with the `AlwaysBlt` entry in `openinputlagpatch.ini`; a
+  reference copy of that config now ships alongside the build.
+
+  Implemented for th06 and th07 only.
