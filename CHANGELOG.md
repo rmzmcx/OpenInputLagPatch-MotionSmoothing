@@ -1,0 +1,30 @@
+# Changelog
+
+Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/OpenInputLagPatch).
+
+Only changes that have been tested in-game and confirmed working are listed here, so this file
+is also the record of what has actually been verified rather than just what was attempted.
+
+## 2026-10-04
+
+### Fixed
+
+- **Spurious "couldn't hook Direct3DCreate9" warning when using dgVoodoo2** (`d20a521`)
+
+  dgVoodoo2 translates D3D8 to D3D11, so its `d3d8.dll` has no `Direct3DCreate9` import to hook,
+  and the patch showed the warning even though the game runs fine. The loaded `d3d8.dll` is now
+  identified precisely by its version resource (`ProductName` contains `dgVoodoo`, checked across
+  all language/codepage blocks) and the warning is skipped only in that case. An unknown wrapper
+  still gets the warning, and d3d8to9 still takes the normal hook path.
+
+- **Touhou 6 with dgVoodoo2: acceleration could not exceed the display refresh rate** (`667fe5e`)
+
+  dgVoodoo2 turns the game's D3D8 present into a D3D11 flip-model swapchain, and that present
+  blocks on vblank once the queue is full. Since the game logic presents once per frame, the game
+  speed was pinned to the display refresh rate, so replay skip and thprac speedup could not go any
+  faster. The D3D8 present is now hooked (vtable index 15) and submitted every Nth frame, with
+  `N = ceil(target framerate / refresh rate)`, and only while the target framerate is above the
+  refresh rate. At normal framerates `N` is 1, so every present is forwarded unchanged.
+
+  Currently installed for Touhou 6 only, since the cap appears to be specific to that game -
+  the later D3D8 titles are unaffected and the D3D9 titles use a different present path.
