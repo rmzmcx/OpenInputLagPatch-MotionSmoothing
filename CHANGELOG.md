@@ -7,6 +7,67 @@ Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/O
 Only changes that have been tested in-game and confirmed working are listed here, so this file
 is also the record of what has actually been verified rather than just what was attempted.
 
+## 2026-10-06
+
+### Added
+
+- **The overlay works for D3D8 games that never go through D3D9** (`d0cc56a`, `ed756d7`)
+
+  The overlay was D3D9 only - it is created in the D3D9 CreateDevice hook and drawn in the
+  EndScene hook - so it worked with d3d8to9 and DXVK, which translate D3D8 to D3D9, but not
+  with dgVoodoo2, which translates D3D8 straight to D3D11, or with no wrapper at all. A D3D8
+  version of the overlay now draws with the D3D8 device the game already uses, and it is only
+  used while there is no D3D9 device, so the wrappers that do go through D3D9 keep using the
+  D3D9 overlay.
+
+- **`FullscreenRefreshRate` is applied to the D3D8 games too** (`5d1d73f`)
+
+  The option only existed in the D3D9 hook, so it did nothing for the D3D8 titles: they build
+  their presentation parameters through IDirect3D8, and since the games ask for the current
+  desktop rate, every value looked like it forced the maximum refresh rate. The D3D8
+  CreateDevice and Reset hooks choose the rate the same way now, and let the runtime pick
+  instead of failing when the display has no suitable mode.
+
+- **vsync is forced off for the D3D8 games too** (`1dd1bb2`)
+
+  Setting `D3DPRESENT_INTERVAL_IMMEDIATE` (together with `D3DSWAPEFFECT_DISCARD` and a back
+  buffer count of 0) only happened in the D3D9 hook, so with dgVoodoo2 or without a wrapper
+  the games kept presenting with the interval they asked for and replay skipping stayed capped
+  by the display refresh rate. The D3D8 hook does the same now, for fullscreen devices - D3D8
+  requires its two FullScreen_* fields to stay zero while windowed.
+
+### Fixed
+
+- **Alt-tabbing back into an exclusive fullscreen D3D8 game quit the game** (`d0cc56a`)
+
+  The games release their `D3DPOOL_DEFAULT` surfaces and then call `Reset`, and they quit when
+  that fails. D3D8's Reset fails while any default pool resources are still alive, and the
+  overlay's own resources were released after the reset instead of before it, so a fullscreen
+  D3D8 game exited as soon as the window was focused again.
+
+- **The overlay moved to the corner of the pause screen on D3D8 games** (`ed756d7`)
+
+  State blocks don't carry the viewport around, so the overlay was drawn with whatever
+  viewport the game had set - and PCB's pause screen draws the picture into a smaller area. It
+  sets its own viewport and transforms on every draw now, the same way thprac's overlays do.
+
+### Changed
+
+- **The missing D3D8 wrapper notice is a console message, and it recommends dgVoodoo2** (`d4296fc`, `5df484c`)
+
+  A D3D8 game that never goes through D3D9 only loses the D3D9Ex input lag reduction now that
+  the overlay and the other D3D8 settings work without it. That is worth a line in the debug
+  console instead of a message box on every launch, and the recommendation is dgVoodoo2 first,
+  since its flip model presentation measures best for input lag.
+
+- **The reference config ships with default values** (`dee2a1e`)
+
+  `openinputlagpatch.ini` had the values from testing (BltPrepareTime 0, Sleep 0, the window
+  mode settings and so on) instead of the defaults its own comments document, which is
+  confusing when comparing the two. Every entry is at its default now, so the file documents
+  the options without turning anything on by itself, and the README recommends dgVoodoo2 for
+  the D3D8 games as well.
+
 ## 2026-10-05
 
 ### Added
