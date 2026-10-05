@@ -400,9 +400,10 @@ void hook_d3d9() {
 				// lag reduction), so this is a console message instead of a popup: it's useful
 				// when debugging but not worth interrupting every launch for.
 				printf(
-					"Couldn't hook Direct3DCreate9: this game has no D3D8 wrapper (d3d8to9) or D3D9.\n"
+					"Couldn't hook Direct3DCreate9: no D3D8 wrapper (dgVoodoo2 or d3d8to9) was found, "
+					"or the one in use doesn't go through D3D9.\n"
 					"The Direct3D9Ex input lag reduction isn't available without a D3D9 device - "
-					"install d3d8to9 for the lowest input lag.\n"
+					"install dgVoodoo2 or d3d8to9 for the lowest input lag.\n"
 				);
 			}
 		}
