@@ -47,15 +47,10 @@ void D3D8Overlay::SetupRenderState() {
     d3d8_device->CreateStateBlock(D3DSBT_ALL, &original_state);
     d3d8_device->CaptureStateBlock(original_state);
 
-    // Viewport
-    D3DVIEWPORT8 viewport = {};
-    viewport.Width = window_width;
-    viewport.Height = window_height;
-    viewport.X = 0;
-    viewport.Y = 0;
-    viewport.MinZ = 0.0;
-    viewport.MaxZ = 0.0;
-    d3d8_device->SetViewport(&viewport);
+    // Viewport and transforms. They are set again every time the overlay is drawn, since
+    // state blocks don't carry the viewport around and the games change it (the pause screen
+    // draws into a smaller area, which used to move the overlay along with it).
+    SetupViewportAndTransforms();
 
     // Setup render state: fixed-pipeline, alpha-blending, no face culling, no depth testing,
     // fill mode, point sampling. D3D8 has no separate alpha blending and no sampler states,
@@ -91,6 +86,28 @@ void D3D8Overlay::SetupRenderState() {
     d3d8_device->SetTextureStageState(0, D3DTSS_MAGFILTER, D3DTEXF_POINT);
     d3d8_device->SetTextureStageState(0, D3DTSS_MIPFILTER, D3DTEXF_POINT);
 
+    // Save the current state
+    d3d8_state_block = 0;
+    d3d8_device->CreateStateBlock(D3DSBT_ALL, &d3d8_state_block);
+    d3d8_device->CaptureStateBlock(d3d8_state_block);
+
+    // Restore the original state
+    d3d8_device->ApplyStateBlock(original_state);
+    d3d8_device->DeleteStateBlock(original_state);
+}
+
+// Sets up the viewport and the transforms the overlay geometry is drawn with
+void D3D8Overlay::SetupViewportAndTransforms() {
+    // Viewport
+    D3DVIEWPORT8 viewport = {};
+    viewport.Width = window_width;
+    viewport.Height = window_height;
+    viewport.X = 0;
+    viewport.Y = 0;
+    viewport.MinZ = 0.0;
+    viewport.MaxZ = 0.0;
+    d3d8_device->SetViewport(&viewport);
+
     // Orthographic projection matrix
     float L = 0.5f;
     float R = window_width + 0.5f;
@@ -107,15 +124,6 @@ void D3D8Overlay::SetupRenderState() {
     d3d8_device->SetTransform(D3DTS_WORLD, &mat_identity);
     d3d8_device->SetTransform(D3DTS_VIEW, &mat_identity);
     d3d8_device->SetTransform(D3DTS_PROJECTION, &mat_projection);
-
-    // Save the current state
-    d3d8_state_block = 0;
-    d3d8_device->CreateStateBlock(D3DSBT_ALL, &d3d8_state_block);
-    d3d8_device->CaptureStateBlock(d3d8_state_block);
-
-    // Restore the original state
-    d3d8_device->ApplyStateBlock(original_state);
-    d3d8_device->DeleteStateBlock(original_state);
 }
 
 // Decompresses and loads the font atlas to an A8R8G8B8 texture and sets up other resources
@@ -290,6 +298,10 @@ void D3D8Overlay::Draw() {
 
     // Load the desired text rendering render state
     d3d8_device->ApplyStateBlock(d3d8_state_block);
+
+    // The game may have changed the viewport (the pause screen does), and state blocks don't
+    // carry it along, so put ours back before drawing
+    SetupViewportAndTransforms();
 
     // Draw shit
     auto rect_count = UpdateBuffers(text_buffer);

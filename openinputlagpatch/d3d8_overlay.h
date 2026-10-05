@@ -27,6 +27,7 @@ private:
 	void SetupRenderState();
 	void SetupResources();
 	void SetupAtlasUVTable();
+	void SetupViewportAndTransforms();
 
 	int UpdateBuffers(char* text);
 

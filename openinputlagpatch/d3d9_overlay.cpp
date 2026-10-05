@@ -43,15 +43,8 @@ void D3D9Overlay::SetupRenderState() {
     d3d9_device->CreateStateBlock(D3DSBT_ALL, &original_state);
     original_state->Capture();
 
-    // Viewport
-    D3DVIEWPORT9 viewport = {};
-    viewport.Width = window_width;
-    viewport.Height = window_height;
-    viewport.X = 0;
-    viewport.Y = 0;
-    viewport.MinZ = 0.0;
-    viewport.MaxZ = 0.0;
-    d3d9_device->SetViewport(&viewport);
+    // Viewport and transforms (also applied on every draw, see SetupViewportAndTransforms)
+    SetupViewportAndTransforms();
 
     // Setup render state: fixed-pipeline, alpha-blending, no face culling, no depth testing, fill mode, point sampling
     d3d9_device->SetPixelShader(NULL);
@@ -87,6 +80,27 @@ void D3D9Overlay::SetupRenderState() {
     d3d9_device->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT);
     d3d9_device->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
 
+    // Save the current state
+    d3d9_device->CreateStateBlock(D3DSBT_ALL, &d3d9_state_block);
+    d3d9_state_block->Capture();
+
+    // Restore the original state
+    original_state->Apply();
+    original_state->Release();
+}
+
+// Sets up the viewport and the transforms the overlay geometry is drawn with
+void D3D9Overlay::SetupViewportAndTransforms() {
+    // Viewport
+    D3DVIEWPORT9 viewport = {};
+    viewport.Width = window_width;
+    viewport.Height = window_height;
+    viewport.X = 0;
+    viewport.Y = 0;
+    viewport.MinZ = 0.0;
+    viewport.MaxZ = 0.0;
+    d3d9_device->SetViewport(&viewport);
+
     // Orthographic projection matrix
     float L = 0.5f;
     float R = window_width + 0.5f;
@@ -103,14 +117,6 @@ void D3D9Overlay::SetupRenderState() {
     d3d9_device->SetTransform(D3DTS_WORLD, &mat_identity);
     d3d9_device->SetTransform(D3DTS_VIEW, &mat_identity);
     d3d9_device->SetTransform(D3DTS_PROJECTION, &mat_projection);
-
-    // Save the current state
-    d3d9_device->CreateStateBlock(D3DSBT_ALL, &d3d9_state_block);
-    d3d9_state_block->Capture();
-
-    // Restore the original state
-    original_state->Apply();
-    original_state->Release();
 }
 
 // Decompresses and loads the font atlas to an A8R8G8B8 texture and sets up other resources
@@ -290,6 +296,10 @@ void D3D9Overlay::Draw() {
 
     // Load the desired text rendering render state
     d3d9_state_block->Apply();
+
+    // The game may have changed the viewport (the pause screens draw into a smaller area), and
+    // state blocks don't carry it along, so put ours back before drawing
+    SetupViewportAndTransforms();
 
     // Draw shit
     auto rect_count = UpdateBuffers(text_buffer);
