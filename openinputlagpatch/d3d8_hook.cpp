@@ -2,7 +2,10 @@
 
 #include "d3d8_hook.h"
 #include "d3d8/d3d8.h"
+#include "config.h"
+#include "d3d8_overlay.h"
 #include "limiter.h"
+#include "overlay.h"
 #include "patch_util.h"
 #include "window_mode.h"
 
@@ -36,12 +39,30 @@ namespace {
 	                               HWND dst_window, const RGNDATA* dirty_region) {
 		if (!Limiter::ShouldPresent())
 			return D3D_OK;
+
+		// The overlay is drawn by the D3D9 hooks whenever there is a D3D9 device. For D3D8
+		// games whose wrapper never goes through D3D9 (dgVoodoo2 translates straight to
+		// D3D11) there is none, so those draw it with their D3D8 device instead
+		if (D3D8Overlay::Instance)
+			D3D8Overlay::Instance->Draw();
+
 		return Present_orig(device, src_rect, dst_rect, dst_window, dirty_region);
 	}
 
 	HRESULT __stdcall Reset_hook(IDirect3DDevice8* device, D3DPRESENT_PARAMETERS* present_params) {
 		printf("D3D8 Reset intercepted!\n");
 		apply_window_override(present_params);
+
+		// The overlay's resources are all in D3DPOOL_DEFAULT, and D3D8's Reset fails when any
+		// of them are still alive (the game releases its own surfaces for exactly this
+		// reason). Leaving them around makes the game quit when alt-tabbing back into an
+		// exclusive fullscreen game, since it treats a failed Reset as a fatal error.
+		// The D3D9 overlay is released before the reset for the same reason.
+		bool recreate_overlay = Config::ShowOverlay && !d3d9_overlay_available();
+		if (recreate_overlay) {
+			delete D3D8Overlay::Instance;
+			D3D8Overlay::Instance = nullptr;
+		}
 
 		auto ret = Reset_orig(device, present_params);
 
@@ -52,6 +73,9 @@ namespace {
 				present_params->hDeviceWindow ? present_params->hDeviceWindow : creation_params.hFocusWindow,
 				present_params->Windowed
 			);
+
+			if (recreate_overlay)
+				D3D8Overlay::Instance = new D3D8Overlay(device, present_params->BackBufferWidth, present_params->BackBufferHeight);
 		}
 
 		return ret;
@@ -67,6 +91,12 @@ namespace {
 		if (SUCCEEDED(ret) && ppReturnedDeviceInterface != nullptr && *ppReturnedDeviceInterface != nullptr) {
 			D3D8Hook::Install(*ppReturnedDeviceInterface);
 			WindowMode::Apply(hFocusWindow ? hFocusWindow : pp->hDeviceWindow, pp->Windowed);
+
+			if (Config::ShowOverlay && !d3d9_overlay_available()) {
+				delete D3D8Overlay::Instance;
+				D3D8Overlay::Instance = nullptr;
+				D3D8Overlay::Instance = new D3D8Overlay(*ppReturnedDeviceInterface, pp->BackBufferWidth, pp->BackBufferHeight);
+			}
 		}
 
 		return ret;

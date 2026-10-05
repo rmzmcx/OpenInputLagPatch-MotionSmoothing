@@ -8,6 +8,7 @@
 #include "common.h"
 #include "d3d9_overlay.h"
 #include "limiter.h"
+#include "overlay.h"
 
 bool Limiter::initialized = false;
 LARGE_INTEGER Limiter::start_time;
@@ -148,9 +149,17 @@ void Limiter::Tick() {
 		QueryPerformanceCounter(&frame_end);
 		frame_elapsed = frame_end.QuadPart - frame_start.QuadPart;
 
-		if (D3D9Overlay::Instance && frame_num % 30 == 0) {
-			D3D9Overlay::Instance->SetText("%.2f/%.2fms", frame_elapsed / (float)perf_freq.QuadPart * 1000.0, (float)Config::BltPrepareTime);
-			D3D9Overlay::Instance->text_color = frame_elapsed > blt_prepare_time.QuadPart ? 0xFFFF0000 : 0xFFFFFFFF;
+		if (frame_num % 30 == 0) {
+			char overlay_text[64];
+			sprintf_s(overlay_text, "%.2f/%.2fms", frame_elapsed / (float)perf_freq.QuadPart * 1000.0, (float)Config::BltPrepareTime);
+			unsigned long overlay_color = frame_elapsed > blt_prepare_time.QuadPart ? 0xFFFF0000 : 0xFFFFFFFF;
+
+			if (D3D9Overlay::Instance) {
+				D3D9Overlay::Instance->SetText("%s", overlay_text);
+				D3D9Overlay::Instance->text_color = overlay_color;
+			} else if (d3d8_overlay_active()) {
+				d3d8_overlay_set_text(overlay_text, overlay_color);
+			}
 		}
 	}
 

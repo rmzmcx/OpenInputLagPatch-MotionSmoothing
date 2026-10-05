@@ -100,6 +100,7 @@
     <ClCompile Include="d3d9_hook.cpp" />
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="d3d8_hook.cpp" />
+    <ClCompile Include="d3d8_overlay.cpp" />
     <ClCompile Include="window_mode.cpp" />
     <ClCompile Include="games.cpp" />
     <ClCompile Include="games\touhou11.cpp" />
@@ -133,6 +134,8 @@
     <ClInclude Include="d3d8\d3d8caps.h" />
     <ClInclude Include="d3d8\d3d8types.h" />
     <ClInclude Include="d3d8_hook.h" />
+    <ClInclude Include="d3d8_overlay.h" />
+    <ClInclude Include="overlay.h" />
     <ClInclude Include="window_mode.h" />
     <ClInclude Include="d3d9_overlay.h" />
     <ClInclude Include="d3dx9_hook.h" />

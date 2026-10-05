@@ -7,10 +7,16 @@
 #include "common.h"
 #include "config.h"
 #include "d3d9_overlay.h"
+#include "overlay.h"
 #include "window_mode.h"
 
 static IDirect3D9* d3d9 = nullptr;
 static IDirect3DDevice9* d3d9_device = nullptr;
+
+// Whether a D3D9 device exists, i.e. whether the D3D9 overlay is the one drawing (overlay.h)
+bool d3d9_overlay_available() {
+	return d3d9_device != nullptr;
+}
 
 // Replaces D3DPOOL_MANAGED with D3DPOOL_DEFAULT because it's deprecated on D3D9Ex
 auto CreateTexture_orig = (HRESULT(__stdcall*)(IDirect3DDevice9*, UINT, UINT, UINT, DWORD, D3DFORMAT, D3DPOOL, IDirect3DTexture9**, HANDLE*))nullptr;
@@ -120,6 +126,9 @@ HRESULT __stdcall Reset_hook(IDirect3DDevice9* self, D3DPRESENT_PARAMETERS* pPre
 
 	if (Config::ShowOverlay && D3D9Overlay::Instance) {
 		delete D3D9Overlay::Instance;
+		// Null it out so the EndScene hook can't draw with a destroyed overlay if the reset
+		// below fails (and so it isn't recreated with stale sizes if it succeeds)
+		D3D9Overlay::Instance = nullptr;
 	}
 
 	if (Config::D3D9Ex) {
