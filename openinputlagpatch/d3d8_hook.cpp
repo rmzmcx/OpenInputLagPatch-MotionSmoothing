@@ -19,6 +19,7 @@ namespace {
 	Reset_t Reset_orig = nullptr;
 	Present_t Present_orig = nullptr;
 	Direct3DCreate8_t Direct3DCreate8_orig = nullptr;
+	IDirect3D8* d3d8_interface = nullptr;
 	bool device_hooks_installed = false;
 	bool create8_hooked = false;
 
@@ -33,6 +34,70 @@ namespace {
 			params->Windowed = FALSE;
 			break;
 		}
+	}
+
+	// Chooses the refresh rate a fullscreen device should use, the same way the D3D9 hook
+	// does it for the D3D9 games. D3D8 games only ever talk to D3D8, so without this the
+	// FullscreenRefreshRate option did nothing for them - the game asks for the current
+	// (desktop) rate and the display keeps using it no matter what the option says.
+	// TODO: This might not be so great on multi-monitor setups
+	UINT max_refresh_rate = 0;
+	UINT get_target_refresh_rate(D3DPRESENT_PARAMETERS* present_params) {
+		switch (Config::FullscreenRefreshRate) {
+			case TargetRefreshRate::Max:
+				return D3DPRESENT_RATE_DEFAULT;
+			case TargetRefreshRate::Sixty:
+				return 60;
+			case TargetRefreshRate::MultipleOfSixty: {
+				if (max_refresh_rate == 0) {
+					// Reset can ask to keep the current size by passing 0, in which case the
+					// resolution to match comes from the display mode the device is in
+					UINT width = present_params->BackBufferWidth;
+					UINT height = present_params->BackBufferHeight;
+					if (width == 0 || height == 0) {
+						D3DDISPLAYMODE current_mode = {};
+						if (SUCCEEDED(d3d8_interface->GetAdapterDisplayMode(D3DADAPTER_DEFAULT, &current_mode))) {
+							width = current_mode.Width;
+							height = current_mode.Height;
+						}
+					}
+
+					// Enumerate all supported resolutions and refresh rates
+					auto count = d3d8_interface->GetAdapterModeCount(D3DADAPTER_DEFAULT);
+					printf("Supported display modes:\n");
+					for (UINT i = 0; i < count; i++) {
+						D3DDISPLAYMODE mode = {};
+						if (FAILED(d3d8_interface->EnumAdapterModes(D3DADAPTER_DEFAULT, i, &mode)))
+							continue;
+						printf("%d x %d @ %dhz\n", mode.Width, mode.Height, mode.RefreshRate);
+
+						// Pick the highest multiple of 60 refresh rate at the selected resolution
+						if (mode.Width == width && mode.Height == height &&
+							(mode.RefreshRate == 59 || mode.RefreshRate % 60 == 0)) {
+							auto rate = mode.RefreshRate == 59 ? 60 : mode.RefreshRate;
+							if (rate > max_refresh_rate)
+								max_refresh_rate = rate;
+						}
+					}
+					if (max_refresh_rate == 0) {
+						// Nothing suitable at this resolution - let the runtime pick instead of
+						// killing the game like the D3D9 version does
+						printf("No multiple of 60hz available at that resolution, letting the runtime pick\n");
+						return D3DPRESENT_RATE_DEFAULT;
+					}
+					printf("Picked %dhz\n", max_refresh_rate);
+				}
+				return max_refresh_rate;
+			}
+		}
+		return D3DPRESENT_RATE_DEFAULT;
+	}
+
+	void apply_presentation_overrides(D3DPRESENT_PARAMETERS* params) {
+		apply_window_override(params);
+
+		if (!params->Windowed && d3d8_interface != nullptr)
+			params->FullScreen_RefreshRateInHz = get_target_refresh_rate(params);
 	}
 
 	HRESULT __stdcall Present_hook(IDirect3DDevice8* device, const RECT* src_rect, const RECT* dst_rect,
@@ -51,7 +116,7 @@ namespace {
 
 	HRESULT __stdcall Reset_hook(IDirect3DDevice8* device, D3DPRESENT_PARAMETERS* present_params) {
 		printf("D3D8 Reset intercepted!\n");
-		apply_window_override(present_params);
+		apply_presentation_overrides(present_params);
 
 		// The overlay's resources are all in D3DPOOL_DEFAULT, and D3D8's Reset fails when any
 		// of them are still alive (the game releases its own surfaces for exactly this
@@ -84,7 +149,7 @@ namespace {
 	HRESULT __stdcall CreateDevice_hook(IDirect3D8* self, UINT Adapter, D3DDEVTYPE DeviceType, HWND hFocusWindow,
 	                                    DWORD BehaviorFlags, D3DPRESENT_PARAMETERS* pp, IDirect3DDevice8** ppReturnedDeviceInterface) {
 		printf("D3D8 CreateDevice intercepted!\n");
-		apply_window_override(pp);
+		apply_presentation_overrides(pp);
 
 		auto ret = CreateDevice_orig(self, Adapter, DeviceType, hFocusWindow, BehaviorFlags, pp, ppReturnedDeviceInterface);
 
@@ -112,6 +177,8 @@ namespace {
 		auto d3d8 = Direct3DCreate8_orig(SDKVersion);
 		if (d3d8 == nullptr)
 			return nullptr;
+
+		d3d8_interface = d3d8;
 
 		// Hook IDirect3D8::CreateDevice (vtable index 15)
 		DWORD* vtbl = *(DWORD**)d3d8;
