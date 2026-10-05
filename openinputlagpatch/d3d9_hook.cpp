@@ -396,15 +396,13 @@ void hook_d3d9() {
 			if (loaded_d3d8_is_dgvoodoo2()) {
 				printf("dgVoodoo2 detected - it doesn't go through d3d9.dll. Skipping D3D9Ex upgrade.\n");
 			} else {
-				// Okay, something went wrong
-				MessageBox(
-					NULL,
-					L"Couldn't hook Direct3DCreate9.\n"
-					L"This usually means you don't have a D3D8 wrapper installed or the one you have is incompatible.\n"
-					L"The game will now likely run much worse than it should because certain D3D9 functions can't be intercepted\n"
-					L"Please install d3d8to9 for best results.",
-					L"OpenInputLagPatch",
-					MB_ICONWARNING
+				// No D3D9 to hook at all. That only costs the D3D9Ex upgrade (the extra input
+				// lag reduction), so this is a console message instead of a popup: it's useful
+				// when debugging but not worth interrupting every launch for.
+				printf(
+					"Couldn't hook Direct3DCreate9: this game has no D3D8 wrapper (d3d8to9) or D3D9.\n"
+					"The Direct3D9Ex input lag reduction isn't available without a D3D9 device - "
+					"install d3d8to9 for the lowest input lag.\n"
 				);
 			}
 		}
