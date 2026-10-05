@@ -5,7 +5,7 @@ A **heavily work-in-progress** replacement for [vpatch](https://ux.getuploader.c
 # Usage
 1. Compile as x86/Release
 2. Copy openinputlagpatch.dll and oilp_loader.exe to your game directory
-3. *(Touhou 9.5 and below)* Install [d3d8to9](https://github.com/crosire/d3d8to9) **(The ENB converter will not work!)**
+3. *(Touhou 9.5 and below)* Install [dgVoodoo2](https://github.com/dege-diosg/dgVoodoo2) (recommended: its flip model presentation has the lowest input lag) or [d3d8to9](https://github.com/crosire/d3d8to9) **(The ENB converter will not work!)**
 4. Run oilp_loader.exe
 
 # Compatibility
