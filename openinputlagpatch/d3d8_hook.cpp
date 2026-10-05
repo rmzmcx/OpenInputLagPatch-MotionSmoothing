@@ -96,8 +96,18 @@ namespace {
 	void apply_presentation_overrides(D3DPRESENT_PARAMETERS* params) {
 		apply_window_override(params);
 
-		if (!params->Windowed && d3d8_interface != nullptr)
-			params->FullScreen_RefreshRateInHz = get_target_refresh_rate(params);
+		// Same as the D3D9 hook: vsync is forced off and the game's own frame limiter paces the
+		// game instead. In D3D8 both FullScreen_* fields have to stay zero while windowed, so
+		// they can only be set for a fullscreen device (windowed presents always use the
+		// desktop's vsync in D3D8, that can't be turned off here).
+		if (!params->Windowed) {
+			if (d3d8_interface != nullptr)
+				params->FullScreen_RefreshRateInHz = get_target_refresh_rate(params);
+			params->FullScreen_PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
+		}
+
+		params->SwapEffect = D3DSWAPEFFECT_DISCARD;
+		params->BackBufferCount = 0;
 	}
 
 	HRESULT __stdcall Present_hook(IDirect3DDevice8* device, const RECT* src_rect, const RECT* dst_rect,
