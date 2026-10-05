@@ -1,49 +1,45 @@
-简体中文 | [English](README.en.md)
+[简体中文](README.md) | English
 
 # OpenInputLagPatch
 
-一个用于替代[Vpatch](https://ux.getuploader.com/swmplv75e/) 的补丁，目前仍处于**高度开发中**，用于修复东方系列作品的限帧与输入延迟问题。
+A **heavily work-in-progress** replacement for [vpatch](https://ux.getuploader.com/swmplv75e/), which fixes frame limiter and input lag issues in Touhou games.
 
-# 使用
+# Usage
+1. Compile as x86/Release
+2. Copy openinputlagpatch.dll and oilp_loader.exe to your game directory
+3. *(Touhou 9.5 and below)* Install [dgVoodoo2](https://github.com/dege-diosg/dgVoodoo2) (recommended: its flip model presentation has the lowest input lag) or [d3d8to9](https://github.com/crosire/d3d8to9) **(The ENB converter will not work!)**
+4. Run oilp_loader.exe or use the latest thprac(tick the option "Use OpenInputLagPatch(if available)" in one specific game selection page
 
-1. 以 x86/Release 编译
-2. 把 `openinputlagpatch.dll` 和 `oilp_loader.exe` 复制到游戏目录
-3. *（th09.5 及以下）* 安装 [dgVoodoo2](https://github.com/dege-diosg/dgVoodoo2)（推荐，flip 模型呈现延迟最低）或者 [d3d8to9](https://github.com/crosire/d3d8to9)——**（ENB converter 无法生效！）**
-4. 运行 `oilp_loader.exe`，或使用最新版 thprac（在对应作品的启动页面勾选 "使用OpenInputLagPatch（如果可用）"）
+# Compatibility
+Not every game is supported, but support for more games is actively being worked on.
 
-# 兼容性
-
-并非所有作品都受支持，支持范围仍在持续扩充中。
-
-| 作品 | 支持 | Replay 速度控制 |
+| Game                            | Supported | Replay speed control |
 |---------------------------------|-----------|----------------------|
-| 东方红魔乡 |✅|✅|
-| 东方妖妖梦 |✅|✅|
-| 东方永夜抄 |✅|✅|
-| 东方花映塚 |✅|✅|
-| 东方文花帖 |✅|✅|
-| 东方风神录 |✅|✅|
-| 黄昏酒场 |❌|❔|
-| 东方地灵殿 |✅|✅|
-| 东方星莲船 |✅|✅|
-| 东方文花帖DS |✅|✅|
-| 妖精大战争 |✅|✅|
-| 东方神灵庙 |✅|✅|
-| 东方辉针城 |✅|✅|
-| 弹幕天邪鬼 |✅|✅|
-| 东方绀珠传 |✅|✅|
-| 东方天空璋 |✅|✅|
-| 秘封噩梦日记 |✅|✅|
-| 东方鬼形兽 |✅|✅|
-| 东方虹龙洞 |✅|✅|
-| 弹幕狂们的黑市 |✅|N/A|
-| 弹幕风 v0.12m |❌|❔|
-| 弹幕风 ph3 |❌|❔|
+| Embodiment of Scarlet Devil     |✅|✅|
+| Perfect Cherry Blossom          |✅|✅|
+| Imperishable Night              |✅|✅|
+| Phantasmagoria of Flower View   |✅|✅|
+| Shoot the Bullet                |✅|✅|
+| Mountain of Faith               |✅|✅|
+| Uwabami Breakers                |❌|❔|
+| Subterranean Animism            |✅|✅|
+| Undefined Fantastic Object      |✅|✅|
+| Double Spoiler                  |✅|✅|
+| Great Fairy Wars                |✅|✅|
+| Ten Desires                     |✅|✅|
+| Double Dealing Character        |✅|✅|
+| Impossible Spell Card           |✅|✅|
+| Legacy of Lunatic Kingdom       |✅|✅|
+| Hidden Star in Four Seasons     |✅|✅|
+| Violet Detector                 |✅|✅|
+| Wily Beast and Weakest Creature |✅|✅|
+| Unconnected Marketeers          |✅|✅|
+| 100th Black Market              |✅|N/A|
+| Danmakufu v0.12m                |❌|❔|
+| Danmakufu ph3                   |❌|❔|
 
-# 配置
-
-OpenInputLagPatch 通过游戏可执行文件同目录下的 `openinputlagpatch.ini` 进行配置。没有该文件游戏也能正常运行，随时可以手动创建一份。下面是一份示例配置（内容与随包提供的那份一致，注释为英文）：
-
+# Configuration
+OpenInputLagPatch is configured via a file called `openinputlagpatch.ini` stored in the same directory as the game executable. The game will run perfectly fine without the config file, but there's always the option of manually creating one. Here's an example config file:
 ```
 [Option]
 
@@ -154,18 +150,16 @@ TitleBar = 1
 AlwaysOnTop = 0
 ```
 
-# 技术细节
+# Technical details
+*(Touhou 6-7 only)* The game loop is modified to run the drawing logic *after* the game update logic instead of the other way around, which should shave off a frame of input lag.
 
-*（仅红魔乡与妖妖梦）* 游戏主循环被改为在游戏更新逻辑**之后**再执行绘制逻辑（与原本的顺序相反），可减少约 1 帧输入延迟。
+`Direct3DCreate9` is hooked to use `Direct3DCreate9Ex` instead, which allows the use of `IDirect3DDevice9Ex::SetMaximumFrameLatency`, which should shave off an additional 0 to 2 frames of input lag. **This only does anything for the old blt model presentation** (native D3D9, or D3D8 through d3d8to9): with dgVoodoo2 the game is presented through a DXGI flip model swapchain, whose queue is already as short as it gets, so there is nothing left for this to save - that flip model is also why dgVoodoo2 measures best for input lag.
 
-`Direct3DCreate9` 被钩住并改用 `Direct3DCreate9Ex`，从而可以使用 `IDirect3DDevice9Ex::SetMaximumFrameLatency`，再减少 0~2 帧输入延迟。**这个优化只对老的 blt 模型呈现有效**（原生 D3D9，或者用 d3d8to9 的场合）：装了 dgVoodoo2 之后游戏是通过 DXGI 的 flip 模型交换链呈现的，队列本身已经压到最短，这个优化无事可做——dgVoodoo2 的 flip 模型也正是它在实测中延迟最低的原因。
-
-最后，游戏自带的限帧器被禁用，改用大幅简化的 vpatch 限帧器。
+Finally, the in-game frame limiter is disabled and a heavily simplified version of vpatch's frame limiter is used.
 
 # TODO
-
-- 支持更多作品
-- 修 bug、加新功能
-- 让新的插帧功能正常工作
-- 看看 vpatch 的 `AutoBltPrepareTime` 算法（不确定）
-- 可能还有我忘了的
+- Support more games
+- fix bugs and add more features
+- make the new frame interpolation function work properly
+- Take a look at vpatch's `AutoBltPrepareTime` algorithm(Not sure)
+- Probably more stuff I forgot
