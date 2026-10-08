@@ -75,6 +75,21 @@ is also the record of what has actually been verified rather than just what was 
   these two games, since thprac's replay sliders can't reach the patch there; they can be set in
   the ini instead.
 
+### Hotfix
+
+- **th06 to th18 ran at high speed in v1.6** (`5ea9c18`)
+
+  The deduplication the limiter got for th19 and th20 treated a tick that arrived sooner than a
+  quarter of a frame as one belonging to the frame that was already being timed and skipped the
+  wait for it. That holds for th19 and th20, which keep a clock of their own and are only ticked
+  after their own wait - but not for th06 to th18, where the limiter is the one doing the
+  waiting: there the tick measures the game's own work, which is usually only a millisecond or
+  two, so most frames were not waited out at all, and those games ran at high speed with
+  `GameFPS` doing nothing.
+
+  th19 and th20 tick through `Limiter::TickUntil` and never had that check, so they were
+  unaffected. The check is gone again, and the older games are back to their configured speed.
+
 ## 2026-10-06
 
 ### Added
