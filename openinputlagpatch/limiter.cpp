@@ -23,6 +23,8 @@ LARGE_INTEGER Limiter::frame_end;
 unsigned int Limiter::present_every = 1;
 unsigned int Limiter::display_refresh = 0;
 bool Limiter::refresh_queried = false;
+bool Limiter::tick_on_end_scene = false;
+double Limiter::game_fps = 60.0;
 
 bool Limiter::ShouldPresent() {
 	if (present_every <= 1)
@@ -60,6 +62,11 @@ bool Limiter::UpdateTargetFPS() {
 				break;
 		}
 	}
+
+	// Games that keep their own clock read the frame rate from here (see touhou19.cpp). They're
+	// paced by the same target as the limiter, replay skipping/slowing included
+	game_fps = (double)target;
+
 	wait_amount.QuadPart = (LONGLONG)((double)perf_freq.QuadPart / (double)target);
 	blt_prepare_time.QuadPart = min(wait_amount.QuadPart / 2, perf_freq.QuadPart / 1000 * (LONGLONG)Config::BltPrepareTime);
 
@@ -88,6 +95,7 @@ bool Limiter::SetGameFPS(int fps) {
 	if (fps <= 0)
 		return false;
 	Config::GameFPS = fps;
+	game_fps = (double)fps;
 	return true;
 }
 

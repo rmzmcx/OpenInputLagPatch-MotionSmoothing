@@ -3,7 +3,12 @@
 
 void patch_bytes(void* dst, void* src, size_t len) {
     DWORD prot;
-    VirtualProtect(dst, len, PAGE_READWRITE, &prot);
+    // Don't write anything if the memory couldn't be made writable (an unknown build of a
+    // game, for example): writing anyway would take the whole game down
+    if (!VirtualProtect(dst, len, PAGE_READWRITE, &prot)) {
+        printf("Failed to make 0x%x writable for patching, skipping!\n", (DWORD)dst);
+        return;
+    }
     memcpy(dst, src, len);
     VirtualProtect(dst, len, prot, &prot);
 }

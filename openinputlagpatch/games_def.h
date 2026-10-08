@@ -164,6 +164,10 @@ std::vector<std::vector<const char*>> game_hashes{
 		"25f3978d107890f540b1b813bfdda141727fcbdfdf5d9fc8f107d5812ea9f8e7", // Unpacked Steam release
 		"c0595fe926f2733612a29fac8288c50c6bdb0121ad6cce2bda9f2224b51671cc", // Unpacked Steam release (Steamless v3.0.0.11)
 	},
+	// Touhou 19: Unfinished Dream of All Living Ghost v1.10c
+	{
+		"8918fb39d511c9906ef769c6dd2761e7cb44ded5b7c4c1cd99c8992d12c078e9", // v1.10c original
+	},
 };
 
 const char* game_to_string[] = {
@@ -187,6 +191,7 @@ const char* game_to_string[] = {
 	"Touhou 14.3 v1.00a",
 	"Touhou 16.5 v1.00a",
 	"Touhou 18.5 v1.00a",
+	"Touhou 19 v1.10c",
 };
 static_assert(sizeof(game_to_string) / sizeof(const char*) == (size_t)TouhouGame::MaxValue, "Forgot to update an array");
 
@@ -212,7 +217,8 @@ GamePatchFunction game_to_patch_function[] = {
 	th128_install_patches,
 	th143_install_patches,
 	th165_install_patches,
-	th185_install_patches
+	th185_install_patches,
+	th19_install_patches
 };
 static_assert(sizeof(game_to_patch_function) / sizeof(GamePatchFunction) == (size_t)TouhouGame::MaxValue, "Forgot to update an array");
 
@@ -237,6 +243,7 @@ ReplayCallback game_to_replay_callback[] = {
 	th143_replay_callback,
 	th165_replay_callback,
 	nullptr, // 18.5 has no (accessible) replay functionality
+	nullptr, // th19 has no replay system
 };
 static_assert(sizeof(game_to_replay_callback) / sizeof(ReplayCallback) == (size_t)TouhouGame::MaxValue, "Forgot to update an array");
 #endif

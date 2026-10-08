@@ -16,6 +16,17 @@ public:
 	// in which case we present every Nth frame so the present can't throttle the logic.
 	static bool ShouldPresent();
 
+	// Some games (th19) don't have a usable per-frame hook to tick from. Those get ticked
+	// from the D3D9 EndScene hook instead, which runs exactly once per rendered frame - right
+	// where the game would have run its own frame limiter.
+	static bool tick_on_end_scene;
+
+	// Some games (th19) keep their own clock and compute how long a frame is from the frame
+	// rate. Those games read this value directly, so it has to follow the limiter's target -
+	// otherwise the game's clock keeps running at 60fps no matter what GameFPS is set to.
+	// See touhou19.cpp for the games that use it.
+	static double game_fps;
+
 private:
 	static bool UpdateTargetFPS();
 
