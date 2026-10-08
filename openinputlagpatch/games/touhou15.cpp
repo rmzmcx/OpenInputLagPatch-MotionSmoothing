@@ -56,6 +56,166 @@ int __fastcall th15_window_update_hook(void* self) {
 // which is the "moved forward by zero frames" case, and is what the infrastructure - the pacing,
 // the re-rendering, the overlays of the user's tools, the diagnostics - is validated with.
 
+// ---------------------------------------------------------------------------
+// Frame interpolation, stage 1: project the bullets forward
+// ---------------------------------------------------------------------------
+//
+// The bullets of a stage live in the bullet manager, which is created when a stage starts
+// (0x418E00, which also loads bullet.anm for it) and released when it ends; 0x4E9A6C holds it and
+// is zero while no stage is running.
+//
+// The manager owns a pool of 2000 bullets, allocated up front and threaded onto a free list, and a
+// second list of the bullets that are in play. A bullet that is in play is entered into the second
+// list with a node that is part of the bullet itself: the node holds the bullet followed by the
+// next node, which is how the game's own update walks it (0x41A000).
+//
+// A bullet keeps three floats of position and three floats of velocity. The game moves the
+// position by the velocity once per frame, scaled by the slowdown factor it applies to everything
+// while the screen is full (0x419390, the update of one bullet). This is the movement that has to
+// be reproduced for the extra presentations: they draw the state the game is in at the moment of
+// the game's own present, so the state a fraction of a frame later is the same state with every
+// bullet moved by velocity * that fraction. The game's own logic is never given the moved
+// positions - they are put back right after the extra presentation's render.
+//
+// Two things about the game matter here and are reproduced:
+//
+//   - The game only renders every frames_per_render + 1 of its updates (the value at 0x4E79C4,
+//     which its frame functions compare their counter against), so the step between two rendered
+//     frames is that many of its update steps.
+//   - While the pause screen holds the picture the bullets are neither updated nor drawn (the two
+//     bullet tasks of the game at 0x41A5B0 and 0x41A5E0 test the pause object at 0x4E9A94 for
+//     that), and a bullet that is waiting for a sub-pattern to start is moved by half a step.
+//
+// The drawn sprites follow the position on their own: the bullet draw pass copies the position into
+// the two animation objects every bullet carries before handing them to the sprite queue.
+
+// The bullet manager of the stage that is running (null while no stage is)
+static void** const th15_bullet_manager = (void**)0x004E9A6C;
+static const size_t th15_bullet_list_head = 0x6C; // in it: the first node of the bullets in play
+static const size_t th15_bullet_list_next = 0x04; // in a node: the next node
+static const size_t th15_bullet_position = 0xC38; // in a bullet: its position, 3 floats
+static const size_t th15_bullet_velocity = 0xC44; // in a bullet: what it moves by, 3 floats
+static const size_t th15_bullet_state = 0xC8A;    // in a bullet: what it's doing, 16 bits
+static const size_t th15_bullet_flags = 0x20;     // in a bullet: 0x200 holds it (and hides it)
+// The factor the game scales every movement with (1 unless the screen is full enough for it to
+// slow down)
+static float* const th15_time_scale = (float*)0x004E73E8;
+// How many of the game's updates it runs per rendered frame, minus one
+static unsigned char* const th15_frames_per_render = (unsigned char*)0x004E79C4;
+// The object of the pause screen while it is up, and the flags of it the bullet tasks look at
+static void** const th15_pause_object = (void**)0x004E9A94;
+static const size_t th15_pause_flags = 0x90;
+
+// The bullets that were moved for the presentation being drawn, and the positions they had. The
+// pool holds 2000 of them, so the list of the ones in play can't be longer; only the bullets that
+// were saved are moved, so a list that somehow grew past the array would only cost the projection
+// of the bullets at its end.
+static const size_t th15_bullets_saved_max = 2000;
+struct Th15SavedBullet {
+	void* bullet;
+	float position[3];
+};
+static Th15SavedBullet th15_saved_bullets[th15_bullets_saved_max];
+static size_t th15_saved_bullets_count;
+
+// What the last presentation projected, for the diagnostics (see th15_diag_dump)
+static unsigned int th15_bullets_in_play;
+static unsigned int th15_bullets_moved;
+
+// Whether the pause screen has the picture held. A picture the game isn't updating (or isn't
+// drawing) must not be moved forward either.
+static bool th15_bullets_held() {
+	void* pause = *th15_pause_object;
+	if (pause == nullptr)
+		return false;
+	const unsigned int flags = *(unsigned int*)((char*)pause + th15_pause_flags);
+	// What the game's two bullet tasks stop for: the update task for the low bits, the draw task
+	// for bit 2
+	return ((flags | (flags >> 2)) & 1) != 0 || (flags & 4) != 0;
+}
+
+// How much of a frame's movement a bullet in this state gets. A bullet that is in play moves a
+// whole step, one that is still waiting for its sub-pattern to start moves half of one (0x419390),
+// and one that is in neither state doesn't move at all. 0x200 on a bullet holds it - the game
+// neither moves nor draws such a bullet.
+static float th15_bullet_step_factor(unsigned short state, unsigned int flags) {
+	switch (state) {
+	case 1:
+		return (flags & 0x200) != 0 ? 0.0f : 1.0f;
+	case 2:
+	case 3:
+	case 5:
+		return 0.5f;
+	default:
+		return 0.0f;
+	}
+}
+
+// Moves every bullet in play forward by t frames (t = 0 is the state the game is in) and remembers
+// what it changed, so th15_bullets_undo can put it back.
+static void th15_bullets_advance(float t) {
+	th15_saved_bullets_count = 0;
+	th15_bullets_in_play = 0;
+	th15_bullets_moved = 0;
+
+	void* manager = *th15_bullet_manager;
+	if (manager == nullptr || th15_bullets_held())
+		return;
+
+	unsigned int frames_per_render = *th15_frames_per_render;
+	if (frames_per_render > 2) // the game's own setting only goes to 2
+		frames_per_render = 2;
+
+	float scale = *th15_time_scale;
+	if (!(scale > 0.0f) || scale > 2.0f)
+		scale = 1.0f;
+
+	const float step = t * (float)(frames_per_render + 1) * scale;
+
+	void* node = *(void**)((char*)manager + th15_bullet_list_head);
+	// The list is at most as long as the pool, and this runs with the game paused in its own frame
+	// function, so it can't change under us; the bound is there to keep a list that got corrupted
+	// some other way from running away with the frame.
+	for (size_t guard = 0; node != nullptr && guard < th15_bullets_saved_max * 4; ++guard) {
+		void* bullet = *(void**)node;
+		void* next = *(void**)((char*)node + th15_bullet_list_next);
+		if (bullet == nullptr)
+			break;
+
+		++th15_bullets_in_play;
+		const float factor = th15_bullet_step_factor(
+			*(unsigned short*)((char*)bullet + th15_bullet_state),
+			*(unsigned int*)((char*)bullet + th15_bullet_flags));
+		if (factor != 0.0f && th15_saved_bullets_count < th15_bullets_saved_max) {
+			float* position = (float*)((char*)bullet + th15_bullet_position);
+			const float* velocity = (const float*)((char*)bullet + th15_bullet_velocity);
+			Th15SavedBullet& saved = th15_saved_bullets[th15_saved_bullets_count++];
+			saved.bullet = bullet;
+
+			const float bullet_step = step * factor;
+			for (int axis = 0; axis < 3; ++axis) {
+				saved.position[axis] = position[axis];
+				position[axis] += velocity[axis] * bullet_step;
+			}
+			++th15_bullets_moved;
+		}
+
+		node = next;
+	}
+}
+
+// Puts the positions of every bullet th15_bullets_advance moved back, so the game's own logic sees
+// the state it left behind and not the projected one.
+static void th15_bullets_undo() {
+	for (size_t i = 0; i < th15_saved_bullets_count; ++i) {
+		const Th15SavedBullet& saved = th15_saved_bullets[i];
+		float* position = (float*)((char*)saved.bullet + th15_bullet_position);
+		for (int axis = 0; axis < 3; ++axis)
+			position[axis] = saved.position[axis];
+	}
+	th15_saved_bullets_count = 0;
+}
+
 // The plain calls the render block makes into the game
 static auto th15_reset_sprite_queue = (void(*)())0x0047E3A0;
 static auto th15_prepare_render = (void(__fastcall*)(void*))0x0044D630; // ECX = the render context
@@ -147,6 +307,8 @@ static void th15_diag_dump() {
 	fprintf(file, "logic frame rate: %.2f, configured presentation rate: %.2f\n",
 		Limiter::game_fps, th15_present_rate());
 	fprintf(file, "frames recorded: %u\n", count);
+	fprintf(file, "bullets: %u in play, %u projected forward (last game frame)\n",
+		th15_bullets_in_play, th15_bullets_moved);
 
 	double presents = 0.0;
 	double first = 0.0;
@@ -171,11 +333,14 @@ static void th15_diag_dump() {
 	printf("Wrote oilp_diag.txt\n");
 }
 
-// One extra presentation of the frame: the same render block the game runs, once more, so the
-// state the game is in is drawn and presented again (stage 0; stage 1 will project the objects
-// forward in time first). The tool's frame is readied again, so the object render below draws its
-// overlay into this presentation the same way it does in the game's own one.
-static void th15_extra_presentation() {
+// One extra presentation of the frame: the same render block the game runs, once more, so the state
+// the game is in is drawn and presented again, with the bullets projected t frames ahead of it -
+// t = 0 is the state the game's own presentation showed, and the presentations of one frame reach
+// t = 1, which is where the game's next one takes over. The tool's frame is readied again, so the
+// object render below draws its overlay into this presentation the same way it does in the game's
+// own one - and it reads the projected positions, so a tool that draws something on the bullets
+// (thprac's hitbox display, for example) stays on them.
+static void th15_extra_presentation(float t) {
 	IDirect3DDevice9* device = d3d9_hooked_device();
 	if (device == nullptr)
 		return;
@@ -189,7 +354,11 @@ static void th15_extra_presentation() {
 	*(DWORD*)0x004E81E4 = 0xFF;
 	th15_prepare_render((void*)0x004E77D0);
 	ToolState::ReadyToDraw();
+	// The objects are drawn where they will be t frames from now; the render bakes the positions
+	// into the sprite queue, so they can go back right after it
+	th15_bullets_advance(t);
 	th15_render_objects();
+	th15_bullets_undo();
 	th15_draw_sprite_queue(*(void**)0x00503C18);
 	device->SetTexture(0, nullptr);
 	device->EndScene();
@@ -286,7 +455,10 @@ static HRESULT th15_present_hook() {
 						QueryPerformanceCounter(&present_time[presents]);
 					++presents;
 
-					th15_extra_presentation(); // stage 0: the same state again
+					// Where this presentation sits between the game's own one and the next one:
+					// the frames of one game frame are spread evenly over it, so the k-th of
+					// extras + 1 of them draws the state k/(extras + 1) frames along (stage 1)
+					th15_extra_presentation((float)k / (float)(extras + 1));
 				}
 			}
 		}
