@@ -65,4 +65,9 @@ public:
 	// Whether the window keeps its title bar, and whether it's always on top
 	static BOOL WindowTitleBar;
 	static BOOL WindowAlwaysOnTop;
+	// Keeps the taskbar out of the way while the game's window is the active one, without
+	// holding the window above every other one the way WindowAlwaysOnTop does. 1 marks the
+	// window as a fullscreen one for the shell, 2 holds it on top only while it's active
+	// (see window_mode.cpp for what the two ways of doing that are)
+	static int WindowCoverTaskbar;
 };

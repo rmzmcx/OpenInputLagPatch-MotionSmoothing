@@ -14,7 +14,8 @@
 //
 // Only the games that don't have an in-game option for this need it (Touhou 6 to 9.5); later
 // games have their own screen mode setting, so they're left alone. The window settings below
-// (position, size, title bar, always on top) apply to every supported game though.
+// (position, size, title bar, always on top, keeping the taskbar out of the way) apply to every
+// supported game though.
 namespace WindowMode {
 	// Installs the hooks the window mode question relies on. Call this from the patcher
 	// entry point, before the game's own code runs.

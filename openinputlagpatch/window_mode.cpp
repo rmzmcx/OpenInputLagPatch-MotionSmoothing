@@ -2,10 +2,15 @@
 #include <stdio.h>
 #include <string.h>
 #include <wchar.h>
+#include <shobjidl.h>
 #include "window_mode.h"
 #include "config.h"
 #include "games.h"
 #include "patch_util.h"
+
+// The taskbar list (see CoverTaskbar below) is a shell object; uuid.lib carries its class id
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "uuid.lib")
 
 namespace {
 	typedef HANDLE(WINAPI* CreateMutexA_t)(LPSECURITY_ATTRIBUTES, BOOL, LPCSTR);
@@ -125,6 +130,141 @@ namespace {
 		return *flag == expected;
 	}
 
+	// ---------------------------------------------------------------------------
+	// Keeping the taskbar out of the way without always holding the window on top
+	// ---------------------------------------------------------------------------
+	//
+	// The taskbar is a topmost window itself, so a window can only paint over it by being
+	// topmost as well - that is what the [Window] AlwaysOnTop does, and it is also why that
+	// setting keeps the game above every other window. There are two ways to get the taskbar out
+	// of the way without going that far, and the CoverTaskbar option picks between them:
+	//
+	//   1  tell the shell the window is a fullscreen one (ITaskbarList2::MarkFullscreenWindow),
+	//      which makes it step the taskbar aside while the game is the active window. The window
+	//      stays a normal window, so whatever is switched to still covers it.
+	//   2  hold the window on top only while it is the active window. While playing that is the
+	//      same picture as AlwaysOnTop; as soon as another window is activated the game leaves
+	//      the topmost band again and both that window and the taskbar are above it.
+	//
+	// Neither can mean anything while another window is in front - a window that isn't topmost
+	// is below the taskbar - which is why both are tied to the window being activated and
+	// deactivated. 1 falls back to what 2 does when the taskbar list can't be reached, since the
+	// point of the setting is the taskbar not being in the way.
+	//
+	// The window this is about is the game's own top level one, and it is only ever touched from
+	// the watcher thread below, never from the game's own.
+
+	ITaskbarList2* cover_taskbar_list = nullptr;
+	bool cover_taskbar_list_asked = false;
+	HWND cover_taskbar_window = nullptr;
+	bool cover_taskbar_watching = false;
+	// What the watcher last worked out, so the window is only touched when it changes
+	bool cover_taskbar_active = false;
+
+	ITaskbarList2* get_taskbar_list() {
+		if (cover_taskbar_list_asked)
+			return cover_taskbar_list;
+		cover_taskbar_list_asked = true;
+
+		// The game usually has COM up already, and asking again only returns S_FALSE then
+		// (RPC_E_CHANGED_MODE means somebody else picked the other apartment, which this object
+		// works in just as well)
+		HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+		if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) {
+			printf("Window mode: CoInitializeEx failed (0x%lx), the taskbar will be handled by "
+				"holding the window on top while it's active\n", (unsigned long)hr);
+			return nullptr;
+		}
+
+		ITaskbarList2* list = nullptr;
+		hr = CoCreateInstance(CLSID_TaskbarList, nullptr, CLSCTX_INPROC_SERVER, IID_ITaskbarList2,
+			(void**)&list);
+		if (FAILED(hr) || list == nullptr) {
+			printf("Window mode: the taskbar list isn't available (0x%lx), the taskbar will be "
+				"handled by holding the window on top while it's active\n", (unsigned long)hr);
+			return nullptr;
+		}
+		if (FAILED(list->HrInit())) {
+			printf("Window mode: the taskbar list didn't initialize, the taskbar will be handled "
+				"by holding the window on top while it's active\n");
+			list->Release();
+			return nullptr;
+		}
+
+		cover_taskbar_list = list;
+		return cover_taskbar_list;
+	}
+
+	// The one thing that is actually done to the window: while it is the active one, either the
+	// shell is told it is a fullscreen window, or it is put into the topmost band. Both are only
+	// touched when the answer changes, so whatever reacts to them (the shell, the window's own
+	// messages) never gets something to bounce back and forth from.
+	void apply_cover_state(bool active) {
+		HWND hwnd = cover_taskbar_window;
+		if (hwnd == nullptr || active == cover_taskbar_active)
+			return;
+		cover_taskbar_active = active;
+
+		if (Config::WindowCoverTaskbar == 1) {
+			ITaskbarList2* list = get_taskbar_list();
+			if (list != nullptr) {
+				list->MarkFullscreenWindow(hwnd, active ? TRUE : FALSE);
+				return;
+			}
+			// No taskbar list - fall through to the way that doesn't need the shell
+		}
+
+		// Set while the window is active and cleared when it isn't: with it active nothing but
+		// another topmost window can be in front of it anyway, and without it the window drops
+		// out of the topmost band, so a window switched to covers it again
+		SetWindowPos(hwnd, active ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
+			SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
+	}
+
+	// Watches which window is the active one and keeps the window's state in step with it.
+	//
+	// This runs on a thread of its own instead of in the game's window procedure, and that is the
+	// point: taking the window over means the messages the changes send come back into the same
+	// procedure, so that version could re-enter itself and leave the game stuck before it had
+	// even shown a picture. Asking the shell for its taskbar object can block as well, and on the
+	// game's thread that is just as fatal. Nothing here is done on the game's thread, and the
+	// only things it waits for are its own timer and the window surviving.
+	DWORD WINAPI cover_taskbar_thread(LPVOID) {
+		HWND watched = nullptr;
+
+		for (;;) {
+			// The window can be replaced when the game resets its device, and it isn't worth
+			// touching before it is actually up
+			if (cover_taskbar_window != watched) {
+				watched = cover_taskbar_window;
+				cover_taskbar_active = false;
+			}
+			if (watched == nullptr || !IsWindow(watched))
+				return 0;
+			if (IsWindowVisible(watched))
+				apply_cover_state(GetForegroundWindow() == watched);
+
+			Sleep(50);
+		}
+	}
+
+	void start_cover_taskbar(HWND hwnd) {
+		// The window the taskbar can be in the way of is the top level one
+		HWND root = GetAncestor(hwnd, GA_ROOT);
+		cover_taskbar_window = root != nullptr ? root : hwnd;
+
+		if (cover_taskbar_watching)
+			return;
+		cover_taskbar_watching = true;
+
+		HANDLE thread = CreateThread(nullptr, 0, cover_taskbar_thread, nullptr, 0, nullptr);
+		if (thread != nullptr)
+			CloseHandle(thread);
+		else
+			printf("Window mode: couldn't start the CoverTaskbar watcher (error %lu)\n",
+				(unsigned long)GetLastError());
+	}
+
 	void apply_to_window(HWND hwnd) {
 		// vpatch replaces the window's whole style with a bare WS_VISIBLE popup when the
 		// title bar is disabled, which also removes the sizing border
@@ -143,6 +283,8 @@ namespace {
 
 		if (Config::WindowAlwaysOnTop)
 			SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE);
+		else if (Config::WindowCoverTaskbar)
+			start_cover_taskbar(hwnd);
 
 		printf("Window mode applied: %dx%d at (%d, %d), titlebar: %d, always on top: %d\n",
 			(int)Config::WindowWidth, (int)Config::WindowHeight, (int)Config::WindowX,

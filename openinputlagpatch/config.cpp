@@ -27,6 +27,7 @@ UINT Config::WindowWidth = 640;
 UINT Config::WindowHeight = 480;
 BOOL Config::WindowTitleBar = TRUE;
 BOOL Config::WindowAlwaysOnTop = FALSE;
+int Config::WindowCoverTaskbar = 0;
 
 // Helper macro for loading a specific setting value
 #define LOAD_SETTING(x) Config::x = (decltype(Config::x))GetPrivateProfileInt(TEXT("Option"), TEXT(#x), (int)Config::x, config_path)
@@ -67,6 +68,7 @@ bool Config::Load() {
 	LOAD_WINDOW_SETTING(WindowHeight, "Height");
 	LOAD_WINDOW_SETTING(WindowTitleBar, "TitleBar");
 	LOAD_WINDOW_SETTING(WindowAlwaysOnTop, "AlwaysOnTop");
+	LOAD_WINDOW_SETTING(WindowCoverTaskbar, "CoverTaskbar");
 
 	// Frame interpolation: "0", "-1", a multiplier, or "*<frame rate>"
 	{
