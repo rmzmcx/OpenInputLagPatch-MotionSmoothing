@@ -14,6 +14,25 @@
 static IDirect3D9* d3d9 = nullptr;
 static IDirect3DDevice9* d3d9_device = nullptr;
 
+// The device's own Present, taken before anything else can replace it. The frame interpolation
+// presents its extra frames with this: they should reach the driver, not the Present hook of the
+// user's tool. thprac's hook measures the input latency from the input poll to the next present,
+// which only means something when there is one present per game frame - with the extra ones it
+// would report a fraction of a frame instead.
+static HRESULT(__stdcall* present_unhooked)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*) = nullptr;
+
+// The device the patch hooked, or null while the game doesn't have one
+IDirect3DDevice9* d3d9_hooked_device() {
+	return d3d9_device;
+}
+
+// Presents without going through the hooks other patches and tools put on the device (see above)
+HRESULT d3d9_present_bypassing_hooks() {
+	if (present_unhooked == nullptr || d3d9_device == nullptr)
+		return E_FAIL;
+	return present_unhooked(d3d9_device, nullptr, nullptr, nullptr, nullptr);
+}
+
 // Whether a D3D9 device exists, i.e. whether the D3D9 overlay is the one drawing (overlay.h)
 bool d3d9_overlay_available() {
 	return d3d9_device != nullptr;
@@ -253,6 +272,10 @@ HRESULT __stdcall CreateDevice_hook(IDirect3D9* self, UINT Adapter, D3DDEVTYPE D
 
 	// Overwrite some vtable entries in IDirect3DDevice9
 	DWORD* device_vtbl = *(DWORD**)device;
+
+	// Take the device's own Present before the game (and the tools it loads) get their hands on
+	// the device. This is what the frame interpolation presents its extra frames with (see above)
+	present_unhooked = (HRESULT(__stdcall*)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*))device_vtbl[17];
 
 	Reset_orig = (HRESULT(__stdcall*)(IDirect3DDevice9*, D3DPRESENT_PARAMETERS*))device_vtbl[16];
 	auto patch_data = (DWORD)Reset_hook;

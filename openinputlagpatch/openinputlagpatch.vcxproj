@@ -103,6 +103,7 @@
     <ClCompile Include="d3d8_overlay.cpp" />
     <ClCompile Include="window_mode.cpp" />
     <ClCompile Include="games.cpp" />
+    <ClCompile Include="tool_state.cpp" />
     <ClCompile Include="games\touhou11.cpp" />
     <ClCompile Include="games\touhou12.cpp" />
     <ClCompile Include="games\touhou125.cpp" />

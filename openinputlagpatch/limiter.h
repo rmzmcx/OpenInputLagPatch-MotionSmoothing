@@ -16,6 +16,29 @@ public:
 	// schedule that can drift out of phase with the game's clock.
 	static void TickUntil(double seconds);
 
+	// Waits until the given point in time, in performance counter units. The frame interpolation
+	// uses this to place the extra presentations inside a frame.
+	static void WaitUntil(LARGE_INTEGER target);
+
+	// The games with frame interpolation present more than once per frame. The extra presentations
+	// are the patch's own work and shouldn't count towards the frame time the overlay reports, so
+	// the interpolation code calls this where the game's own frame ended.
+	static void MarkFrameWorkEnd();
+
+	// How long one of the limiter's frames is, and what the display is running at
+	static LARGE_INTEGER FrameWait();
+	static unsigned int DisplayRefresh();
+
+	// Where the current frame started, i.e. where the limiter's wait for it ended. The frame
+	// interpolation spreads the extra presentations over the frame starting from here, so they
+	// can't push the frame past its own length (which would make the limiter fall behind).
+	static LARGE_INTEGER FrameStart();
+
+	// How long the game's own part of the last frame took. The extra presentations cost about as
+	// much as the game's own pass does, so the interpolation uses this to tell whether there is
+	// still room for another presentation before the frame is over.
+	static LARGE_INTEGER FrameWork();
+
 	static bool SetGameFPS(int fps);
 
 	// Whether this frame's present should actually be submitted.
@@ -48,6 +71,7 @@ private:
 	static ReplayCallback replay_callback;
 	static LARGE_INTEGER frame_start;
 	static LARGE_INTEGER frame_end;
+	static LARGE_INTEGER frame_work;
 	static unsigned int present_every; // 1 = present every frame
 	static unsigned int display_refresh;
 	static bool refresh_queried;

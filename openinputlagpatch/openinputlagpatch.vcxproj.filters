@@ -50,6 +50,9 @@
     <ClCompile Include="games.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="tool_state.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="config.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -233,6 +236,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="d3d9_overlay.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="tool_state.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="games\touhou185.h">

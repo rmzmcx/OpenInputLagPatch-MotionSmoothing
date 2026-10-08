@@ -15,6 +15,8 @@ BOOL Config::ShowOverlay = TRUE;
 BOOL Config::DebugConsole = FALSE;
 BOOL Config::DebugWait = FALSE;
 BOOL Config::FixInputGlitching = FALSE;
+int Config::Interpolation = 0;
+UINT Config::InterpolationFPS = 0;
 BOOL Config::AlwaysBlt = TRUE;
 TouhouGame Config::GameOverride = TouhouGame::Unknown;
 BOOL Config::AskWindowMode = FALSE;
@@ -52,6 +54,7 @@ bool Config::Load() {
 	LOAD_SETTING(DebugConsole);
 	LOAD_SETTING(DebugWait);
 	LOAD_SETTING(FixInputGlitching);
+	// Interpolation is read as text below, it has more than one form
 	LOAD_SETTING(AlwaysBlt);
 	LOAD_SETTING(GameOverride);
 
@@ -64,6 +67,21 @@ bool Config::Load() {
 	LOAD_WINDOW_SETTING(WindowHeight, "Height");
 	LOAD_WINDOW_SETTING(WindowTitleBar, "TitleBar");
 	LOAD_WINDOW_SETTING(WindowAlwaysOnTop, "AlwaysOnTop");
+
+	// Frame interpolation: "0", "-1", a multiplier, or "*<frame rate>"
+	{
+		wchar_t value[64] = {};
+		GetPrivateProfileStringW(TEXT("Option"), TEXT("Interpolation"), TEXT("0"), value, 64, config_path);
+		if (value[0] == L'*')
+			Config::InterpolationFPS = (UINT)_wtoi(value + 1);
+		else
+			Config::Interpolation = _wtoi(value);
+
+		if (Config::Interpolation < -1)
+			Config::Interpolation = -1;
+		if (Config::InterpolationFPS > 0 && Config::InterpolationFPS < 60)
+			Config::InterpolationFPS = 60;
+	}
 
 	// Validate options
 	if (Config::GameFPS < 60)

@@ -20,6 +20,7 @@ LARGE_INTEGER Limiter::perf_freq;
 ReplayCallback Limiter::replay_callback = nullptr;
 LARGE_INTEGER Limiter::frame_start;
 LARGE_INTEGER Limiter::frame_end;
+LARGE_INTEGER Limiter::frame_work;
 unsigned int Limiter::present_every = 1;
 unsigned int Limiter::display_refresh = 0;
 bool Limiter::refresh_queried = false;
@@ -157,6 +158,45 @@ inline void half_spin_wait(__int64 target) {
 
 // TODO: Implement https://blat-blatnik.github.io/computerBear/making-accurate-sleep-function/
 
+// Waits until the given point in time (see limiter.h)
+void Limiter::WaitUntil(LARGE_INTEGER target) {
+	switch (Config::Sleep) {
+		case SleepType::Spin:
+			spin_wait(target.QuadPart);
+			break;
+		case SleepType::Vpatch:
+			half_spin_wait(target.QuadPart);
+			break;
+	}
+}
+
+// How long one of the limiter's frames is (see limiter.h)
+LARGE_INTEGER Limiter::FrameWait() {
+	return wait_amount;
+}
+
+// Where the game's own part of the current frame ended, if it was reported (see limiter.h)
+static LARGE_INTEGER frame_work_end;
+
+void Limiter::MarkFrameWorkEnd() {
+	QueryPerformanceCounter(&frame_work_end);
+}
+
+// What the display is running at (see limiter.h)
+unsigned int Limiter::DisplayRefresh() {
+	return display_refresh;
+}
+
+// Where the current frame started (see limiter.h)
+LARGE_INTEGER Limiter::FrameStart() {
+	return frame_start;
+}
+
+// How long the game's own part of the last frame took (see limiter.h)
+LARGE_INTEGER Limiter::FrameWork() {
+	return frame_work;
+}
+
 // Same as Tick, but waits for a specific amount of time instead of the limiter's own schedule.
 // th19 and th20 keep a clock of their own and only run a frame once that clock says one is due.
 // Instead of building a schedule of its own - which can and does end up out of phase with the
@@ -172,6 +212,7 @@ void Limiter::TickUntil(double seconds) {
 	// Calculate how much time it took for the game to process this frame
 	if (frame_start.QuadPart != 0) {
 		__int64 frame_elapsed = now.QuadPart - frame_start.QuadPart;
+		frame_work.QuadPart = frame_elapsed;
 		if (++frame_num % 30 == 0) {
 			char overlay_text[64];
 			sprintf_s(overlay_text, "%.2f/%.2fms", frame_elapsed / (float)perf_freq.QuadPart * 1000.0, (float)Config::BltPrepareTime);
@@ -218,7 +259,13 @@ void Limiter::Tick() {
 	// Calculate how much time it took for the game to process this frame
 	__int64 frame_elapsed = 0;
 	if (frame_start.QuadPart != 0) {
-		frame_elapsed = now.QuadPart - frame_start.QuadPart;
+		// Games with frame interpolation report where their own part of the frame ended, so the
+		// extra presentations the patch adds don't show up in the overlay's frame time
+		__int64 frame_end_time = frame_work_end.QuadPart != 0 ? frame_work_end.QuadPart : now.QuadPart;
+		frame_work_end.QuadPart = 0;
+		frame_elapsed = frame_end_time - frame_start.QuadPart;
+		frame_work.QuadPart = frame_elapsed;
+
 		if (frame_num % 30 == 0) {
 			char overlay_text[64];
 			sprintf_s(overlay_text, "%.2f/%.2fms", frame_elapsed / (float)perf_freq.QuadPart * 1000.0, (float)Config::BltPrepareTime);

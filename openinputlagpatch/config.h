@@ -32,6 +32,18 @@ public:
 	static BOOL DebugConsole;
 	static BOOL DebugWait;
 	static BOOL FixInputGlitching;
+
+	// Frame interpolation (motion smoothing). The value is read as text because it has more than
+	// one form:
+	//   0   = off
+	//   -1  = pick the largest multiple of the game's frame rate the display can show
+	//   N   = present N times per game frame
+	//   *R  = present at R frames per second no matter what the game's frame rate is (e.g. *144)
+	// Interpolation holds the first three forms and InterpolationFPS holds the fourth one, so
+	// InterpolationFPS takes priority when it is set.
+	static int Interpolation;
+	static UINT InterpolationFPS;
+
 	// Keep rendering (and presenting) while the game window isn't active, so the picture
 	// doesn't freeze after alt-tabbing. Equivalent to vpatch's AlwaysBlt.
 	// Only implemented for th06 and th07.
