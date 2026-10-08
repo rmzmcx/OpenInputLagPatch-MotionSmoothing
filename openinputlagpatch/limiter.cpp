@@ -215,15 +215,6 @@ void Limiter::Tick() {
 	LARGE_INTEGER now;
 	QueryPerformanceCounter(&now);
 
-	// The games that are ticked from their own frame code can end up ticking more than once for
-	// the same frame (th19 and th20 call the wait that gets replaced this way again after it
-	// returns, to spin the last bit out until their own clock catches up). A tick that comes in
-	// far sooner than the frame that's currently being timed belongs to that frame, so it must
-	// neither move the limiter's schedule forward nor replace the frame time in the overlay.
-	if (frame_start.QuadPart != 0 && wait_amount.QuadPart >= 4 &&
-		now.QuadPart - frame_start.QuadPart < wait_amount.QuadPart / 4)
-		return;
-
 	// Calculate how much time it took for the game to process this frame
 	__int64 frame_elapsed = 0;
 	if (frame_start.QuadPart != 0) {
