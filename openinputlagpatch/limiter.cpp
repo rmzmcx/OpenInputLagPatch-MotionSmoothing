@@ -23,8 +23,8 @@ LARGE_INTEGER Limiter::frame_end;
 unsigned int Limiter::present_every = 1;
 unsigned int Limiter::display_refresh = 0;
 bool Limiter::refresh_queried = false;
-bool Limiter::tick_on_end_scene = false;
 double Limiter::game_fps = 60.0;
+UINT (*Limiter::external_game_fps)() = nullptr;
 
 bool Limiter::ShouldPresent() {
 	if (present_every <= 1)
@@ -48,11 +48,23 @@ void Limiter::Initialize(ReplayCallback callback) {
 // Updates the limiter's parameters to reflect things such as replay skipping or external FPS changes via the API
 // Returns true if the player is skipping or slowing down a replay
 bool Limiter::UpdateTargetFPS() {
-	UINT target = Config::GameFPS;
+	// The frame rate the game runs at when nothing special is going on. On the games that run
+	// their own clock off a frame rate, an external tool (thprac) may be the one setting it, and
+	// then its value takes priority over the configured one - the game is still paced by this
+	// limiter, so both have to agree on what a frame is
+	UINT base_target = Config::GameFPS;
+	if (external_game_fps) {
+		UINT external = external_game_fps();
+		if (external > 0)
+			base_target = external;
+	}
+
+	// Replay skipping/slowing always goes by the patch's own values, which is also what the
+	// oilp_set_replay_*_fps API writes to
+	UINT target = base_target;
 	if (Config::ReplaySpeedControl && replay_callback) {
 		switch (replay_callback()) {
 			case FPSTarget::Game:
-				target = Config::GameFPS;
 				break;
 			case FPSTarget::ReplaySkip:
 				target = Config::ReplaySkipFPS;
@@ -85,7 +97,7 @@ bool Limiter::UpdateTargetFPS() {
 	if (display_refresh > 0 && target > display_refresh)
 		present_every = (target + display_refresh - 1) / display_refresh;
 
-	return target != Config::GameFPS;
+	return target != base_target;
 }
 
 // Exposed function for outside tools such as thprac to set the framerate
@@ -145,18 +157,77 @@ inline void half_spin_wait(__int64 target) {
 
 // TODO: Implement https://blat-blatnik.github.io/computerBear/making-accurate-sleep-function/
 
+// Same as Tick, but waits for a specific amount of time instead of the limiter's own schedule.
+// th19 and th20 keep a clock of their own and only run a frame once that clock says one is due.
+// Instead of building a schedule of its own - which can and does end up out of phase with the
+// game's clock, pushing the frames, and with them the input-to-present latency, around - the
+// limiter is handed what the game's clock says is left of the frame and waits exactly that.
+void Limiter::TickUntil(double seconds) {
+	if (!initialized)
+		panic_msgbox(L"Tried to tick the limiter before initialization.");
+
+	LARGE_INTEGER now;
+	QueryPerformanceCounter(&now);
+
+	// Calculate how much time it took for the game to process this frame
+	if (frame_start.QuadPart != 0) {
+		__int64 frame_elapsed = now.QuadPart - frame_start.QuadPart;
+		if (++frame_num % 30 == 0) {
+			char overlay_text[64];
+			sprintf_s(overlay_text, "%.2f/%.2fms", frame_elapsed / (float)perf_freq.QuadPart * 1000.0, (float)Config::BltPrepareTime);
+			unsigned long overlay_color = frame_elapsed > blt_prepare_time.QuadPart ? 0xFFFF0000 : 0xFFFFFFFF;
+
+			if (D3D9Overlay::Instance) {
+				D3D9Overlay::Instance->SetText("%s", overlay_text);
+				D3D9Overlay::Instance->text_color = overlay_color;
+			} else if (d3d8_overlay_active()) {
+				d3d8_overlay_set_text(overlay_text, overlay_color);
+			}
+		}
+	}
+
+	// UpdateTargetFPS keeps the frame rate the game's clock runs at in sync with the config
+	UpdateTargetFPS();
+
+	// Wait out whatever the game's clock says is left of the frame
+	if (seconds > 0.0) {
+		LARGE_INTEGER target;
+		target.QuadPart = now.QuadPart + (LONGLONG)(seconds * (double)perf_freq.QuadPart);
+
+		switch (Config::Sleep) {
+			case SleepType::Spin:
+				spin_wait(target.QuadPart);
+				break;
+			case SleepType::Vpatch:
+				half_spin_wait(target.QuadPart);
+				break;
+		}
+	}
+
+	QueryPerformanceCounter(&frame_start);
+}
+
 // Performs the actual frame limiting
 void Limiter::Tick() {
 	if (!initialized)
 		panic_msgbox(L"Tried to tick the limiter before initialization.");
 
+	LARGE_INTEGER now;
+	QueryPerformanceCounter(&now);
+
+	// The games that are ticked from their own frame code can end up ticking more than once for
+	// the same frame (th19 and th20 call the wait that gets replaced this way again after it
+	// returns, to spin the last bit out until their own clock catches up). A tick that comes in
+	// far sooner than the frame that's currently being timed belongs to that frame, so it must
+	// neither move the limiter's schedule forward nor replace the frame time in the overlay.
+	if (frame_start.QuadPart != 0 && wait_amount.QuadPart >= 4 &&
+		now.QuadPart - frame_start.QuadPart < wait_amount.QuadPart / 4)
+		return;
+
 	// Calculate how much time it took for the game to process this frame
 	__int64 frame_elapsed = 0;
 	if (frame_start.QuadPart != 0) {
-		LARGE_INTEGER frame_end;
-		QueryPerformanceCounter(&frame_end);
-		frame_elapsed = frame_end.QuadPart - frame_start.QuadPart;
-
+		frame_elapsed = now.QuadPart - frame_start.QuadPart;
 		if (frame_num % 30 == 0) {
 			char overlay_text[64];
 			sprintf_s(overlay_text, "%.2f/%.2fms", frame_elapsed / (float)perf_freq.QuadPart * 1000.0, (float)Config::BltPrepareTime);

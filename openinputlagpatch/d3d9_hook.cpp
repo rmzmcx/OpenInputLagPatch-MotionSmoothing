@@ -195,11 +195,6 @@ HRESULT __stdcall Reset_hook(IDirect3DDevice9* self, D3DPRESENT_PARAMETERS* pPre
 // Renders the overlay if enabled
 auto EndScene_orig = (HRESULT(__stdcall*)(IDirect3DDevice9*))nullptr;
 HRESULT __stdcall EndScene_hook(IDirect3DDevice9* self) {
-	// Games that have to be ticked from here (see Limiter::tick_on_end_scene) get paced at
-	// this point, which is exactly where they used to run their own frame limiter
-	if (Limiter::tick_on_end_scene)
-		Limiter::Tick();
-
 	if (D3D9Overlay::Instance)
 		D3D9Overlay::Instance->Draw();
 	return EndScene_orig(self);
@@ -273,7 +268,7 @@ HRESULT __stdcall CreateDevice_hook(IDirect3D9* self, UINT Adapter, D3DDEVTYPE D
 		patch_bytes(&device_vtbl[26], &patch_data, sizeof(DWORD));
 	}
 
-	if (Config::ShowOverlay || Limiter::tick_on_end_scene) {
+	if (Config::ShowOverlay) {
 		EndScene_orig = (HRESULT(__stdcall*)(IDirect3DDevice9*))device_vtbl[42];
 		patch_data = (DWORD)EndScene_hook;
 		patch_bytes(&device_vtbl[42], &patch_data, sizeof(DWORD));
