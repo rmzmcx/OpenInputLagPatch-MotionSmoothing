@@ -54,6 +54,14 @@ OpenInputLagPatch 通过游戏可执行文件同目录下的 `openinputlagpatch.
 ; Default: 60
 GameFPS = 60
 
+; Frame interpolation (motion smoothing): draws extra frames between the game's own ones, so the
+; game stays at its own frame rate but is presented more often
+; 0: off, -1: pick the largest multiple of the game's frame rate the display can show,
+; N: present N times per game frame, *R: present at R frames per second (e.g. *144)
+; Only implemented for Touhou 15, and only its bullets are moved forward so far
+; Default: 0
+Interpolation = 0
+
 ; Allow controlling the speed of replay playback
 ; This will override the in-game replay speed control if it exists
 ; Default: 1
@@ -162,12 +170,14 @@ AlwaysOnTop = 0
 
 `Direct3DCreate9` 被钩住并改用 `Direct3DCreate9Ex`，从而可以使用 `IDirect3DDevice9Ex::SetMaximumFrameLatency`，再减少 0~2 帧输入延迟。**这个优化只对老的 blt 模型呈现有效**（原生 D3D9，或者用 d3d8to9 的场合）：装了 dgVoodoo2 之后游戏是通过 DXGI 的 flip 模型交换链呈现的，队列本身已经压到最短，这个优化无事可做——dgVoodoo2 的 flip 模型也正是它在实测中延迟最低的原因。
 
+补帧（`Interpolation`）把每一游戏帧呈现多次：游戏仍然按自己的帧率跑逻辑，补丁在游戏自己那次呈现之后、下一帧逻辑开始之前，把同一份状态再画几遍并呈现（60fps 的游戏在 180hz 上就是 0、半帧、一帧各呈现一次）。zun 的引擎把逻辑与绘制分开，所以重画同一份状态本身是安全的；要让额外帧里的画面确实在动，补丁在每次额外呈现之前把子弹按「速度 × 这一帧的几分之几」前移（和游戏自己的 `位置 += 速度` 同一套算法），画完立刻还原，游戏自己的逻辑永远看不到这些改动。额外呈现走的是设备自己的 `Present`，不经过 thprac 等工具替换掉的那个（它们按"一游戏帧一次呈现"来测输入延迟，多吃到额外呈现会让读数变成整帧的几分之一）；工具在这一帧已经建好的覆盖层会被重画进每次额外呈现，但不会重跑它的 UI 与输入代码（按住方向键不会在它菜单里连跳）。目前只有绀珠传（th15）实现了补帧，而且只有子弹会被前移。
+
 最后，游戏自带的限帧器被禁用，改用大幅简化的 vpatch 限帧器。
 
 # TODO
 
 - 支持更多作品
 - 修 bug、加新功能
-- 让新的插帧功能正常工作
+- 把补帧扩展到其它作品，并补上绀珠传的敌人与直线激光
 - 看看 vpatch 的 `AutoBltPrepareTime` 算法（不确定）
 - 可能还有我忘了的

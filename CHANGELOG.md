@@ -11,6 +11,38 @@ is also the record of what has actually been verified rather than just what was 
 
 ### Added
 
+- **Touhou 15 gets frame interpolation** (`641f5ac`, `7456449`)
+
+  The game keeps running at its own frame rate, but every one of its frames is put on screen more
+  than once - 60fps logic on a 180hz display is presented at 0, half a frame and one frame - which
+  is what the new `Interpolation` option (off by default) sets up. The extra presentations draw the
+  state the game is already in, so they need something inside them that moves to be worth anything:
+  the bullets are projected forward by velocity * the fraction of a frame the presentation stands
+  for, before each extra presentation and put back right after the render. That is the movement the
+  game applies to a bullet itself between two of its frames, and the game's own logic never sees
+  the projected positions.
+
+  The extras are presented with the device's own Present, taken before any tool can replace it:
+  thprac's Present hook measures the input latency assuming one present per game frame, and with
+  the extras it would report a fraction of a frame instead. Presenting the scene again also erases
+  the overlay a tool has already drawn for the frame - thprac draws its ImGui overlay from the
+  return of the object render - so the value that says "the tool's frame is built" is found at
+  runtime and set again before each extra presentation, which draws that same overlay into every
+  one of them without running any of the tool's own code: running it again would advance ImGui's
+  key repeat once per presentation, and holding a direction key would skip through its menus
+  several times too fast.
+
+  The bullets are found through the manager the game builds for them when a stage starts - the one
+  that loads bullet.anm - rather than by looking at what their sprites look like, so this is
+  exactly the game's bullets: an enemy bullet isn't one of the sprite objects the rest of the
+  screen is made of, it is a larger object of its own on that manager's list, with its position and
+  the movement it gets per frame next to each other at another set of offsets. Confirmed in-game:
+  the presentations land evenly on a 180hz display with the game's own frame rate unchanged, the
+  bullets move between them (the diagnostics report every bullet in play as projected), and the
+  pause screens, the menus, thprac's overlay and its latency reading all behave. The enemies and
+  the straight lasers are not projected yet - they come with their own later steps - and the curve
+  lasers won't be done at all.
+
 - **Touhou 19 v1.10c is supported** (`0c8a926`)
 
   th19 is a D3D9 game, so it gets the D3D9 side of the patch - the overlay, the D3D9Ex upgrade

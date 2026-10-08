@@ -50,6 +50,14 @@ OpenInputLagPatch is configured via a file called `openinputlagpatch.ini` stored
 ; Default: 60
 GameFPS = 60
 
+; Frame interpolation (motion smoothing): draws extra frames between the game's own ones, so the
+; game stays at its own frame rate but is presented more often
+; 0: off, -1: pick the largest multiple of the game's frame rate the display can show,
+; N: present N times per game frame, *R: present at R frames per second (e.g. *144)
+; Only implemented for Touhou 15, and only its bullets are moved forward so far
+; Default: 0
+Interpolation = 0
+
 ; Allow controlling the speed of replay playback
 ; This will override the in-game replay speed control if it exists
 ; Default: 1
@@ -157,11 +165,13 @@ AlwaysOnTop = 0
 
 `Direct3DCreate9` is hooked to use `Direct3DCreate9Ex` instead, which allows the use of `IDirect3DDevice9Ex::SetMaximumFrameLatency`, which should shave off an additional 0 to 2 frames of input lag. **This only does anything for the old blt model presentation** (native D3D9, or D3D8 through d3d8to9): with dgVoodoo2 the game is presented through a DXGI flip model swapchain, whose queue is already as short as it gets, so there is nothing left for this to save - that flip model is also why dgVoodoo2 measures best for input lag.
 
+Frame interpolation (`Interpolation`) presents every game frame more than once: the game keeps running at its own frame rate, and the patch draws the same state again right after the game's own present, spreading the extra presentations over the rest of the frame (a 60fps game on a 180hz display gets one at 0, half a frame and one frame). ZUN's engine separates the logic from the rendering, so drawing the same state again is safe by itself; for the extra presentations to show motion, the patch moves the bullets forward by "velocity × the fraction of a frame" before each of them - the same movement the game applies itself - and puts them back right after the render, so the game's own logic never sees the moved positions. The extras go through the device's own Present rather than the hooks tools put in front of it (which measure the input latency assuming one present per game frame, and would report a fraction of a frame with the extras), and the overlay a tool has already built is drawn into every one of them without running any of its UI or input code (holding a direction key won't skip through its menus). Only Touhou 15 has this so far, and only the bullets are moved forward.
+
 Finally, the in-game frame limiter is disabled and a heavily simplified version of vpatch's frame limiter is used.
 
 # TODO
 - Support more games
 - fix bugs and add more features
-- make the new frame interpolation function work properly
+- extend the frame interpolation to more games, and to the enemies and the straight lasers of Touhou 15
 - Take a look at vpatch's `AutoBltPrepareTime` algorithm(Not sure)
 - Probably more stuff I forgot
