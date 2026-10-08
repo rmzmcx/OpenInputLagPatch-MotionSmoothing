@@ -7,6 +7,74 @@ Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/O
 Only changes that have been tested in-game and confirmed working are listed here, so this file
 is also the record of what has actually been verified rather than just what was attempted.
 
+## 2026-10-08
+
+### Added
+
+- **Touhou 19 v1.10c is supported** (`0c8a926`)
+
+  th19 is a D3D9 game, so it gets the D3D9 side of the patch - the overlay, the D3D9Ex upgrade
+  and the frame limiter - and, like the other D3D9 games, no question about the screen mode on
+  boot. It has no replay system, so there is no replay speed control for it. Its executable is
+  the first one with ASLR enabled, so every address is rebased onto wherever it got loaded
+  instead of being used as it is.
+
+  Unlike the older games, th19 doesn't run its logic once per rendered frame: each update
+  advances the engine's clock by one frame at a time and only runs the game's logic once that
+  clock says a frame has passed. How long a frame is comes from a hardcoded 60fps that's read
+  out of a few instructions, so replacing the frame limiter alone left the game running at its
+  original speed no matter what `GameFPS` was set to. Those instructions read the patch's frame
+  rate now, which is what thprac's FPS option does for th11 and up.
+
+- **Touhou 20 v1.00c is supported** (`18e1b2f`)
+
+  th20 runs on the same engine as th19, so the same support applies to it. Unlike th19 it has a
+  replay system, so it also gets replay speed control: holding the shoot key fast forwards a
+  replay and holding the slow key slows it down. The shoot key is th20's own replay fast
+  forward - holding ctrl does nothing in these games, which is how th17 and th18 behave too -
+  and the frame rates used are `ReplaySkipFPS` and `ReplaySlowFPS`.
+
+### Fixed
+
+- **th19 and th20 had a whole frame of extra input lag, and the overlay reported the wrong
+  time** (`18e1b2f`)
+
+  Both games pace their frames with a clock of their own instead of calling their frame limiter
+  from the gameplay path, and the limiter was ticked from the D3D9 EndScene hook, which runs
+  before the frame is presented: the wait landed between the input being read and the picture
+  being presented, so thprac's latency display showed a full frame (~16ms) instead of the ~1ms
+  the game needs.
+
+  The wait happens right where the game itself waits now - after the previous frame was
+  presented, before the input is read - and it uses the time the game has already worked out:
+  right before its own `Sleep(1)` the code has the time left until its clock's next deadline,
+  so the wait ends exactly when that clock says the frame is due and the two can't drift apart.
+  The wait is precise where the game's own `Sleep(1)` wasn't, which is also where the occasional
+  2.5ms latency spikes came from, and the overlay reports how long the game's own work took -
+  the same thing thprac shows - instead of the whole frame. `BltPrepareTime` doesn't apply to
+  these two games any more: the wait is the game's own clock and not a schedule of the patch's.
+
+- **Missing out on a multiple of 60hz display mode no longer quits the game** (`0c8a926`)
+
+  With `FullscreenRefreshRate = 2` (the default) a fullscreen resolution that has no refresh
+  rate that's a multiple of 60 ended in a panic message that killed the game. It lets the
+  runtime pick a mode for it instead, the same way the D3D8 path already did.
+
+### Changed
+
+- **An external tool's frame rate wins over `GameFPS` on th19 and th20** (`18e1b2f`)
+
+  Both games run their own clock off a frame rate, and thprac points that at a variable of its
+  own for them: its modules for these two games don't look for the patch at all, so instead of
+  handing its frame rate over through the patch's API it patches the engine's clock itself. The
+  patch takes the operand back when that happens, because the replay speed control needs to own
+  the clock, but it reads that variable and follows its value - so an external tool's frame rate
+  still applies, and takes priority over the configured `GameFPS`.
+
+  Replay speed control always goes by the patch's own `ReplaySkipFPS` and `ReplaySlowFPS` on
+  these two games, since thprac's replay sliders can't reach the patch there; they can be set in
+  the ini instead.
+
 ## 2026-10-06
 
 ### Added

@@ -13,30 +13,32 @@ A **heavily work-in-progress** replacement for [vpatch](https://ux.getuploader.c
 # Compatibility
 Not every game is supported, but support for more games is actively being worked on.
 
-| Game                            | Supported | Replay speed control |
-|---------------------------------|-----------|----------------------|
-| Embodiment of Scarlet Devil     |✅|✅|
-| Perfect Cherry Blossom          |✅|✅|
-| Imperishable Night              |✅|✅|
-| Phantasmagoria of Flower View   |✅|✅|
-| Shoot the Bullet                |✅|✅|
-| Mountain of Faith               |✅|✅|
-| Uwabami Breakers                |❌|❔|
-| Subterranean Animism            |✅|✅|
-| Undefined Fantastic Object      |✅|✅|
-| Double Spoiler                  |✅|✅|
-| Great Fairy Wars                |✅|✅|
-| Ten Desires                     |✅|✅|
-| Double Dealing Character        |✅|✅|
-| Impossible Spell Card           |✅|✅|
-| Legacy of Lunatic Kingdom       |✅|✅|
-| Hidden Star in Four Seasons     |✅|✅|
-| Violet Detector                 |✅|✅|
-| Wily Beast and Weakest Creature |✅|✅|
-| Unconnected Marketeers          |✅|✅|
-| 100th Black Market              |✅|N/A|
-| Danmakufu v0.12m                |❌|❔|
-| Danmakufu ph3                   |❌|❔|
+| Game                                 | Supported | Replay speed control |
+|--------------------------------------|-----------|----------------------|
+| Embodiment of Scarlet Devil          |✅|✅|
+| Perfect Cherry Blossom               |✅|✅|
+| Imperishable Night                   |✅|✅|
+| Phantasmagoria of Flower View        |✅|✅|
+| Shoot the Bullet                     |✅|✅|
+| Mountain of Faith                    |✅|✅|
+| Uwabami Breakers                     |❌|❔|
+| Subterranean Animism                 |✅|✅|
+| Undefined Fantastic Object           |✅|✅|
+| Double Spoiler                       |✅|✅|
+| Great Fairy Wars                     |✅|✅|
+| Ten Desires                          |✅|✅|
+| Double Dealing Character             |✅|✅|
+| Impossible Spell Card                |✅|✅|
+| Legacy of Lunatic Kingdom            |✅|✅|
+| Hidden Star in Four Seasons          |✅|✅|
+| Violet Detector                      |✅|✅|
+| Wily Beast and Weakest Creature      |✅|✅|
+| Unconnected Marketeers               |✅|✅|
+| 100th Black Market                   |✅|N/A|
+| Unfinished Dream of All Living Ghost |✅|N/A|
+| Fossilized Wonders                   |✅|✅|
+| Danmakufu v0.12m                     |❌|❔|
+| Danmakufu ph3                        |❌|❔|
 
 # Configuration
 OpenInputLagPatch is configured via a file called `openinputlagpatch.ini` stored in the same directory as the game executable. The game will run perfectly fine without the config file, but there's always the option of manually creating one. Here's an example config file:
