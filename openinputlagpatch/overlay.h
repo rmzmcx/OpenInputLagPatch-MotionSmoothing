@@ -42,3 +42,9 @@ void overlay_show_present_rate(bool show);
 // and starting at x = 32); the overlay scales them to whatever size the back buffer is. Passing 0
 // for picture_width goes back to the right edge of the window.
 void overlay_set_present_rate_anchor(int picture_right, int picture_width);
+
+// Puts that frame rate right after the line the patch draws in the bottom left corner (the one
+// that says how long the game's own render took) instead of at the right edge of the window or of
+// the game's picture, so the two readouts sit next to each other. Takes priority over
+// overlay_set_present_rate_anchor.
+void overlay_set_present_rate_follow_text(bool follow);

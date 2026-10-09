@@ -22,6 +22,10 @@ static double present_rate = 0.0;
 static int present_rate_right = 0;
 static int present_rate_width = 0;
 
+// Whether it goes right after the line the patch draws in the bottom left corner instead (see
+// overlay_set_present_rate_follow_text)
+static bool present_rate_follows_text = false;
+
 void overlay_show_present_rate(bool show) {
 	present_rate_shown = show;
 }
@@ -29,6 +33,10 @@ void overlay_show_present_rate(bool show) {
 void overlay_set_present_rate_anchor(int picture_right, int picture_width) {
 	present_rate_right = picture_right;
 	present_rate_width = picture_width;
+}
+
+void overlay_set_present_rate_follow_text(bool follow) {
+	present_rate_follows_text = follow;
 }
 
 void overlay_mark_presentation() {
@@ -241,11 +249,9 @@ void D3D9Overlay::SetupAtlasUVTable() {
     char_height = (12.0f / (float)FONT_ATLAS_HEIGHT) * (FONT_ATLAS_HEIGHT / (float)FONT_ATLAS_HEIGHT_P2);
 }
 
-// Writes the geometry of one line of text, with its background, into the overlay's buffers. A
-// line drawn right aligned is the frame rate, and sits at the right edge of the window unless the
-// game pointed it at the right edge of its own picture (see overlay.h); the rest sit at the left
-// edge.
-int D3D9Overlay::UpdateBuffers(char* text, D3DCOLOR color, bool right_aligned) {
+// Writes the geometry of one line of text, with its background, into the overlay's buffers, with
+// its left edge at x_offset
+int D3D9Overlay::UpdateBuffers(char* text, D3DCOLOR color, float x_offset) {
     // Get the length of the string
     auto text_len = strlen(text);
     if (text_len > OVERLAY_MAX_CHARS)
@@ -260,16 +266,6 @@ int D3D9Overlay::UpdateBuffers(char* text, D3DCOLOR color, bool right_aligned) {
     // Calculate the offsets
     float padding = 1.0f;
     float bg_width = (float)text_len * 7.0f + padding * 2.0f;
-    float x_offset = 0.0f;
-    if (right_aligned) {
-        if (present_rate_width > 0) {
-            // The game's own picture may be shown smaller or larger than it is drawn in, so the
-            // edge it asked for moves with the window
-            x_offset = (float)present_rate_right * (float)window_width / (float)present_rate_width;
-        } else {
-            x_offset = (float)window_width - bg_width;
-        }
-    }
     float y_offset = (float)window_height - 12.0f - padding * 2.0f;
 
     // Write the background geometry
@@ -367,7 +363,7 @@ void D3D9Overlay::Draw() {
     SetupViewportAndTransforms();
 
     // Draw shit
-    auto rect_count = UpdateBuffers(text_buffer, text_color, false);
+    auto rect_count = UpdateBuffers(text_buffer, text_color, 0.0f);
 
     d3d9_device->SetStreamSource(0, d3d9_vertex_buf, 0, sizeof(CUSTOMVERTEX));
     d3d9_device->SetIndices(d3d9_index_buf);
@@ -379,7 +375,19 @@ void D3D9Overlay::Draw() {
     if (present_rate_shown) {
         char rate_text[32];
         sprintf_s(rate_text, "%.1f fps", present_rate);
-        rect_count = UpdateBuffers(rate_text, D3DCOLOR_COLORVALUE(1.0, 1.0, 1.0, 0.9), true);
+        // Right after the line above, at the right edge of the game's own picture, or at the right
+        // edge of the window (see overlay.h)
+        float rate_x;
+        if (present_rate_follows_text) {
+            rate_x = (float)strlen(text_buffer) * 7.0f + 2.0f + 6.0f;
+        } else if (present_rate_width > 0) {
+            // The game's own picture may be shown smaller or larger than it is drawn in, so the
+            // edge it asked for moves with the window
+            rate_x = (float)present_rate_right * (float)window_width / (float)present_rate_width;
+        } else {
+            rate_x = (float)window_width - ((float)strlen(rate_text) * 7.0f + 2.0f);
+        }
+        rect_count = UpdateBuffers(rate_text, D3DCOLOR_COLORVALUE(1.0, 1.0, 1.0, 0.9), rate_x);
         d3d9_device->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, rect_count * 2 * 3, 0, rect_count * 2);
     }
 

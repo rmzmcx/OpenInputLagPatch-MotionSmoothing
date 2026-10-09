@@ -290,6 +290,9 @@ static float th15_tracked_saved[th15_tracked_max][3];
 
 // Diagnostics: the largest movement the player's own position had since the last dump
 static float th15_player_movement;
+// Diagnostics: how many sprites this frame couldn't be given a movement record (see
+// th15_sprite_motion - it should stay 0)
+static unsigned int th15_sprites_untracked;
 
 // The animation object a sprite id refers to: the same lookup the game does (0x488510), written
 // out instead of called. Calling it would be the way to get this wrong - it takes its argument on
@@ -315,25 +318,45 @@ static void* th15_object_by_id(unsigned int id) {
 	return object;
 }
 
-// The record of a sprite, made the first time it is seen (sprite is the position it is moved by)
+// The record of a sprite, made the first time it is seen (sprite is the position it is moved by).
+//
+// Nothing tells a sprite that is gone from a slot that is still up, so a record can't be dropped
+// when its sprite stops being drawn - which means they have to be recycled instead. Without that,
+// everything a stage ever puts on screen keeps a record of its own, the table fills up, and from
+// then on every sprite that isn't in it already quietly stops being moved (the player itself is
+// the first to suffer when a stage is started again, since it is built at another address then).
+//
+// The one that was measured longest ago is the one recycled: a record that wasn't measured in the
+// frame right before this one has nothing to compare against anyway. A record that is in use this
+// frame is never taken, so the sprite it belongs to keeps moving with the others.
 static Th15SpriteMotion* th15_sprite_motion(void* sprite) {
+	Th15SpriteMotion* empty = nullptr;
+	Th15SpriteMotion* oldest = nullptr;
 	for (size_t i = 0; i < th15_tracked_max; ++i) {
-		if (th15_motions[i].sprite == sprite)
-			return &th15_motions[i];
-	}
-	for (size_t i = 0; i < th15_tracked_max; ++i) {
-		if (th15_motions[i].sprite != nullptr)
-			continue;
 		Th15SpriteMotion& motion = th15_motions[i];
-		motion.sprite = sprite;
-		motion.frame = 0;
-		motion.last_x = 0.0f;
-		motion.last_y = 0.0f;
-		motion.delta_x = 0.0f;
-		motion.delta_y = 0.0f;
-		return &motion;
+		if (motion.sprite == sprite)
+			return &motion;
+		if (motion.sprite == nullptr) {
+			if (empty == nullptr)
+				empty = &motion;
+			continue;
+		}
+		if (motion.frame == th15_motion_frame)
+			continue;
+		if (oldest == nullptr || motion.frame < oldest->frame)
+			oldest = &motion;
 	}
-	return nullptr;
+
+	Th15SpriteMotion* motion = empty != nullptr ? empty : oldest;
+	if (motion == nullptr)
+		return nullptr;
+	motion->sprite = sprite;
+	motion->frame = 0;
+	motion->last_x = 0.0f;
+	motion->last_y = 0.0f;
+	motion->delta_x = 0.0f;
+	motion->delta_y = 0.0f;
+	return motion;
 }
 
 // Adds a sprite to what this frame moves, and works out what it moved by since the frame before
@@ -341,9 +364,17 @@ static Th15SpriteMotion* th15_sprite_motion(void* sprite) {
 static void th15_track(float* shift, const void* watch, bool watch_is_int) {
 	if (th15_tracked_count >= th15_tracked_max)
 		return;
+	// Two ids can name the same sprite (the game doesn't mind), and moving one twice would put it
+	// twice as far out and only be able to put back one of the two
+	for (size_t i = 0; i < th15_tracked_count; ++i) {
+		if (th15_tracked[i].shift == shift)
+			return;
+	}
 	Th15SpriteMotion* motion = th15_sprite_motion(shift);
-	if (motion == nullptr)
+	if (motion == nullptr) {
+		++th15_sprites_untracked;
 		return;
+	}
 
 	float x, y;
 	if (watch_is_int) {
@@ -386,6 +417,7 @@ static void th15_track(float* shift, const void* watch, bool watch_is_int) {
 // This runs once per game frame, from the game's own present (see th15_present_hook).
 static void th15_player_measure() {
 	th15_tracked_count = 0;
+	th15_sprites_untracked = 0;
 	++th15_motion_frame;
 
 	void* player = *th15_player;
@@ -521,24 +553,39 @@ static bool th15_is_straight_laser(const void* laser) {
 	return false;
 }
 
+// The lasers are handed out and freed one at a time, so their records have to be recycled the same
+// way the sprites' are (see th15_sprite_motion)
 static Th15LaserMotion* th15_laser_motion(void* laser) {
 	for (size_t i = 0; i < th15_lasers_max; ++i) {
 		if (th15_laser_motions[i].laser == laser)
 			return &th15_laser_motions[i];
 	}
+
+	Th15LaserMotion* empty = nullptr;
+	Th15LaserMotion* oldest = nullptr;
 	for (size_t i = 0; i < th15_lasers_max; ++i) {
-		if (th15_laser_motions[i].laser != nullptr)
-			continue;
 		Th15LaserMotion& motion = th15_laser_motions[i];
-		motion.laser = laser;
-		motion.frame = 0;
-		motion.last_x = motion.last_y = 0.0f;
-		motion.last_angle = motion.last_length = 0.0f;
-		motion.delta_x = motion.delta_y = 0.0f;
-		motion.delta_angle = motion.delta_length = 0.0f;
-		return &motion;
+		if (motion.laser == nullptr) {
+			if (empty == nullptr)
+				empty = &motion;
+			continue;
+		}
+		if (motion.frame == th15_laser_frame)
+			continue;
+		if (oldest == nullptr || motion.frame < oldest->frame)
+			oldest = &motion;
 	}
-	return nullptr;
+
+	Th15LaserMotion* motion = empty != nullptr ? empty : oldest;
+	if (motion == nullptr)
+		return nullptr;
+	motion->laser = laser;
+	motion->frame = 0;
+	motion->last_x = motion->last_y = 0.0f;
+	motion->last_angle = motion->last_length = 0.0f;
+	motion->delta_x = motion->delta_y = 0.0f;
+	motion->delta_angle = motion->delta_length = 0.0f;
+	return motion;
 }
 
 // Looks at every straight laser in play and works out what it moved by since the frame before.
@@ -742,6 +789,8 @@ static void th15_diag_dump() {
 		th15_bullets_in_play, th15_bullets_moved);
 	fprintf(file, "player: %u sprite(s) moved (the player, its options and its shots)\n",
 		(unsigned int)th15_tracked_count);
+	fprintf(file, "player: %u sprite(s) this frame had no movement record (should stay 0)\n",
+		th15_sprites_untracked);
 	fprintf(file, "player movement: up to %.2f px per frame since the last dump\n",
 		th15_player_movement);
 	th15_player_movement = 0.0f;
@@ -1021,11 +1070,10 @@ void th15_install_patches() {
 		// something (and is only higher than the game's own rate) with the interpolation on - so
 		// it is only shown when that and the overlay are both on
 		overlay_show_present_rate(Config::ShowOverlay && (Config::Interpolation != 0 || Config::InterpolationFPS != 0));
-		// ...and it goes at the right edge of the play field rather than the bottom right corner
-		// of the window, where it would sit on top of the frame rate and slowdown readout thprac
-		// draws there. The th15 picture is 640x480 and the field is 384 wide at x = 32, so its
-		// right edge is at 416 (see overlay.h)
-		overlay_set_present_rate_anchor(416, 640);
+		// ...and it goes right after the line the patch itself draws in the bottom left corner,
+		// rather than at the bottom right corner of the window where it would sit on top of the
+		// frame rate and slowdown readout thprac draws there (see overlay.h)
+		overlay_set_present_rate_follow_text(true);
 	}
 }
 

@@ -65,8 +65,9 @@ GameFPS = 60
 ; 画出来之后再立刻还原，所以游戏自己的逻辑和随机数完全不受影响。这里没有保存上一帧、也没有做
 ; 反向插值——是单向的向前外推（extrapolation），不是常见的双向插值。
 ;
-; 目前只对东方绀珠传（th15）生效：子弹、自机本体（含子机与自机弹）、直线激光会被外推；
-; 敌人本体还没做，曲线激光不做。开启 ShowOverlay 时，会在游戏区右边显示实际的呈现帧率。
+; 目前对东方辉针城（th14）与东方绀珠传（th15）生效：子弹、自机本体（含子机与自机弹）、
+; 直线激光会被外推；敌人本体不做，曲线激光不做。开启 ShowOverlay 时，会在左下角「渲染耗时」
+; 那行字的右边显示实际的呈现帧率。
 ;
 ; 取值：0 关闭；-1 取显示屏刷新率里游戏帧率的最大整数倍；N 每游戏帧呈现 N 次；
 ;       *R 按固定呈现率（例如 *144，小数部分会在帧与帧之间累计）。
@@ -79,10 +80,10 @@ GameFPS = 60
 ; drawn, and put back again, so the game's own logic and its random numbers never see it. No
 ; previous frame is kept and nothing is interpolated backwards - this is forward extrapolation.
 ;
-; Only Touhou 15 so far: its bullets, the player itself (with its options and its shots) and the
-; straight lasers are extrapolated; the enemies aren't done yet and the curve lasers are left
-; alone. With ShowOverlay on, the rate the frames are actually presented at is shown at the right
-; edge of the play area.
+; Touhou 14 and 15 for now: their bullets, the player itself (with its options and its shots) and
+; the straight lasers are extrapolated; the enemies aren't interpolated and the curve lasers are
+; left alone. With ShowOverlay on, the rate the frames are actually presented at is shown next to
+; the render time line in the bottom left corner.
 ;
 ; 0: off, -1: pick the largest multiple of the game's frame rate the display can show,
 ; N: present N times per game frame, *R: present at R frames per second (e.g. *144)
