@@ -6,6 +6,58 @@
 
 D3D9Overlay* D3D9Overlay::Instance = nullptr;
 
+// The frame rate the frames are actually presented at, for the display along the bottom of the
+// screen (see overlay.h). It is measured from the presentations themselves - the game's own one
+// and every extra frame the interpolation adds - so it shows what the display is really getting,
+// not what the config asked for.
+static bool present_rate_shown = false;
+static unsigned int present_rate_count = 0;
+static LARGE_INTEGER present_rate_freq = {};
+static LARGE_INTEGER present_rate_since = {};
+static double present_rate = 0.0;
+
+// Where that frame rate is drawn, if the game pointed it at the right edge of its own picture
+// rather than the right edge of the window (see overlay_set_present_rate_anchor). Zero width means
+// the game said nothing and the window's right edge is used.
+static int present_rate_right = 0;
+static int present_rate_width = 0;
+
+void overlay_show_present_rate(bool show) {
+	present_rate_shown = show;
+}
+
+void overlay_set_present_rate_anchor(int picture_right, int picture_width) {
+	present_rate_right = picture_right;
+	present_rate_width = picture_width;
+}
+
+void overlay_mark_presentation() {
+	// The first presentation only starts the clock; the rate needs a window to be measured over
+	if (present_rate_freq.QuadPart == 0) {
+		QueryPerformanceFrequency(&present_rate_freq);
+		present_rate_since.QuadPart = 0;
+	}
+
+	LARGE_INTEGER now;
+	QueryPerformanceCounter(&now);
+	if (present_rate_since.QuadPart == 0) {
+		present_rate_since = now;
+		present_rate_count = 0;
+		return;
+	}
+
+	present_rate_count++;
+	const double elapsed = (double)(now.QuadPart - present_rate_since.QuadPart) /
+		(double)present_rate_freq.QuadPart;
+	if (elapsed >= 0.5) {
+		const double measured = (double)present_rate_count / elapsed;
+		// Smoothed a little so the number doesn't jump around every time it is worked out again
+		present_rate = present_rate <= 0.0 ? measured : present_rate * 0.5 + measured * 0.5;
+		present_rate_since = now;
+		present_rate_count = 0;
+	}
+}
+
 struct CUSTOMVERTEX {
     float pos[3];
     D3DCOLOR col;
@@ -189,7 +241,11 @@ void D3D9Overlay::SetupAtlasUVTable() {
     char_height = (12.0f / (float)FONT_ATLAS_HEIGHT) * (FONT_ATLAS_HEIGHT / (float)FONT_ATLAS_HEIGHT_P2);
 }
 
-int D3D9Overlay::UpdateBuffers(char* text) {
+// Writes the geometry of one line of text, with its background, into the overlay's buffers. A
+// line drawn right aligned is the frame rate, and sits at the right edge of the window unless the
+// game pointed it at the right edge of its own picture (see overlay.h); the rest sit at the left
+// edge.
+int D3D9Overlay::UpdateBuffers(char* text, D3DCOLOR color, bool right_aligned) {
     // Get the length of the string
     auto text_len = strlen(text);
     if (text_len > OVERLAY_MAX_CHARS)
@@ -203,7 +259,17 @@ int D3D9Overlay::UpdateBuffers(char* text) {
 
     // Calculate the offsets
     float padding = 1.0f;
-    float x_offset = 0;
+    float bg_width = (float)text_len * 7.0f + padding * 2.0f;
+    float x_offset = 0.0f;
+    if (right_aligned) {
+        if (present_rate_width > 0) {
+            // The game's own picture may be shown smaller or larger than it is drawn in, so the
+            // edge it asked for moves with the window
+            x_offset = (float)present_rate_right * (float)window_width / (float)present_rate_width;
+        } else {
+            x_offset = (float)window_width - bg_width;
+        }
+    }
     float y_offset = (float)window_height - 12.0f - padding * 2.0f;
 
     // Write the background geometry
@@ -212,7 +278,6 @@ int D3D9Overlay::UpdateBuffers(char* text) {
     float pixel_u = FONT_ATLAS_WIDTH / (float)FONT_ATLAS_WIDTH_P2 - epsilon;
     float pixel_v = FONT_ATLAS_HEIGHT / (float)FONT_ATLAS_HEIGHT_P2 - epsilon;
     auto bg_color = D3DCOLOR_COLORVALUE(0.0, 0.0, 0.0, 0.8);
-    float bg_width = (float)text_len * 7.0f + padding * 2.0f;
     float bg_height = 12.0f + padding * 2.0f;
     vertex_data[0] = CUSTOMVERTEX{
         {x_offset + bg_width, y_offset + bg_height, 0.5},
@@ -251,22 +316,22 @@ int D3D9Overlay::UpdateBuffers(char* text) {
         float v = atlas_uvs[text[i] - 32][1];
         vertex_data[cur_vertex + 0] = CUSTOMVERTEX{
             {x_offset + cur_xpos + padding + 8.0f, y_offset + padding * 2.0f + 12.0f, 0.5f},
-            text_color,
+            color,
             {u + char_width, v + char_height}
         };
         vertex_data[cur_vertex + 1] = CUSTOMVERTEX{
             {x_offset + cur_xpos + padding + 8.0f, y_offset + padding * 2.0f, 0.5},
-            text_color,
+            color,
             {u + char_width, v}
         };
         vertex_data[cur_vertex + 2] = CUSTOMVERTEX{
             {x_offset + cur_xpos + padding, y_offset + padding * 2.0f, 0.5},
-            text_color,
+            color,
             {u, v}
         };
         vertex_data[cur_vertex + 3] = CUSTOMVERTEX{
             {x_offset + cur_xpos + padding, y_offset + padding * 2.0f + 12.0f, 0.5},
-            text_color,
+            color,
             {u, v + char_height}
         };
         index_data[cur_index + 0] = (uint16_t)cur_vertex + 0;
@@ -302,13 +367,21 @@ void D3D9Overlay::Draw() {
     SetupViewportAndTransforms();
 
     // Draw shit
-    auto rect_count = UpdateBuffers(text_buffer);
+    auto rect_count = UpdateBuffers(text_buffer, text_color, false);
 
     d3d9_device->SetStreamSource(0, d3d9_vertex_buf, 0, sizeof(CUSTOMVERTEX));
     d3d9_device->SetIndices(d3d9_index_buf);
     d3d9_device->SetFVF(D3DFVF_CUSTOMVERTEX);
     d3d9_device->SetTexture(0, d3d9_font_tex);
     d3d9_device->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, rect_count * 2 * 3, 0, rect_count * 2);
+
+    // The frame rate the frames are actually presented at, along the bottom of the screen
+    if (present_rate_shown) {
+        char rate_text[32];
+        sprintf_s(rate_text, "%.1f fps", present_rate);
+        rect_count = UpdateBuffers(rate_text, D3DCOLOR_COLORVALUE(1.0, 1.0, 1.0, 0.9), true);
+        d3d9_device->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, rect_count * 2 * 3, 0, rect_count * 2);
+    }
 
     // Restore the original render state
     original_state->Apply();

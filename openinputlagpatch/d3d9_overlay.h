@@ -24,7 +24,7 @@ private:
 	void SetupAtlasUVTable();
 	void SetupViewportAndTransforms();
 
-	int UpdateBuffers(char* text);
+	int UpdateBuffers(char* text, D3DCOLOR color, bool right_aligned);
 
 	IDirect3DDevice9* d3d9_device;
 	IDirect3DStateBlock9* d3d9_state_block;

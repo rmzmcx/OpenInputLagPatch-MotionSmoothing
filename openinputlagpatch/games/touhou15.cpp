@@ -5,6 +5,7 @@
 #include "limiter.h"
 #include "d3d9_hook.h"
 #include "config.h"
+#include "overlay.h"
 #include "tool_state.h"
 #include "touhou15.h"
 
@@ -807,6 +808,7 @@ static void th15_extra_presentation(float t) {
 	// The extras are presented with the device's own Present, without the hooks the tools put in
 	// front of it (see d3d9_present_bypassing_hooks)
 	d3d9_present_bypassing_hooks();
+	overlay_mark_presentation();
 }
 
 // Presents the frame the game just drew, and then the extra presentations the config asked for.
@@ -836,6 +838,7 @@ static HRESULT th15_present_hook() {
 	// The game's own presentation of this frame, through the device it drew with, so that the
 	// hooks the user's tools have on it still see it
 	HRESULT result = device->Present(nullptr, nullptr, nullptr, nullptr);
+	overlay_mark_presentation();
 
 	// The game's own work of this frame ends here as far as the overlay is concerned - everything
 	// below is the patch presenting the same frame again
@@ -1013,6 +1016,16 @@ void th15_install_patches() {
 		printf("Frame interpolation: %u render call(s) and %u present call(s) taken over (setting %d)\n",
 			render_patched, present_patched,
 			Config::InterpolationFPS ? (int)Config::InterpolationFPS : Config::Interpolation);
+
+		// The overlay shows the frame rate the frames are actually presented at, which only says
+		// something (and is only higher than the game's own rate) with the interpolation on - so
+		// it is only shown when that and the overlay are both on
+		overlay_show_present_rate(Config::ShowOverlay && (Config::Interpolation != 0 || Config::InterpolationFPS != 0));
+		// ...and it goes at the right edge of the play field rather than the bottom right corner
+		// of the window, where it would sit on top of the frame rate and slowdown readout thprac
+		// draws there. The th15 picture is 640x480 and the field is 384 wide at x = 32, so its
+		// right edge is at 416 (see overlay.h)
+		overlay_set_present_rate_anchor(416, 640);
 	}
 }
 
