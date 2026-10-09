@@ -11,6 +11,39 @@ is also the record of what has actually been verified rather than just what was 
 
 ### Added
 
+- **Touhou 14 (Double Dealing Character) gets frame interpolation too** (`8efd72f`)
+
+  With th15 done, the other game the requirements name as worth starting from is th14, and the two
+  run on the same engine - so this is the same feature with th14's own addresses, every one of
+  them read out of the game itself (the disassembly and the decompiler) rather than by matching
+  sprites or `.anm` names. The requirement is explicit about that: what has to be taken is the
+  game's own containers, because projecting everything that looks like a bullet both stutters when
+  a screen is full of items and gets the wrong objects.
+
+  The frame function has the same shape th15's has - three render blocks and three presents, one
+  for the game scene and one per menu scene (renders at 0x46A45D / 0x46A86D / 0x46AA0C, presents at
+  0x46A67A / 0x46A8D6 / 0x46AAEC) - and those six call sites are what the extra presentations take
+  over. The bullets are walked through the manager that loads `bullet.anm` when a stage starts
+  ([0x4DB530]) and through that manager's own in-play list (head +0x80, node at bullet+0x10), with
+  the position at +0xBC0, the velocity at +0xBCC, the state at +0xC0E and the hold flag at +0x20,
+  moved exactly the way the game's own update (0x416700) moves them, half step and slowdown factor
+  included. The player is at [0x4DB67C] (position +0x5E0), with its 8 options at +0xD6EC (0xE4
+  bytes each) and its 256 shots at +0x6C8 (0xD0 bytes each) - none of which has a velocity to read,
+  so they are measured frame by frame, the same way th15's are. The straight lasers are the
+  manager at [0x4DB664] (list head +0x18, links at +0x08), reached through a vtable white list:
+  LaserLineInf (0x4BE434), LaserInfiniteInf (0x4BE3CC) and LaserBeamInf (0x4BE364) are handled and
+  LaserCurveInf (0x4BE2FC) is left alone, with the position at +0x54, the angle at +0x6C and the
+  length at +0x70.
+
+  Confirmed in-game: every bullet in play is counted as projected, the player with its options and
+  its shots moves with them and keeps doing so after a stage is restarted, and the frames land
+  evenly on the display (about 3 presentations per game frame, ~179 per second, on the 180hz
+  display it was tested on). **The enemies
+  are not done** - the requirements list them, but neither game has a velocity to move an enemy
+  body by, its animation script decides where it is drawn, and guessing is the one thing the
+  requirements rule out - and the curve lasers stay out of scope. The ini and both READMEs were
+  changed to say the same.
+
 - **Touhou 15's frame interpolation covers the player, its options, its shots and the straight
   lasers** (`14e0551`)
 
@@ -92,6 +125,29 @@ is also the record of what has actually been verified rather than just what was 
   the taskbar by definition - so this is a taskbar that stays out of the way while playing, not one
   that is gone for good.
 
+### Fixed
+
+- **Restarting a stage (ESC+R) could leave the player, its options and its shots unprojected**
+  (`8efd72f`)
+
+  A measured sprite keeps a record of where it was in the frame before, in a table keyed by the
+  sprite's address, and those records were only ever added: nothing tells a sprite that is gone
+  from a pool slot that is still up, so the shots of a stage fill the table up, and every sprite
+  after them that isn't in it already stops being moved. The player itself is the first thing
+  recorded in a frame, so a fresh stage always finds its own record - but restarting a stage
+  builds the player at a new address, which needs a new record, finds none, and its projection
+  quietly stops. That it only happened sometimes is the rest of the story: malloc puts the new
+  player where the old one was often enough for the old record to be found and everything to work.
+  The options and the shots go the same way as soon as their sprites move to addresses that aren't
+  in the table.
+
+  The records are recycled now: an empty slot is used first, and when there is none the record
+  that was measured longest ago is taken, which has nothing to compare against anyway; a record
+  that is in use by the frame being measured is never taken, so nothing that is on screen loses
+  its place. The lasers get the same treatment, since they are handed out and freed one at a time
+  and drift in the same way. th15's implementation had the same bug and gets the same fix. The
+  diagnostics gained a `player: N sprite(s) this frame had no movement record` line, which stays 0.
+
 ### Changed
 
 - **The reference config and the READMEs are bilingual and say what the interpolation actually
@@ -106,6 +162,16 @@ is also the record of what has actually been verified rather than just what was 
   previous frame and interpolating between the two, and it lists what that covers so far: th15's
   bullets, the player with its options and shots, and the straight lasers, with the enemies not
   done yet and the curve lasers left alone.
+
+- **The interpolation's rate readout moved next to the render time line in the bottom left
+  corner** (`8efd72f`)
+
+  It sat at the right edge of the play field, which was only picked to keep it clear of thprac's
+  own frame rate and slowdown readout in the bottom right corner of the window. The patch already
+  draws a line of its own in the bottom left corner - how long the render took - and both of them
+  are its own readouts, so having them side by side is what makes them useful together. The
+  overlay can be asked to follow that line now (`overlay_set_present_rate_follow_text`), and both
+  games ask for it. Confirmed in-game in both.
 
 ## 2026-10-08
 
