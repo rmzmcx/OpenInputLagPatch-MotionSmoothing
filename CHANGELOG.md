@@ -173,6 +173,19 @@ is also the record of what has actually been verified rather than just what was 
   overlay can be asked to follow that line now (`overlay_set_present_rate_follow_text`), and both
   games ask for it. Confirmed in-game in both.
 
+- **The reference config that ships has the interpolation and the spin wait on by default**
+  (`cb68840`)
+
+  The ini that ships is the one most people end up running, so its values are the defaults in
+  practice, and the two that matter most for what this fork is for were still at the values from
+  before the interpolation existed: `Interpolation` was `0` (off, so the motion smoothing had to be
+  found and turned on by hand) and `Sleep` was `1` (the vpatch-style wait, which costs less CPU but
+  is slightly less precise than the spin wait). Both are what the games are actually played with
+  now - `Interpolation = -1`, which picks the largest multiple of the game's frame rate the display
+  can show, and `Sleep = 0`, the spin wait - and the built-in defaults are moved to match, so the
+  "默认 / Default" line the reference config documents keeps being the value the patch uses when
+  the file is missing. Setting `Interpolation` back to `0` turns the interpolation off.
+
 ## 2026-10-08
 
 ### Added
