@@ -7,6 +7,106 @@ Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/O
 Only changes that have been tested in-game and confirmed working are listed here, so this file
 is also the record of what has actually been verified rather than just what was attempted.
 
+## 2026-10-09
+
+### Added
+
+- **Touhou 15's frame interpolation covers the player, its options, its shots and the straight
+  lasers** (`14e0551`)
+
+  With only the bullets moving forward, the extra presentations showed a half frozen screen: the
+  bullets travelled while the player, the options beside it, the bullets it fires and the straight
+  lasers the enemies put up all repeated the frame the game's own presentation had shown. None of
+  them has a velocity to read back - the player moves by what the input says, the options and shots
+  come after it smoothly, and a laser turns and grows as it goes - so the patch measures instead:
+  every game frame, at the point where the game presents, the fields the draw actually reads are
+  compared with the frame before, and the extra presentations write those differences back times
+  the fraction of a frame they stand for, then put them back right after the render. Something
+  that didn't move - a held picture, a paused game - comes out as zero on its own, and something
+  that only just appeared, or a pool slot handed to another object, has nothing to compare against
+  and is left alone for that frame.
+
+  What is moved is what the draw reads: the player's own position at +0x618, which the render
+  copies into its animation object, and the animation objects themselves (+0x5EC) for the options
+  and the player's shots, whose positions are written by the update. The lasers are walked through
+  their own manager's list (0x4E9BA0), and only the straight kinds are handled (the line, infinite
+  and beam vtables); those carry their own position (+0x54), angle (+0x6C) and length (+0x70),
+  which is exactly what their draw builds the picture from. The curve laser is deliberately left
+  alone, as the requirements ask, and the manager's own sentinel entry is skipped because its
+  vtable isn't one of those.
+
+  Two things went wrong on the way and are fixed: the first cut called the game's own sprite
+  lookup through a function pointer, whose argument is passed on the stack, so it took back a
+  pointer that wasn't an animation object and the game crashed as soon as a stage loaded; and the
+  "position of the frame before" was kept in a table that is rebuilt every frame, so every
+  difference came out as zero and the player never moved. Confirmed in-game: the player's, its
+  options' and its shots' sprites are tracked and move with it, and the straight lasers in play
+  (12 in the test) are found and projected. The enemies are still to come - they are the last
+  piece of the stage 1 work - and the curve lasers stay out of scope.
+
+- **The overlay shows the rate the frames are actually presented at** (`bad3516`)
+
+  With the interpolation on, a game frame reaches the screen more than once, so the game's own
+  frame rate stops describing what the display is getting, and nothing said whether the extra
+  frames were landing evenly - the only way to tell was the diagnostic dump. The overlay now
+  carries a second line with the rate the frames are really presented at, counted from the
+  presentations themselves (the game's own one and every extra one), so it shows what the display
+  gets rather than what the config asked for. It only appears when the overlay and the
+  interpolation are both on, since with the interpolation off it would just repeat the rate the
+  game already runs at, and it is measured over a 0.5 second window so it doesn't flicker.
+
+  The line goes at the right edge of the play area rather than in the bottom right corner of the
+  window, because that corner is where thprac draws its own frame rate and slowdown readout and
+  the two ended up on top of each other. The game hands the overlay the anchor in its own
+  coordinates (416 out of 640, the play field being 384 wide and starting at x = 32) and the
+  overlay scales it to whatever the back buffer is, so it lands beside the picture whether it is
+  presented 1:1 or scaled up. Confirmed in-game: it sits just to the right of the play field,
+  clear of thprac's reading, and reports about 3.0 presentations per game frame at 180/s with
+  `Interpolation = -1` on a 180hz display. The anchor is th15's own play field for now; another
+  game that interpolates would need its own numbers.
+
+- **Window mode: `CoverTaskbar` keeps the taskbar out of the way without holding the window on
+  top** (`7104d0e`)
+
+  Covering the taskbar means sitting in the topmost band, because the taskbar is a topmost window
+  itself - which is why `AlwaysOnTop` has always come with the game covering every other window as
+  well, more than someone who just wants a borderless screen-size window without the taskbar
+  needs. `CoverTaskbar` splits the two apart and only keeps the taskbar out of the way while the
+  window is the active one: 1 tells the shell the window is a fullscreen one
+  (`ITaskbarList2::MarkFullscreenWindow`) so it steps the taskbar aside, with the window staying an
+  ordinary one so that whatever is switched to still covers the game; 2 holds the window in the
+  topmost band only while it is active, the same picture as `AlwaysOnTop` while playing but
+  letting go the moment another window is activated. 1 falls back to 2 when the taskbar list can't
+  be had.
+
+  The first cut hung the game before it drew a single picture, for two reasons: it took the game's
+  window procedure over to watch for activation, and changing the state sends messages back into
+  that same procedure (SetWindowPos sends the position and activation changes, and the shell
+  answers), so it re-entered itself and never came back; and it asked the shell for its taskbar
+  object on the game's thread, a cross-process call that can block for as long as the shell is
+  busy, which is fatal in the middle of starting up. The state is watched by a thread of its own
+  now, which looks at which window is active every 50ms, waits until the window is actually up,
+  and only calls anything when the answer changes; everything that can block happens on that
+  thread, and the game's own thread only starts it. Confirmed in-game. The honest limit is that
+  nothing can be done while the window isn't the active one - a window that isn't topmost is below
+  the taskbar by definition - so this is a taskbar that stays out of the way while playing, not one
+  that is gone for good.
+
+### Changed
+
+- **The reference config and the READMEs are bilingual and say what the interpolation actually
+  does** (`bad3516`)
+
+  The ini's comments were English only, which is the wrong way round for the people most likely to
+  read them, so every entry is written in Chinese first and English after, with the default each
+  one documents aligned to its value. The example blocks in README.md and README.en.md are
+  generated from the ini so all three stay identical, which is what the READMEs claim they are.
+  The `Interpolation` entry now spells out that the extra frames are made by *extrapolating* -
+  position += velocity times the fraction of a frame, drawn, put back - rather than by keeping the
+  previous frame and interpolating between the two, and it lists what that covers so far: th15's
+  bullets, the player with its options and shots, and the straight lasers, with the enemies not
+  done yet and the curve lasers left alone.
+
 ## 2026-10-08
 
 ### Added
