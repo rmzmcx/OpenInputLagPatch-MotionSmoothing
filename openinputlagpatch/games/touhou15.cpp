@@ -216,6 +216,436 @@ static void th15_bullets_undo() {
 	th15_saved_bullets_count = 0;
 }
 
+// ---------------------------------------------------------------------------
+// Frame interpolation, stage 1: the player, its options and its shots
+// ---------------------------------------------------------------------------
+//
+// The player of the stage that is running is at 0x4E9BB8 (null in the menus and before a stage
+// starts). Its own picture is the animation object at +0x10, and the render pass of the player
+// copies its position (+0x618) into that object's position (0x4559D0), so moving the position
+// moves the player's sprite the same way the bullets' position does.
+//
+// Everything else the player puts on screen is positioned by the update instead, so those sprites
+// have to be moved themselves:
+//
+//   - the options (the sub-shots that sit beside the player) are 8 slots of 0xE4 bytes at +0x668.
+//     A slot that is up keeps two sprite object ids at +0xB0/+0xB4 and a position in 1/128 pixel
+//     units at +0x5C, which the update walks toward the player's position (0x4540E0).
+//   - the player's shots (the bullets it fires) are 256 slots of 0xC0 bytes at +0xD88. A live slot
+//     keeps its sprite object id at +0x08 and its position in pixels at +0x48, which the update
+//     copies into the sprite and then moves (0x4591C0).
+//
+// The player moves by what the input says rather than by a velocity that could be read back, and
+// the options and shots move by what comes out of that plus their own motion, so what each sprite
+// moves by in a frame is measured instead of read: every game frame the positions are compared
+// with the ones of the frame before, and the extra presentations move the sprites by that
+// difference times the fraction of a frame they stand for. Something that didn't move - a held
+// picture, a paused game - comes out as zero on its own.
+
+static void** const th15_player = (void**)0x004E9BB8;
+static const size_t th15_player_position = 0x618;      // the player's own position, 3 floats
+static const size_t th15_player_options = 0x668;       // 8 slots of 0xE4 bytes
+static const size_t th15_player_option_count = 8;
+static const size_t th15_player_option_size = 0xE4;
+static const size_t th15_player_option_position = 0x5C; // 2 ints, in 1/128 of a pixel
+static const size_t th15_player_option_sprite = 0xB0;   // 2 object ids
+static const size_t th15_player_shots = 0xD88;         // 256 slots of 0xC0 bytes
+static const size_t th15_player_shot_count = 256;
+static const size_t th15_player_shot_size = 0xC0;
+static const size_t th15_player_shot_live = 0x8C;       // nonzero while the shot is in use
+static const size_t th15_player_shot_sprite = 0x08;     // the sprite's object id
+static const size_t th15_player_shot_position = 0x48;   // its position, 3 floats in pixels
+static const size_t th15_object_position = 0x5EC;      // in an animation object
+static const float th15_subpixel = 1.0f / 128.0f;
+// Nothing on screen moves this far in one frame (the player's own speed is a few pixels), so a
+// difference bigger than this is a slot that was handed to another object, not a movement
+static const float th15_max_step = 48.0f;
+
+// One thing to move for an extra presentation: the animation object whose position is shifted, and
+// where the movement that drives it is measured (the object itself for the player, the slot of the
+// option or shot for their sprites)
+static const size_t th15_tracked_max = 1 + th15_player_option_count * 2 + th15_player_shot_count;
+
+// What one sprite moved by. This has to outlive the frame it was measured in: what is on screen
+// changes from frame to frame (shots come and go), so the list of the sprites to move is built
+// again every frame, and the position of the frame before can't be kept in that list.
+struct Th15SpriteMotion {
+	void* sprite;         // the animation object it is about, null while the entry is free
+	unsigned int frame;   // the frame it was last measured in
+	float last_x, last_y;
+	float delta_x, delta_y;
+};
+
+struct Th15Tracked {
+	float* shift;             // the position that gets moved (3 floats)
+	Th15SpriteMotion* motion; // what it moved by, from the frame before
+};
+
+static Th15SpriteMotion th15_motions[th15_tracked_max];
+static unsigned int th15_motion_frame = 1;
+static Th15Tracked th15_tracked[th15_tracked_max];
+static size_t th15_tracked_count;
+static float th15_tracked_saved[th15_tracked_max][3];
+
+// Diagnostics: the largest movement the player's own position had since the last dump
+static float th15_player_movement;
+
+// The animation object a sprite id refers to: the same lookup the game does (0x488510), written
+// out instead of called. Calling it would be the way to get this wrong - it takes its argument on
+// the stack, and a call through a function pointer is not put together with that in mind, so the
+// garbage it gets back hands back a pointer that is not an animation object at all. The manager
+// at 0x503C18 keeps its objects in slots of 0x620 starting at +0xEC, each of them with the id it
+// belongs to at +0x544 and an "in use" byte at +0x618, and ids whose low 13 bits are 0x1FFF are
+// on one of the manager's two lists instead (the player's sprites never are).
+static void* th15_object_by_id(unsigned int id) {
+	const unsigned int index = id & 0x1FFF;
+	if (id == 0 || index == 0x1FFF)
+		return nullptr;
+
+	void* manager = *(void**)0x00503C18;
+	if (manager == nullptr)
+		return nullptr;
+
+	char* object = (char*)manager + 0xEC + (size_t)index * 0x620;
+	if (*(unsigned char*)(object + 0x618) == 0)
+		return nullptr;
+	if (*(unsigned int*)(object + 0x544) != id)
+		return nullptr;
+	return object;
+}
+
+// The record of a sprite, made the first time it is seen (sprite is the position it is moved by)
+static Th15SpriteMotion* th15_sprite_motion(void* sprite) {
+	for (size_t i = 0; i < th15_tracked_max; ++i) {
+		if (th15_motions[i].sprite == sprite)
+			return &th15_motions[i];
+	}
+	for (size_t i = 0; i < th15_tracked_max; ++i) {
+		if (th15_motions[i].sprite != nullptr)
+			continue;
+		Th15SpriteMotion& motion = th15_motions[i];
+		motion.sprite = sprite;
+		motion.frame = 0;
+		motion.last_x = 0.0f;
+		motion.last_y = 0.0f;
+		motion.delta_x = 0.0f;
+		motion.delta_y = 0.0f;
+		return &motion;
+	}
+	return nullptr;
+}
+
+// Adds a sprite to what this frame moves, and works out what it moved by since the frame before
+// out of the position that the game's own update left in watch
+static void th15_track(float* shift, const void* watch, bool watch_is_int) {
+	if (th15_tracked_count >= th15_tracked_max)
+		return;
+	Th15SpriteMotion* motion = th15_sprite_motion(shift);
+	if (motion == nullptr)
+		return;
+
+	float x, y;
+	if (watch_is_int) {
+		x = (float)*(const int*)watch * th15_subpixel;
+		y = (float)*((const int*)watch + 1) * th15_subpixel;
+	} else {
+		x = *(const float*)watch;
+		y = *((const float*)watch + 1);
+	}
+
+	// Only a sprite that was measured in the frame right before this one has something to compare
+	// against (one that just appeared, or that came back after the game didn't draw for a while,
+	// hasn't moved as far as this can tell)
+	if (motion->frame + 1 == th15_motion_frame) {
+		const float dx = x - motion->last_x;
+		const float dy = y - motion->last_y;
+		// The pools hand their slots out again, and the object that used to be there is somewhere
+		// else entirely - that difference is not something to project
+		if (dx > -th15_max_step && dx < th15_max_step && dy > -th15_max_step && dy < th15_max_step) {
+			motion->delta_x = dx;
+			motion->delta_y = dy;
+		} else {
+			motion->delta_x = 0.0f;
+			motion->delta_y = 0.0f;
+		}
+	} else {
+		motion->delta_x = 0.0f;
+		motion->delta_y = 0.0f;
+	}
+	motion->frame = th15_motion_frame;
+	motion->last_x = x;
+	motion->last_y = y;
+
+	Th15Tracked& tracked = th15_tracked[th15_tracked_count++];
+	tracked.shift = shift;
+	tracked.motion = motion;
+}
+
+// Collects what is on screen this frame and works out what it moved by since the frame before.
+// This runs once per game frame, from the game's own present (see th15_present_hook).
+static void th15_player_measure() {
+	th15_tracked_count = 0;
+	++th15_motion_frame;
+
+	void* player = *th15_player;
+	if (player == nullptr)
+		return;
+
+	// The player itself: its own position is what the render pass reads
+	th15_track((float*)((char*)player + th15_player_position),
+		(const char*)player + th15_player_position, false);
+	if (th15_tracked_count > 0) {
+		const Th15SpriteMotion* motion = th15_tracked[0].motion;
+		const float x = motion->delta_x < 0.0f ? -motion->delta_x : motion->delta_x;
+		const float y = motion->delta_y < 0.0f ? -motion->delta_y : motion->delta_y;
+		const float magnitude = x > y ? x : y;
+		if (magnitude > th15_player_movement)
+			th15_player_movement = magnitude;
+	}
+
+	// The options, and the shots, are only measured while they are up
+	for (size_t i = 0; i < th15_player_option_count; ++i) {
+		const char* slot = (const char*)player + th15_player_options + i * th15_player_option_size;
+		if (*(const int*)slot == 0)
+			continue;
+		for (int sprite = 0; sprite < 2; ++sprite) {
+			void* object = th15_object_by_id(*(const unsigned int*)(slot + th15_player_option_sprite + sprite * 4));
+			if (object == nullptr)
+				continue;
+			th15_track((float*)((char*)object + th15_object_position),
+				slot + th15_player_option_position, true);
+		}
+	}
+
+	for (size_t i = 0; i < th15_player_shot_count; ++i) {
+		const char* slot = (const char*)player + th15_player_shots + i * th15_player_shot_size;
+		if (*(const int*)(slot + th15_player_shot_live) == 0)
+			continue;
+		void* object = th15_object_by_id(*(const unsigned int*)(slot + th15_player_shot_sprite));
+		if (object == nullptr)
+			continue;
+		th15_track((float*)((char*)object + th15_object_position),
+			slot + th15_player_shot_position, false);
+	}
+
+}
+
+// Moves the player, its options and its shots t frames ahead of the state the game is in, and
+// remembers what it changed
+static void th15_player_advance(float t) {
+	for (size_t i = 0; i < th15_tracked_count; ++i) {
+		const Th15Tracked& tracked = th15_tracked[i];
+		float* position = tracked.shift;
+		for (int axis = 0; axis < 3; ++axis) {
+			th15_tracked_saved[i][axis] = position[axis];
+		}
+		position[0] += tracked.motion->delta_x * t;
+		position[1] += tracked.motion->delta_y * t;
+	}
+}
+
+static void th15_player_undo() {
+	for (size_t i = 0; i < th15_tracked_count; ++i) {
+		float* position = th15_tracked[i].shift;
+		for (int axis = 0; axis < 3; ++axis)
+			position[axis] = th15_tracked_saved[i][axis];
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Frame interpolation, stage 1: the straight lasers
+// ---------------------------------------------------------------------------
+//
+// The lasers of a stage live in a manager of their own (0x4E9BA0, 0x610 bytes). It is a task:
+// its update (0x4417E0) and its draw (0x441990) both walk the same list, whose first laser is at
+// manager+0x14 and whose links are the object's own +0x08 (next) and +0x04 (previous). Each walk
+// calls the object's own virtual function for it - the update one at vtable+0x10, the draw one at
+// vtable+0x14 - and the draw one is what matters here.
+//
+// The line laser's draw (0x443860) builds its picture out of three of its own fields: the
+// position at +0x54, the angle at +0x6C and the length at +0x70. It copies the position into the
+// sprites it draws and puts the far end of the beam at position + polar(angle, length), so moving
+// those fields moves the laser, exactly like the player's position moves the player.
+//
+// The same measurement is used as for the player, for the same reason (a laser's own update is
+// what moves it, and it grows and turns as it does), and the curve laser is left out on purpose:
+// LaserCurveInf (vtable 0x4CC820) is the one the requirements say not to do. The others -
+// LaserLineInf (0x4CC964), LaserInfiniteInf (0x4CC8F8) and LaserBeamInf (0x4CC88C) - are straight
+// and are handled, and anything else that turns up in the list (the manager's own root entry, for
+// one) is skipped by only ever looking at objects with one of those three vtables.
+
+static void** const th15_laser_manager = (void**)0x004E9BA0;
+static const size_t th15_laser_list = 0x14;      // the first laser of the list
+static const size_t th15_laser_next = 0x08;      // in a laser: the next one
+static const size_t th15_laser_position = 0x54;  // where it starts, 3 floats
+static const size_t th15_laser_angle = 0x6C;     // the direction it points in, radians
+static const size_t th15_laser_length = 0x70;    // how far it reaches
+
+static const void* const th15_straight_lasers[] = {
+	(void*)0x004CC964, // LaserLineInf
+	(void*)0x004CC8F8, // LaserInfiniteInf
+	(void*)0x004CC88C, // LaserBeamInf
+};
+
+static const size_t th15_lasers_max = 0x200 + 1; // the manager's own limit, plus its root entry
+
+// What one laser moved by, kept across frames (the list is walked again every frame, and a laser
+// that is gone must not take its record with it - a slot that comes back later is another laser)
+struct Th15LaserMotion {
+	void* laser;
+	unsigned int frame;
+	float last_x, last_y, last_angle, last_length;
+	float delta_x, delta_y, delta_angle, delta_length;
+};
+
+struct Th15LaserMoved {
+	void* laser;
+	float position[3];
+	float angle, length;
+};
+
+static Th15LaserMotion th15_laser_motions[th15_lasers_max];
+static Th15LaserMoved th15_lasers_moved[th15_lasers_max];
+static size_t th15_lasers_moved_count;
+static unsigned int th15_laser_frame = 1;
+static unsigned int th15_lasers_seen;
+
+// Whether this is one of the straight lasers (the curve one is deliberately not one of them)
+static bool th15_is_straight_laser(const void* laser) {
+	const void* vtable = *(const void* const*)laser;
+	for (size_t i = 0; i < sizeof(th15_straight_lasers) / sizeof(th15_straight_lasers[0]); ++i) {
+		if (vtable == th15_straight_lasers[i])
+			return true;
+	}
+	return false;
+}
+
+static Th15LaserMotion* th15_laser_motion(void* laser) {
+	for (size_t i = 0; i < th15_lasers_max; ++i) {
+		if (th15_laser_motions[i].laser == laser)
+			return &th15_laser_motions[i];
+	}
+	for (size_t i = 0; i < th15_lasers_max; ++i) {
+		if (th15_laser_motions[i].laser != nullptr)
+			continue;
+		Th15LaserMotion& motion = th15_laser_motions[i];
+		motion.laser = laser;
+		motion.frame = 0;
+		motion.last_x = motion.last_y = 0.0f;
+		motion.last_angle = motion.last_length = 0.0f;
+		motion.delta_x = motion.delta_y = 0.0f;
+		motion.delta_angle = motion.delta_length = 0.0f;
+		return &motion;
+	}
+	return nullptr;
+}
+
+// Looks at every straight laser in play and works out what it moved by since the frame before.
+// This runs once per game frame, from the game's own present (see th15_present_hook).
+static void th15_lasers_measure() {
+	++th15_laser_frame;
+	th15_lasers_seen = 0;
+
+	void* manager = *th15_laser_manager;
+	if (manager == nullptr)
+		return;
+
+	void* laser = *(void**)((char*)manager + th15_laser_list);
+	// The list is the game's own and this runs where nothing can change it; the bound is only so a
+	// list that got broken some other way can't run away with the frame
+	for (size_t guard = 0; laser != nullptr && guard < th15_lasers_max * 4; ++guard) {
+		void* next = *(void**)((char*)laser + th15_laser_next);
+		if (th15_is_straight_laser(laser)) {
+			++th15_lasers_seen;
+			Th15LaserMotion* motion = th15_laser_motion(laser);
+			if (motion != nullptr) {
+				const float x = *(const float*)((char*)laser + th15_laser_position);
+				const float y = *(const float*)((char*)laser + th15_laser_position + 4);
+				const float angle = *(const float*)((char*)laser + th15_laser_angle);
+				const float length = *(const float*)((char*)laser + th15_laser_length);
+
+				// Only a laser that was measured in the frame right before this one has something
+				// to compare against - one that just appeared has not moved as far as this can tell
+				if (motion->frame + 1 == th15_laser_frame) {
+					float dx = x - motion->last_x;
+					float dy = y - motion->last_y;
+					float dangle = angle - motion->last_angle;
+					float dlength = length - motion->last_length;
+
+					// The angle is an angle: a difference of nearly a full turn is the same
+					// angle, and neither that nor a jump across the screen is a movement
+					while (dangle > 3.14159265f)
+						dangle -= 6.28318531f;
+					while (dangle < -3.14159265f)
+						dangle += 6.28318531f;
+					if (dx <= -th15_max_step || dx >= th15_max_step ||
+						dy <= -th15_max_step || dy >= th15_max_step ||
+						dangle <= -1.0f || dangle >= 1.0f || dlength <= -256.0f || dlength >= 256.0f) {
+						dx = dy = dangle = dlength = 0.0f;
+					}
+
+					motion->delta_x = dx;
+					motion->delta_y = dy;
+					motion->delta_angle = dangle;
+					motion->delta_length = dlength;
+				} else {
+					motion->delta_x = motion->delta_y = 0.0f;
+					motion->delta_angle = motion->delta_length = 0.0f;
+				}
+				motion->frame = th15_laser_frame;
+				motion->last_x = x;
+				motion->last_y = y;
+				motion->last_angle = angle;
+				motion->last_length = length;
+			}
+		}
+		laser = next;
+	}
+}
+
+// Moves the straight lasers t frames ahead of the state the game is in, and remembers what it
+// changed
+static void th15_lasers_advance(float t) {
+	th15_lasers_moved_count = 0;
+
+	for (size_t i = 0; i < th15_lasers_max; ++i) {
+		const Th15LaserMotion& motion = th15_laser_motions[i];
+		if (motion.laser == nullptr || motion.frame != th15_laser_frame)
+			continue;
+		if (th15_lasers_moved_count >= th15_lasers_max)
+			break;
+
+		void* laser = motion.laser;
+		Th15LaserMoved& moved = th15_lasers_moved[th15_lasers_moved_count++];
+		moved.laser = laser;
+
+		float* position = (float*)((char*)laser + th15_laser_position);
+		float* angle = (float*)((char*)laser + th15_laser_angle);
+		float* length = (float*)((char*)laser + th15_laser_length);
+		for (int axis = 0; axis < 3; ++axis)
+			moved.position[axis] = position[axis];
+		moved.angle = *angle;
+		moved.length = *length;
+
+		position[0] += motion.delta_x * t;
+		position[1] += motion.delta_y * t;
+		*angle += motion.delta_angle * t;
+		*length += motion.delta_length * t;
+	}
+}
+
+static void th15_lasers_undo() {
+	for (size_t i = 0; i < th15_lasers_moved_count; ++i) {
+		const Th15LaserMoved& moved = th15_lasers_moved[i];
+		float* position = (float*)((char*)moved.laser + th15_laser_position);
+		for (int axis = 0; axis < 3; ++axis)
+			position[axis] = moved.position[axis];
+		*(float*)((char*)moved.laser + th15_laser_angle) = moved.angle;
+		*(float*)((char*)moved.laser + th15_laser_length) = moved.length;
+	}
+	th15_lasers_moved_count = 0;
+}
+
 // The plain calls the render block makes into the game
 static auto th15_reset_sprite_queue = (void(*)())0x0047E3A0;
 static auto th15_prepare_render = (void(__fastcall*)(void*))0x0044D630; // ECX = the render context
@@ -309,6 +739,13 @@ static void th15_diag_dump() {
 	fprintf(file, "frames recorded: %u\n", count);
 	fprintf(file, "bullets: %u in play, %u projected forward (last game frame)\n",
 		th15_bullets_in_play, th15_bullets_moved);
+	fprintf(file, "player: %u sprite(s) moved (the player, its options and its shots)\n",
+		(unsigned int)th15_tracked_count);
+	fprintf(file, "player movement: up to %.2f px per frame since the last dump\n",
+		th15_player_movement);
+	th15_player_movement = 0.0f;
+	fprintf(file, "lasers: %u straight laser(s) in play (the curve ones are left alone)\n",
+		th15_lasers_seen);
 
 	double presents = 0.0;
 	double first = 0.0;
@@ -357,7 +794,11 @@ static void th15_extra_presentation(float t) {
 	// The objects are drawn where they will be t frames from now; the render bakes the positions
 	// into the sprite queue, so they can go back right after it
 	th15_bullets_advance(t);
+	th15_player_advance(t);
+	th15_lasers_advance(t);
 	th15_render_objects();
+	th15_lasers_undo();
+	th15_player_undo();
 	th15_bullets_undo();
 	th15_draw_sprite_queue(*(void**)0x00503C18);
 	device->SetTexture(0, nullptr);
@@ -386,6 +827,11 @@ static HRESULT th15_present_hook() {
 
 	LARGE_INTEGER base;
 	QueryPerformanceCounter(&base);
+
+	// The game's own update has run and it is about to put that frame on screen: this is the one
+	// point per frame where the movement of the player, its options and its shots can be measured
+	th15_player_measure();
+	th15_lasers_measure();
 
 	// The game's own presentation of this frame, through the device it drew with, so that the
 	// hooks the user's tools have on it still see it
