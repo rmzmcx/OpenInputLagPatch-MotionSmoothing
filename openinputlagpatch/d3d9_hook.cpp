@@ -312,6 +312,70 @@ HRESULT __stdcall CreateDevice_hook(IDirect3D9* self, UINT Adapter, D3DDEVTYPE D
 	return 0;
 }
 
+// The game's folder can have a d3d9.dll of its own that doesn't export everything (Ju.N.Owen's on th19 only exports
+// Direct3DCreate9), and importing from it would make the patch fail to load. So these are looked up at runtime instead:
+// from the d3d9.dll the game uses if it has them, otherwise from the system's d3d9.dll
+static FARPROC get_system_d3d9_function(const char* name) {
+	wchar_t path[MAX_PATH] = {};
+	GetSystemDirectoryW(path, MAX_PATH);
+	wcscat_s(path, L"\\d3d9.dll");
+	auto system_d3d9 = LoadLibraryW(path);
+	return system_d3d9 ? GetProcAddress(system_d3d9, name) : nullptr;
+}
+
+static FARPROC get_d3d9_function(const char* name) {
+	auto loaded = GetModuleHandleW(L"d3d9.dll");
+	if (loaded) {
+		auto func = GetProcAddress(loaded, name);
+		if (func)
+			return func;
+	}
+	return get_system_d3d9_function(name);
+}
+
+// What the system's Direct3DCreate9 returns while wrap_with_d3d9_proxy has it redirected
+static IDirect3D9* proxy_inner = nullptr;
+static IDirect3D9* WINAPI Direct3DCreate9_inner(UINT SDKVersion) {
+	return proxy_inner;
+}
+
+// A d3d9.dll without Direct3DCreate9Ex in the game's folder (Ju.N.Owen's on th19) only gets to run its own code
+// from its Direct3DCreate9: Ju.N.Owen loads its modules there, and the current one wraps the IDirect3D9 the
+// system's Direct3DCreate9 gives it, to draw its lobby right before every Present. So it's still called, with
+// the system's Direct3DCreate9 redirected for the duration of the call to hand it the D3D9Ex object instead -
+// that way it wraps the object the patch created, and the game gets the wrapper like it would without the patch.
+// Returns the D3D9Ex object itself when there's no such d3d9.dll or it doesn't return anything
+static IDirect3D9* wrap_with_d3d9_proxy(IDirect3D9* d3d9_ex, UINT SDKVersion) {
+	auto loaded = GetModuleHandleW(L"d3d9.dll");
+	if (!loaded || GetProcAddress(loaded, "Direct3DCreate9Ex"))
+		return d3d9_ex;
+	auto proxy_create = (decltype(&Direct3DCreate9))GetProcAddress(loaded, "Direct3DCreate9");
+	auto system_create = (BYTE*)get_system_d3d9_function("Direct3DCreate9");
+	if (!proxy_create || !system_create)
+		return d3d9_ex;
+	printf("d3d9.dll without Direct3DCreate9Ex detected, letting its Direct3DCreate9 wrap the D3D9Ex object\n");
+
+	// The proxy takes over the reference it's given, so it gets one of its own
+	d3d9_ex->AddRef();
+	proxy_inner = d3d9_ex;
+
+	// jmp Direct3DCreate9_inner
+	BYTE orig[5];
+	memcpy(orig, system_create, sizeof(orig));
+	BYTE jump[5] = { 0xE9 };
+	*(DWORD*)(jump + 1) = (DWORD)&Direct3DCreate9_inner - ((DWORD)system_create + 5);
+	patch_bytes(system_create, jump, sizeof(jump));
+	FlushInstructionCache(GetCurrentProcess(), system_create, sizeof(jump));
+
+	auto wrapped = proxy_create(SDKVersion);
+
+	patch_bytes(system_create, orig, sizeof(orig));
+	FlushInstructionCache(GetCurrentProcess(), system_create, sizeof(orig));
+	proxy_inner = nullptr;
+
+	return wrapped ? wrapped : d3d9_ex;
+}
+
 // Upgrades IDirect3D9 to IDirect3D9Ex
 IDirect3D9* WINAPI Direct3DCreate9_hook(UINT SDKVersion) {
 	printf("Direct3DCreate9 intercepted!\n");
@@ -320,22 +384,32 @@ IDirect3D9* WINAPI Direct3DCreate9_hook(UINT SDKVersion) {
 	// are all D3D8 titles, so this normally does nothing
 	WindowMode::AskIfNeeded();
 
+	IDirect3D9* result = nullptr;
 	if (Config::D3D9Ex) {
-		auto create_ret = Direct3DCreate9Ex(D3D_SDK_VERSION, (IDirect3D9Ex**)&d3d9);
+		auto create_ex = (decltype(&Direct3DCreate9Ex))get_d3d9_function("Direct3DCreate9Ex");
+		if (!create_ex)
+			panic_msgbox(L"Couldn't find Direct3DCreate9Ex!");
+		auto create_ret = create_ex(D3D_SDK_VERSION, (IDirect3D9Ex**)&d3d9);
 		if (FAILED(create_ret) || d3d9 == nullptr)
 			panic_msgbox(L"Direct3DCreate9Ex failed!\nCode: 0x%x", create_ret);
+		result = wrap_with_d3d9_proxy(d3d9, SDKVersion);
 	} else {
-		d3d9 = Direct3DCreate9(D3D_SDK_VERSION);
+		auto create = (decltype(&Direct3DCreate9))get_d3d9_function("Direct3DCreate9");
+		if (!create)
+			panic_msgbox(L"Couldn't find Direct3DCreate9!");
+		d3d9 = create(D3D_SDK_VERSION);
 		if (d3d9 == nullptr)
 			panic_msgbox(L"Direct3DCreate9 failed!");
+		result = d3d9;
 	}
 
 	// Hook IDirect3D9::CreateDevice
+	// A wrapper from wrap_with_d3d9_proxy forwards CreateDevice to the D3D9Ex object, so the hook goes on that
 	DWORD* d3d9_vtbl = *(DWORD**)d3d9;
 	CreateDevice_orig = (HRESULT(__stdcall*)(IDirect3D9*, UINT, D3DDEVTYPE, HWND, DWORD, D3DPRESENT_PARAMETERS*, IDirect3DDevice9**))d3d9_vtbl[16];
 	auto patch_data = (DWORD)CreateDevice_hook;
 	patch_bytes(&d3d9_vtbl[16], &patch_data, sizeof(DWORD));
-	return d3d9;
+	return result;
 }
 
 // Case-insensitive substring search (no extra includes needed)

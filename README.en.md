@@ -1,4 +1,4 @@
-[简体中文](README.md) | English
+[简体中文](README.md) | English | [日本語](README.ja.md)
 
 # OpenInputLagPatch
 
@@ -95,6 +95,11 @@ GameFPS = 60
 ; 60fps logic is 2 and 3 presentations a frame alternating), -1: pick the largest whole multiple of
 ; the game's frame rate the display can show (evenly spaced presentations),
 ; N: present N times per game frame, *R: present at R frames per second (e.g. *144)
+;
+; 检测到 Ju.N.Owen（th19 的非官方联机工具，游戏目录下有 modules\th19_junowen.dll）时，补帧会被强制关闭。
+; Ju.N.Owen（th19 の非公式対戦ツール。ゲームのフォルダに modules\th19_junowen.dll がある場合）を検出すると、補間は強制的に無効になります。
+; When Ju.N.Owen (th19's unofficial netplay tool, modules\th19_junowen.dll in the game's directory) is
+; installed, the interpolation is always turned off.
 ;
 ; 默认 / Default: 1
 Interpolation = 1

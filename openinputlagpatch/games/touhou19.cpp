@@ -1,4 +1,4 @@
-// Touhou 19: Unfinished Dream of All Living Ghost v1.10c
+// Touhou 19: Unfinished Dream of All Living Ghost v1.10c (and v1.00a, see the end of the file)
 
 #include <stdio.h>
 #include <string.h>
@@ -90,9 +90,13 @@ void __declspec(naked) th19_frame_wait() {
 	}
 }
 
+// v1.00a's clock reads how long a frame is instead of the frame rate (see the end of the file)
+static double th19_v100a_frame_period = 1.0 / 60.0;
+
 void th19_frame_wait_impl() {
 	th19_limiter_ticked = true;
 	Limiter::TickUntil(th19_frame_wait_ms / 1000.0);
+	th19_v100a_frame_period = 1.0 / Limiter::game_fps;
 }
 
 static void patch_frame_wait(DWORD address) {
@@ -1554,4 +1558,111 @@ void th19_install_patches() {
 		// frame rate and slowdown readout thprac draws there (see overlay.h)
 		overlay_set_present_rate_follow_text(true);
 	}
+}
+
+// ---------------------------------------------------------------------------
+// v1.00a
+// ---------------------------------------------------------------------------
+//
+// v1.00a has the same frame functions as v1.10c, but it was built differently enough that none of
+// their addresses carry over, and its clock doesn't read the frame rate: where v1.10c works out
+// 1.0 / 60.0 from 0x005AA2C0, v1.00a reads a double that already holds 1/60 (0x00587518). So the
+// reads are pointed at th19_v100a_frame_period, which th19_frame_wait_impl keeps at
+// 1 / Limiter::game_fps, instead of at the frame rate itself.
+//
+// The addresses were found by matching every v1.10c function the patch touches with its v1.00a
+// counterpart (the calls they make, the constants they read and the order they do it in):
+//
+//   v1.10c        v1.00a
+//   0x004B5C70    0x004A9220    Sleep based pacer (dead code)
+//   0x004B5D70    0x004A9300    Sleep based pacer
+//   0x004B5FE0    0x004A9540    the update path the game uses, with the Sleep(1) at 0x004A9590
+//   0x004B6240    0x004A9730    the game's frame limiter
+//   0x004B64E0    0x004A99C0    frame stepping (dead code)
+//   0x004B6A30    0x004A9EE0    the main loop's own catch up path
+//   0x004B71A2    0x004AA5E7    the Direct3DCreate9 call
+//
+// The frame interpolation isn't supported on v1.00a: it depends on the layout of the game's
+// objects, and that hasn't been checked against this version.
+static const DWORD v100a_frame_period = 0x00587518;
+static const DWORD v100a_period_references[] = {
+	0x004A9248, // Sleep based pacer of the update path at 0x004A9220
+	0x004A9407, // Sleep based pacer of the update path at 0x004A9300
+	0x004A95B6, // frame stepping of the update path at 0x004A9540
+	0x004A99E6, // frame stepping of the update path at 0x004A99C0
+	0x004AAA71, // frame stepping of the main loop's own catch up path
+};
+
+static void patch_period_reference(DWORD address) {
+	DWORD location = rebase(address);
+
+	// Same check as patch_fps_reference: only patch reads of the engine's own constant
+	DWORD frame_period = rebase(v100a_frame_period);
+	if (*(DWORD*)location != frame_period) {
+		printf("Frame period reference at 0x%x doesn't look like a known one (found 0x%x), skipping!\n",
+			address, *(DWORD*)location);
+		return;
+	}
+
+	DWORD value = (DWORD)&th19_v100a_frame_period;
+	patch_bytes(location, &value, sizeof(value));
+}
+
+// Same as th19_external_game_fps, but what another tool points the clock at is a frame period too
+static double* external_period = nullptr;
+
+static UINT th19_v100a_external_game_fps() {
+	DWORD* operand = (DWORD*)rebase(0x004A95B6);
+
+	if (*operand != (DWORD)&th19_v100a_frame_period) {
+		double* candidate = (double*)*operand;
+		if (*candidate > 0.0001 && *candidate < 1.0)
+			external_period = candidate;
+
+		DWORD value = (DWORD)&th19_v100a_frame_period;
+		patch_bytes(operand, &value, sizeof(value));
+	}
+
+	if (external_period == nullptr)
+		return 0;
+
+	double period = *external_period;
+	if (period <= 0.0001 || period >= 1.0)
+		return 0;
+	return (UINT)(1.0 / period + 0.5);
+}
+
+void th19_v100a_install_patches() {
+	{
+		// Make the game's frame limiter return immediately, like on v1.10c
+		BYTE patch[] = { 0xC3 };
+		patch_bytes(rebase(0x004A9730), patch, sizeof(patch));
+	}
+	{
+		// The engine starts reading its frame period long before the limiter is ticked for the
+		// first time, so start it off with the configured value
+		Limiter::game_fps = (double)Config::GameFPS;
+		th19_v100a_frame_period = 1.0 / Limiter::game_fps;
+
+		// Follow thprac (or any other tool) if it takes the engine's frame period over
+		Limiter::external_game_fps = th19_v100a_external_game_fps;
+	}
+	{
+		// Run the engine's clock at GameFPS instead of its hardcoded 60
+		for (DWORD reference : v100a_period_references)
+			patch_period_reference(reference);
+
+		// Let the limiter do the waiting for the frames instead of the game's own Sleep(1)
+		patch_frame_wait(0x004A9590);
+	}
+	if (Config::D3D9Ex) {
+		// Redirect the Direct3DCreate9 call, like on v1.10c
+		patch_call(rebase(0x004AA5E7), Direct3DCreate9_hook);
+
+		// Extra NOP is needed because we're replacing a FF 15 call, which is 6 bytes long
+		BYTE patch[] = { 0x90 };
+		patch_bytes(rebase(0x004AA5EC), patch, sizeof(patch));
+	}
+	if (Config::Interpolation || Config::InterpolationFPS)
+		printf("Frame interpolation isn't supported on Touhou 19 v1.00a, it stays off\n");
 }

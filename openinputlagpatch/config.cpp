@@ -85,6 +85,18 @@ bool Config::Load() {
 			Config::Interpolation = -1;
 		if (Config::InterpolationFPS > 0 && Config::InterpolationFPS < 60)
 			Config::InterpolationFPS = 60;
+
+		// Ju.N.Owen (th19's netplay tool) is loaded from modules\th19_junowen.dll by its d3d9.dll. Netplay keeps
+		// both sides in step frame by frame, and the extra presentations only add work to every frame, so the
+		// interpolation is forced off whenever it's installed
+		wchar_t junowen_path[1024] = {};
+		wcscpy_s(junowen_path, config_path);
+		PathRemoveFileSpecW(junowen_path);
+		PathAppendW(junowen_path, L"modules\\th19_junowen.dll");
+		if ((Config::Interpolation || Config::InterpolationFPS) && PathFileExistsW(junowen_path)) {
+			Config::Interpolation = 0;
+			Config::InterpolationFPS = 0;
+		}
 	}
 
 	// Validate options

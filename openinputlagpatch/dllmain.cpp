@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <winternl.h>
 #include <shlwapi.h>
+#include <intrin.h>
 #include "patch_util.h"
 #include "games.h"
 #include "limiter.h"
@@ -128,6 +129,95 @@ void hook_gdi32() {
     iat_hook(NULL, "gdi32.dll", "GetDeviceCaps", GetDeviceCaps_hook);
 }
 
+// Steam releases are wrapped with SteamStub, which keeps .text encrypted until its own entrypoint has run
+// Patching before that would get scrambled by the decryption, so patches are delayed until the game's code is running
+static TouhouGame steamstub_game = TouhouGame::Unknown;
+static void(WINAPI* GetSystemTimeAsFileTime_orig)(LPFILETIME) = nullptr;
+static void(WINAPI* GetStartupInfoW_orig)(LPSTARTUPINFOW) = nullptr;
+static LPSTR(WINAPI* GetCommandLineA_orig)() = nullptr;
+static LPWSTR(WINAPI* GetCommandLineW_orig)() = nullptr;
+static HMODULE(WINAPI* GetModuleHandleW_orig)(LPCWSTR) = nullptr;
+static BOOL(WINAPI* QueryPerformanceCounter_orig)(LARGE_INTEGER*) = nullptr;
+static char* text_start = nullptr;
+static char* text_end = nullptr;
+
+void install_game_patches(TouhouGame game);
+
+bool find_steamstub() {
+    auto pe = (char*)GetModuleHandleW(NULL);
+    auto nt_header = (PIMAGE_NT_HEADERS32)(pe + ((PIMAGE_DOS_HEADER)pe)->e_lfanew);
+    auto section = IMAGE_FIRST_SECTION(nt_header);
+    bool found = false;
+    for (WORD i = 0; i < nt_header->FileHeader.NumberOfSections; i++, section++) {
+        if (!strncmp((char*)section->Name, ".text", IMAGE_SIZEOF_SHORT_NAME)) {
+            text_start = pe + section->VirtualAddress;
+            text_end = text_start + section->Misc.VirtualSize;
+        }
+        else if (!strncmp((char*)section->Name, ".bind", IMAGE_SIZEOF_SHORT_NAME)) {
+            found = true;
+        }
+    }
+    return found && text_start;
+}
+
+void WINAPI GetSystemTimeAsFileTime_hook(LPFILETIME);
+void WINAPI GetStartupInfoW_hook(LPSTARTUPINFOW);
+LPSTR WINAPI GetCommandLineA_hook();
+LPWSTR WINAPI GetCommandLineW_hook();
+HMODULE WINAPI GetModuleHandleW_hook(LPCWSTR);
+BOOL WINAPI QueryPerformanceCounter_hook(LARGE_INTEGER*);
+
+// The game's CRT startup code calls some of these through the IAT, right after SteamStub is done
+void steamstub_hook_triggers() {
+    GetSystemTimeAsFileTime_orig = (decltype(GetSystemTimeAsFileTime_orig))iat_hook(NULL, "kernel32.dll", "GetSystemTimeAsFileTime", GetSystemTimeAsFileTime_hook);
+    GetStartupInfoW_orig = (decltype(GetStartupInfoW_orig))iat_hook(NULL, "kernel32.dll", "GetStartupInfoW", GetStartupInfoW_hook);
+    GetCommandLineA_orig = (decltype(GetCommandLineA_orig))iat_hook(NULL, "kernel32.dll", "GetCommandLineA", GetCommandLineA_hook);
+    GetCommandLineW_orig = (decltype(GetCommandLineW_orig))iat_hook(NULL, "kernel32.dll", "GetCommandLineW", GetCommandLineW_hook);
+    GetModuleHandleW_orig = (decltype(GetModuleHandleW_orig))iat_hook(NULL, "kernel32.dll", "GetModuleHandleW", GetModuleHandleW_hook);
+    QueryPerformanceCounter_orig = (decltype(QueryPerformanceCounter_orig))iat_hook(NULL, "kernel32.dll", "QueryPerformanceCounter", QueryPerformanceCounter_hook);
+}
+
+// The first of these functions called from the game's own code means SteamStub is done
+// The hooks stay in place afterwards since iat_hook can't restore them, but they just pass through
+void steamstub_check(void* caller) {
+    if (steamstub_game == TouhouGame::Unknown || (char*)caller < text_start || (char*)caller >= text_end)
+        return;
+    auto game = steamstub_game;
+    steamstub_game = TouhouGame::Unknown;
+    printf("SteamStub finished, installing patches\n");
+    install_game_patches(game);
+}
+
+void WINAPI GetSystemTimeAsFileTime_hook(LPFILETIME time) {
+    steamstub_check(_ReturnAddress());
+    GetSystemTimeAsFileTime_orig(time);
+}
+
+void WINAPI GetStartupInfoW_hook(LPSTARTUPINFOW info) {
+    steamstub_check(_ReturnAddress());
+    GetStartupInfoW_orig(info);
+}
+
+LPSTR WINAPI GetCommandLineA_hook() {
+    steamstub_check(_ReturnAddress());
+    return GetCommandLineA_orig();
+}
+
+LPWSTR WINAPI GetCommandLineW_hook() {
+    steamstub_check(_ReturnAddress());
+    return GetCommandLineW_orig();
+}
+
+HMODULE WINAPI GetModuleHandleW_hook(LPCWSTR name) {
+    steamstub_check(_ReturnAddress());
+    return GetModuleHandleW_orig(name);
+}
+
+BOOL WINAPI QueryPerformanceCounter_hook(LARGE_INTEGER* count) {
+    steamstub_check(_ReturnAddress());
+    return QueryPerformanceCounter_orig(count);
+}
+
 // Actually patches everything
 void install_patches() {
     auto game = detect_game();
@@ -136,6 +226,16 @@ void install_patches() {
     else if (game == TouhouGame::Custom)
         return;
 
+    if (find_steamstub()) {
+        printf("SteamStub detected, delaying patches\n");
+        steamstub_game = game;
+        steamstub_hook_triggers();
+        return;
+    }
+    install_game_patches(game);
+}
+
+void install_game_patches(TouhouGame game) {
     Limiter::Initialize(get_replay_callback(game));
     hook_winmm_time_period();
     hook_gdi32();
