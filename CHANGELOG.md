@@ -40,6 +40,41 @@ is also the record of what has actually been verified rather than just what was 
   The extra passes also put back both copies of the view and projection matrices, so they start from
   the state the game's own pass started from.
 
+### Added
+
+- **The Steam releases of th18, th19 and th20 work through the loader** (`8407a02`, PR #2 by es2z)
+
+  Those executables are wrapped with SteamStub, so their code is still encrypted when the DLL is
+  loaded and patching then would be scrambled when the stub decrypts the section. The DLL now spots
+  the stub by its `.bind` section and delays the patches: it hooks a few `kernel32` imports that the
+  CRT calls right after the handover and installs everything on the first call that comes from the
+  game's own `.text`. The loader sets `SteamAppId`/`SteamGameId` before starting the game (otherwise
+  SteamStub relaunches it through Steam and the injected DLL is lost), and runs the game to its
+  entry point, holds it there with a `jmp $`, injects while it is stopped, then restores the bytes
+  and resumes. Injecting into a process whose DLLs have not been loaded yet makes the injected
+  thread load them, which hangs Ju.N.Owen's `d3d9.dll` on th19. The th19 v1.10c and th20 v1.00c
+  Steam executables are added to the hash table; their decrypted code matches the non-Steam
+  releases.
+
+- **th19 v1.00a and Ju.N.Owen are supported** (`6bc1298`, `ef8f55a`, `3ab5a04`, PR #2 by es2z)
+
+  v1.00a shares no addresses with v1.10c, so the frame limiter, the `Sleep` call and the D3D9 call
+  site were matched by what the functions do. Its clock reads a frame *period* (a double holding
+  1/60 at 0x587518) instead of working out 1.0/60.0, so those reads are redirected to a period the
+  patch keeps at 1/GameFPS; interpolation stays off because the object layout has not been checked
+  on this build. Ju.N.Owen ships a `d3d9.dll` that only exports `Direct3DCreate9`, which made the
+  patch DLL fail to load when it imported `Direct3DCreate9Ex` statically - the functions are now
+  looked up at runtime. When that proxy is present, its `Direct3DCreate9` is called with the
+  system's one redirected for the duration, so it wraps the D3D9Ex object the patch created and
+  keeps drawing its lobby. Interpolation is forced off when `modules\th19_junowen.dll` exists,
+  since netplay steps both sides frame by frame and the extras only add work. The author checked
+  the Steam releases and the module loading; actual netplay is untested.
+
+- **Japanese README** (`807f86f`, PR #2 by es2z)
+
+  `README.ja.md` is a translation of the Chinese README, and the language bar at the top of the
+  Chinese and English ones now links to it.
+
 ## 2026-10-17
 
 ### Added
