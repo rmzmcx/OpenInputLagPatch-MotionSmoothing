@@ -68,7 +68,8 @@ is also the record of what has actually been verified rather than just what was 
   system's one redirected for the duration, so it wraps the D3D9Ex object the patch created and
   keeps drawing its lobby. Interpolation is forced off when `modules\th19_junowen.dll` exists,
   since netplay steps both sides frame by frame and the extras only add work. The author checked
-  the Steam releases and the module loading; actual netplay is untested.
+  the Steam releases and the module loading, and played a th19 v1.10c match against one opponent
+  without a desync; the other versions were not played online.
 
 - **Japanese README** (`807f86f`, PR #2 by es2z)
 
