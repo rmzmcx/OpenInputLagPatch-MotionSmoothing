@@ -7,6 +7,49 @@ Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/O
 Only changes that have been tested in-game and confirmed working are listed here, so this file
 is also the record of what has actually been verified rather than just what was attempted.
 
+## 2026-10-20
+
+### Fixed
+
+- **The stage clear transition keeps the game's own speed in th10–th20** (`45d099e`)
+
+  th10 to th20 advance part of the stage transition from draw callbacks: one draw callback subtracts
+  one from the stage clear timer on every render pass, and another creates the 30 frame fade when the
+  timer crosses 30. The game draws once a frame, so that is one step per frame; an extra presentation
+  ran the render chain again, which made the stage clear sequence run two or three times as fast at
+  120/180/300 fps and could create more than one fade for the same game frame. The fade objects
+  themselves were fine: their own timers run on the update chain, once a frame.
+
+  An extra pass now saves the stage object's transition fields and restores them after its render
+  walk, and skips the fade creation while it is drawing. Only the transition fields are copied:
+  restoring the whole object put back pointers the draw had replaced, which crashed th16 and th18
+  when the next stage loaded. th16 and th18 also do not check their inline fade allocation for null,
+  so their creation branch is trampolined instead of making the allocation fail.
+
+  The fade creation sites and stage sizes: th10 `0x402A61`, `0x2B64`; th11 `0x40335B`, `0x3158`;
+  th12 `0x40391D`, `0x3724`; th13 `0x406FA8`, `0x41C0`; th14 `0x40E513`, `0x43A0`; th15 `0x40EA1A`,
+  `0x6788`; th16 branch `0x40A1B2`, `0x66F0`; th17 `0x40A77D`, `0x67B8`; th18 branch `0x41C488`,
+  `0x34A0`; th19 `0x4EC75B` (seven argument fastcall), `0x3638`; th20 `0x472FE8` (cdecl), `0x336C`.
+
+- **th08's rotating lasers interpolate along the shortest arc** (`9adc923`)
+
+  The laser angle is stored wrapped to +/-pi (the ECL opcode at `0x41BDA5` normalises it with
+  `FUN_0043EDB0`), so crossing the boundary produced a raw frame difference of about 2pi. The extras
+  interpolated that difference directly, which made a horizontal laser flip for one extra
+  presentation (clearest in 4B's Starlight Typhoon). The angle step is now folded to the shortest
+  arc and the projected angle is folded back:
+  `theta = Wrap(theta1 + t * Wrap(theta2 - theta1))`. Scripted `startOffset`/`endOffset` jumps are
+  not motion and are still not interpolated.
+
+- **th08's stage 5 illusion keeps its background tint** (`9adc923`)
+
+  The stage 5 boss's illusion sets a background tint (`g_Background` at `0x4E4030`, colour at
+  `+0x6468`, enabled at `+0x646C`) through `FUN_00409160`; the background draw applies it and then
+  resets the stored colour to grey. An extra pass therefore applied the grey default instead of the
+  illusion tint, so the background flashed between the two. The tint state the game's own pass
+  started with is now put back around every extra pass, and the state that pass left is restored
+  afterwards.
+
 ## 2026-10-18
 
 ### Fixed
