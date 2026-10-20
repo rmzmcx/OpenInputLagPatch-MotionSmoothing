@@ -1,6 +1,7 @@
 // Touhou 19: Unfinished Dream of All Living Ghost v1.10c (and v1.00a, see the end of the file)
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include "patch_util.h"
@@ -1086,6 +1087,83 @@ static void th19_text_records_restore() {
 		*(unsigned int*)((char*)text + th19_text_record_count) = th19_text_records;
 }
 
+// ---------------------------------------------------------------------------
+// Frame interpolation: the stage object's transition state
+// ---------------------------------------------------------------------------
+//
+// The stage object is at [0x5D1A3C] (and the second slot at [0x5D1A38], 0x3638 bytes). Its task
+// registration in FUN_004ED1B0 puts two callbacks on the render chain:
+//
+//   FUN_004EC1B0 -> FUN_004EC1E0 (key 6): at 0x4EC48F, while the stage clear timer at
+//                           [stage+0x3614] is above zero, FUN_00404810 subtracts one per render
+//                           pass
+//   FUN_004EC1C0 -> FUN_004EC550 (key 3): at 0x4EC75B, when that timer is below 30,
+//                           FUN_004B9F00 creates the stage clear fade
+//
+// The game draws once a frame, so those run once a frame; an extra presentation runs the render
+// chain again and advances the transition two or three times per game frame. The fade object's own
+// timer runs on the update chain, once a frame, so only the stage's transition fields and the
+// extra creations matter.
+//
+// An extra pass puts the transition fields back afterwards, and the fade creation call at
+// 0x4EC75B is skipped while an extra is drawing. Only those fields are copied, not the whole
+// object: the draw pass may replace pointers the object holds, and putting those back can leave
+// the next stage loading with stale handles.
+static const size_t th19_stage_ranges[][2] = { { 0x35E0, 0x08 }, { 0x3608, 0x20 } };
+static const size_t th19_stage_range_count = sizeof(th19_stage_ranges) / sizeof(th19_stage_ranges[0]);
+static const size_t th19_stage_saved_size = 0x28;
+static void** const th19_stage_slots[2] = { (void**)rebase(0x005D1A38), (void**)rebase(0x005D1A3C) };
+static unsigned char* th19_stage_saved[2];
+static bool th19_stage_saved_valid[2];
+static bool th19_in_extra;
+
+static void th19_stage_save() {
+	for (int i = 0; i < 2; ++i) {
+		th19_stage_saved_valid[i] = false;
+		void* stage = *th19_stage_slots[i];
+		if (stage == nullptr)
+			continue;
+		if (th19_stage_saved[i] == nullptr)
+			th19_stage_saved[i] = (unsigned char*)malloc(th19_stage_saved_size);
+		if (th19_stage_saved[i] == nullptr)
+			continue;
+		size_t offset = 0;
+		for (size_t r = 0; r < th19_stage_range_count; ++r) {
+			memcpy(th19_stage_saved[i] + offset, (char*)stage + th19_stage_ranges[r][0],
+				th19_stage_ranges[r][1]);
+			offset += th19_stage_ranges[r][1];
+		}
+		th19_stage_saved_valid[i] = true;
+	}
+}
+
+static void th19_stage_restore() {
+	for (int i = 0; i < 2; ++i) {
+		void* stage = *th19_stage_slots[i];
+		if (!th19_stage_saved_valid[i] || stage == nullptr)
+			continue;
+		size_t offset = 0;
+		for (size_t r = 0; r < th19_stage_range_count; ++r) {
+			memcpy((char*)stage + th19_stage_ranges[r][0], th19_stage_saved[i] + offset,
+				th19_stage_ranges[r][1]);
+			offset += th19_stage_ranges[r][1];
+		}
+		th19_stage_saved_valid[i] = false;
+	}
+}
+
+// FUN_004B9F00 is a seven argument fastcall (ECX/EDX for the first two, the rest on the stack,
+// caller cleans). The call from FUN_004EC550 at 0x4EC75B is the stage clear fade; an extra
+// presentation must skip it. The caller ignores the return value, so 0 is safe.
+static int (__fastcall* th19_fade_create)(int a1, int a2, int a3, int a4, int a5, int a6, int a7) =
+	(int(__fastcall*)(int, int, int, int, int, int, int))rebase(0x004B9F00);
+
+static int __fastcall th19_fade_create_extra_guard(int a1, int a2, int a3, int a4, int a5, int a6, int a7) {
+	if (th19_in_extra)
+		return 0;
+	return th19_fade_create(a1, a2, a3, a4, a5, a6, a7);
+}
+
 // Remembers what the scene is about to be drawn with, then lets the game's own render run exactly
 // as it always did
 static void th19_render_hook() {
@@ -1257,7 +1335,13 @@ static void th19_extra_presentation(float t) {
 	// presentation appends its records where that pass put its own and draws the same text it drew
 	// (see th19_text_record_count above)
 	th19_text_records_restore();
+	// The stage's draw callbacks advance its transition (see th19_stage_save); put the object back
+	// afterwards so an extra pass cannot move the transition a second or third time
+	th19_stage_save();
+	th19_in_extra = true;
 	th19_render_objects();
+	th19_in_extra = false;
+	th19_stage_restore();
 	th19_lasers_undo();
 	th19_shots_undo();
 	th19_player_undo();
@@ -1530,6 +1614,16 @@ void th19_install_patches() {
 			} else {
 				printf("th19 render call at 0x%x doesn't look like a known one, skipping!\n", address);
 			}
+		}
+
+		// The stage's draw callback creates the stage clear fade at 0x4EC75B; an extra
+		// presentation must skip that (see th19_fade_create_extra_guard)
+		BYTE* fade_call = (BYTE*)rebase(0x004EC75B);
+		if (fade_call[0] == 0xE8 &&
+			*(DWORD*)(fade_call + 1) == rebase(0x004B9F00) - (rebase(0x004EC75B) + 5)) {
+			patch_call(rebase(0x004EC75B), (void*)th19_fade_create_extra_guard);
+		} else {
+			printf("th19 fade creation call at 0x4EC75B doesn't look like the known one, skipping!\n");
 		}
 
 		// Take over the presents in the frame functions (see th19_hook_present)

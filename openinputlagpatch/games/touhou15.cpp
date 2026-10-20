@@ -1,6 +1,8 @@
 // Touhou 15: Legacy of Lunatic Kingdom v1.00b
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "patch_util.h"
 #include "limiter.h"
 #include "d3d9_hook.h"
@@ -717,6 +719,65 @@ static void th15_text_records_restore() {
 // shake). The value the game's pass started with is therefore put back around every extra pass.
 static ExtraFloatState th15_shake = { (float*)0x004E7E90, 2 };
 
+// ---------------------------------------------------------------------------
+// Frame interpolation: the stage object's transition state
+// ---------------------------------------------------------------------------
+//
+// The stage object at [0x4E9A60] (and the second slot at [0x4E9A5C], 0x6788 bytes) is drawn by
+// the callback at 0x40E800, which changes the object in two places:
+//
+//   0x40EF24: if ([stage+0x6764] > 0) it subtracts one from the stage clear timer at
+//             [stage+0x6760]
+//   0x40EA0B: if ([stage+0x675C] & 4 and [stage+0x6764] < 30) it allocates the 0x40 byte fade
+//             object at 0x40EA1A and registers its tasks
+//
+// The game draws once a frame, so those callbacks run once a frame. An extra presentation runs the
+// render chain again, which subtracts the timer two or three times per game frame and can create
+// more than one fade for the same frame. The fade object itself is fine: its own timer runs on the
+// update chain, once a frame.
+//
+// As in th13/th14 the fade is built inline, so the allocation call at 0x40EA1A is guarded:
+// returning nullptr there makes the callback take its own failure path (0x40EB02) and skip the
+// fade, while the rest of the draw runs normally.
+static const size_t th15_stage_size = 0x6788;
+static void** const th15_stage_slots[2] = { (void**)0x004E9A5C, (void**)0x004E9A60 };
+static unsigned char* th15_stage_saved[2];
+static bool th15_stage_saved_valid[2];
+static bool th15_in_extra;
+
+static void th15_stage_save() {
+	for (int i = 0; i < 2; ++i) {
+		th15_stage_saved_valid[i] = false;
+		void* stage = *th15_stage_slots[i];
+		if (stage == nullptr)
+			continue;
+		if (th15_stage_saved[i] == nullptr)
+			th15_stage_saved[i] = (unsigned char*)malloc(th15_stage_size);
+		if (th15_stage_saved[i] == nullptr)
+			continue;
+		memcpy(th15_stage_saved[i], stage, th15_stage_size);
+		th15_stage_saved_valid[i] = true;
+	}
+}
+
+static void th15_stage_restore() {
+	for (int i = 0; i < 2; ++i) {
+		void* stage = *th15_stage_slots[i];
+		if (!th15_stage_saved_valid[i] || stage == nullptr)
+			continue;
+		memcpy(stage, th15_stage_saved[i], th15_stage_size);
+		th15_stage_saved_valid[i] = false;
+	}
+}
+
+static void* (__cdecl* th15_operator_new)(size_t size) = (void*(__cdecl*)(size_t))0x0049039F;
+
+static void* __cdecl th15_fade_alloc_guard(size_t size) {
+	if (th15_in_extra)
+		return nullptr;
+	return th15_operator_new(size);
+}
+
 static void th15_render_hook() {
 	IDirect3DDevice9* device = d3d9_hooked_device();
 	if (device != nullptr) {
@@ -854,10 +915,16 @@ static void th15_extra_presentation(float t) {
 	// The text list goes back to how the game's own run of the walk found it, so this presentation
 	// draws the same text that one drew (see th15_text_record_count above)
 	th15_text_records_restore();
+	// The stage's draw callback advances its transition (see th15_stage_save); put the object back
+	// afterwards so an extra pass cannot move the transition a second or third time
+	th15_stage_save();
+	th15_in_extra = true;
 	// Put the shake back for this pass (see the comment above)
 	extra_float_state_begin(&th15_shake);
 	th15_render_objects();
 	extra_float_state_end(&th15_shake);
+	th15_in_extra = false;
+	th15_stage_restore();
 	th15_lasers_undo();
 	th15_player_undo();
 	th15_bullets_undo();
@@ -1044,6 +1111,16 @@ void th15_install_patches() {
 			} else {
 				printf("th15 render call at 0x%x doesn't look like a known one, skipping!\n", address);
 			}
+		}
+
+		// The stage's draw callback allocates the stage clear fade at 0x40EA1A; an extra
+		// presentation must skip that (see th15_fade_alloc_guard)
+		BYTE* fade_call = (BYTE*)0x0040EA1A;
+		if (fade_call[0] == 0xE8 &&
+			(DWORD)0x0040EA1F + *(DWORD*)(fade_call + 1) == 0x0049039F) {
+			patch_call(0x0040EA1A, (void*)th15_fade_alloc_guard);
+		} else {
+			printf("th15 fade allocation at 0x40EA1A doesn't look like the known one, skipping!\n");
 		}
 
 		// Take over the presents in the three frame functions. The instruction that loads the

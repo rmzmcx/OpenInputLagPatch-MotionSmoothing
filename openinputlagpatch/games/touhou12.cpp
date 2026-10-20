@@ -1,6 +1,8 @@
 // Touhou 12: Undefined Fantastic Object v1.00b
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "patch_util.h"
 #include "limiter.h"
 #include "d3d9_hook.h"
@@ -150,6 +152,71 @@ static void th12_text_records_restore() {
 // many pixels away from the one the game's own pass drew - the same pattern as th08's and th20's
 // shake). The value the game's pass started with is therefore put back around every extra pass.
 static ExtraFloatState th12_shake = { (float*)0x004CEE04, 2 };
+
+// ---------------------------------------------------------------------------
+// Frame interpolation: the stage object's transition state
+// ---------------------------------------------------------------------------
+//
+// th12 uses the same layout as th10 and th11. The stage object at [0x4B43C0] (and the second
+// slot at [0x4B43BC]) has an update task (0x403EC0 -> 0x403020) and two draw tasks:
+// 0x403ED0 -> 0x4036F0 and 0x403EE0 -> 0x403B60. The draw ones change the object:
+//
+//   0x403E0D (FUN_00403B60): if ([stage+0x35C4] > 0) FUN_00464A20(&[stage+0x35C0], -1.0f), which
+//                            subtracts one from the stage clear timer
+//   0x40391D (FUN_004036F0): if ([stage+0x35BC] & 4 and [stage+0x35C4] < 30)
+//                            FUN_004529A0(3, 30, 0, 0, 0, 0x0B), which creates a 30 frame fade
+//
+// The game draws once a frame, so those callbacks run once a frame. An extra presentation runs the
+// render chain again, which subtracts the timer two or three times per game frame and can create
+// more than one fade for the same frame. The fade object itself is fine: its own timer runs on the
+// update chain, once a frame.
+//
+// So an extra pass copies both stage objects (0x3724 bytes, the size the allocator uses) before
+// its render walk and puts them back afterwards, and the fade factory call at 0x40391D is skipped
+// while an extra is drawing.
+static const size_t th12_stage_size = 0x3724;
+static void** const th12_stage_slots[2] = { (void**)0x004B43BC, (void**)0x004B43C0 };
+static unsigned char* th12_stage_saved[2];
+static bool th12_stage_saved_valid[2];
+static bool th12_in_extra;
+
+static void th12_stage_save() {
+	for (int i = 0; i < 2; ++i) {
+		th12_stage_saved_valid[i] = false;
+		void* stage = *th12_stage_slots[i];
+		if (stage == nullptr)
+			continue;
+		if (th12_stage_saved[i] == nullptr)
+			th12_stage_saved[i] = (unsigned char*)malloc(th12_stage_size);
+		if (th12_stage_saved[i] == nullptr)
+			continue;
+		memcpy(th12_stage_saved[i], stage, th12_stage_size);
+		th12_stage_saved_valid[i] = true;
+	}
+}
+
+static void th12_stage_restore() {
+	for (int i = 0; i < 2; ++i) {
+		void* stage = *th12_stage_slots[i];
+		if (!th12_stage_saved_valid[i] || stage == nullptr)
+			continue;
+		memcpy(stage, th12_stage_saved[i], th12_stage_size);
+		th12_stage_saved_valid[i] = false;
+	}
+}
+
+// FUN_004529A0 builds a fade object and puts its tasks on the chains (six arguments, ret 18h).
+// The call from the stage's draw callback at 0x40391D is the one that creates the stage clear
+// fade; an extra presentation must not create another one. The callers ignore the return value,
+// so nullptr is safe; everything else goes to the game's factory.
+static void* (__stdcall* th12_fade_create)(int mode, int duration, int a3, int a4, int a5, int a6) =
+	(void*(__stdcall*)(int, int, int, int, int, int))0x004529A0;
+
+static void* __stdcall th12_fade_create_extra_guard(int mode, int duration, int a3, int a4, int a5, int a6) {
+	if (th12_in_extra)
+		return nullptr;
+	return th12_fade_create(mode, duration, a3, a4, a5, a6);
+}
 
 static void th12_render_hook() {
 	IDirect3DDevice9* device = th12_device();
@@ -916,10 +983,16 @@ static void th12_extra_presentation(IDirect3DDevice9* device, float t) {
 	// The text list goes back to how the game's own run of the walk found it, so this presentation
 	// draws the same text that one drew (see th12_text_record_count above)
 	th12_text_records_restore();
+	// The stage's draw callbacks advance its transition (see th12_stage_save); put the object back
+	// afterwards so an extra pass cannot move the transition a second or third time
+	th12_stage_save();
+	th12_in_extra = true;
 	// Put the shake back for this pass (see the comment above)
 	extra_float_state_begin(&th12_shake);
 	th12_render_objects();
 	extra_float_state_end(&th12_shake);
+	th12_in_extra = false;
+	th12_stage_restore();
 	th12_lasers_undo();
 	th12_undo_shifts();
 	th12_bullets_undo();
@@ -1079,6 +1152,16 @@ void th12_install_patches() {
 			} else {
 				printf("th12 render call at 0x%x doesn't look like a known one, skipping!\n", address);
 			}
+		}
+
+		// The stage's draw callback FUN_004036F0 creates the stage clear fade at 0x40391D; an
+		// extra presentation must skip that (see th12_fade_create_extra_guard)
+		BYTE* fade_call = (BYTE*)0x0040391D;
+		if (fade_call[0] == 0xE8 &&
+			(DWORD)0x00403922 + *(DWORD*)(fade_call + 1) == 0x004529A0) {
+			patch_call(0x0040391D, (void*)th12_fade_create_extra_guard);
+		} else {
+			printf("th12 fade creation call at 0x40391D doesn't look like the known one, skipping!\n");
 		}
 
 		// Take over the presents in the three frame functions' helpers. Each site starts by loading

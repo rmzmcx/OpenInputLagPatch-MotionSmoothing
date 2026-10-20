@@ -1,6 +1,8 @@
 // Touhou 17: Wily Beast and Weakest Creature v1.00b
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "patch_util.h"
 #include "limiter.h"
 #include "d3d9_hook.h"
@@ -165,6 +167,65 @@ static void th17_camera_setup() {
 // many pixels away from the one the game's own pass drew - the same pattern as th08's and th20's
 // shake). The value the game's pass started with is therefore put back around every extra pass.
 static ExtraFloatState th17_shake = { (float*)0x004B6198, 2 };
+
+// ---------------------------------------------------------------------------
+// Frame interpolation: the stage object's transition state
+// ---------------------------------------------------------------------------
+//
+// The stage object at [0x4B7680] (and the second slot at [0x4B767C], 0x67B8 bytes) is drawn by
+// the callback at 0x40A590, which changes the object in two places:
+//
+//   0x40AC7C: if ([stage+0x6794] > 0) it subtracts one from the stage clear timer at
+//             [stage+0x6790]
+//   0x40A76E: if ([stage+0x678C] & 4 and [stage+0x6794] < 30) it allocates the 0x40 byte fade
+//             object at 0x40A77D and registers its tasks
+//
+// The game draws once a frame, so those callbacks run once a frame. An extra presentation runs the
+// render chain again, which subtracts the timer two or three times per game frame and can create
+// more than one fade for the same frame. The fade object itself is fine: its own timer runs on the
+// update chain, once a frame.
+//
+// As in th13-th16 the fade is built inline, so the allocation call at 0x40A77D is guarded:
+// returning nullptr there makes the callback take its own failure path (0x40A890) and skip the
+// fade, while the rest of the draw runs normally.
+static const size_t th17_stage_size = 0x67B8;
+static void** const th17_stage_slots[2] = { (void**)0x004B767C, (void**)0x004B7680 };
+static unsigned char* th17_stage_saved[2];
+static bool th17_stage_saved_valid[2];
+static bool th17_in_extra;
+
+static void th17_stage_save() {
+	for (int i = 0; i < 2; ++i) {
+		th17_stage_saved_valid[i] = false;
+		void* stage = *th17_stage_slots[i];
+		if (stage == nullptr)
+			continue;
+		if (th17_stage_saved[i] == nullptr)
+			th17_stage_saved[i] = (unsigned char*)malloc(th17_stage_size);
+		if (th17_stage_saved[i] == nullptr)
+			continue;
+		memcpy(th17_stage_saved[i], stage, th17_stage_size);
+		th17_stage_saved_valid[i] = true;
+	}
+}
+
+static void th17_stage_restore() {
+	for (int i = 0; i < 2; ++i) {
+		void* stage = *th17_stage_slots[i];
+		if (!th17_stage_saved_valid[i] || stage == nullptr)
+			continue;
+		memcpy(stage, th17_stage_saved[i], th17_stage_size);
+		th17_stage_saved_valid[i] = false;
+	}
+}
+
+static void* (__cdecl* th17_operator_new)(size_t size) = (void*(__cdecl*)(size_t))0x0047B250;
+
+static void* __cdecl th17_fade_alloc_guard(size_t size) {
+	if (th17_in_extra)
+		return nullptr;
+	return th17_operator_new(size);
+}
 
 static void th17_render_hook() {
 	IDirect3DDevice9* device = d3d9_hooked_device();
@@ -891,10 +952,16 @@ static void th17_extra_presentation(float t) {
 	// The text list goes back to how the game's own run of the walk found it, so this presentation
 	// draws the same text that one drew (see th17_text_record_count above)
 	th17_text_records_restore();
+	// The stage's draw callback advances its transition (see th17_stage_save); put the object back
+	// afterwards so an extra pass cannot move the transition a second or third time
+	th17_stage_save();
+	th17_in_extra = true;
 	// Put the shake back for this pass (see the comment above)
 	extra_float_state_begin(&th17_shake);
 	th17_render_objects();
 	extra_float_state_end(&th17_shake);
+	th17_in_extra = false;
+	th17_stage_restore();
 	th17_lasers_undo();
 	th17_player_undo();
 	th17_bullets_undo();
@@ -1081,6 +1148,16 @@ void th17_install_patches() {
 			} else {
 				printf("th17 render call at 0x%x doesn't look like a known one, skipping!\n", address);
 			}
+		}
+
+		// The stage's draw callback allocates the stage clear fade at 0x40A77D; an extra
+		// presentation must skip that (see th17_fade_alloc_guard)
+		BYTE* fade_call = (BYTE*)0x0040A77D;
+		if (fade_call[0] == 0xE8 &&
+			(DWORD)0x0040A782 + *(DWORD*)(fade_call + 1) == 0x0047B250) {
+			patch_call(0x0040A77D, (void*)th17_fade_alloc_guard);
+		} else {
+			printf("th17 fade allocation at 0x40A77D doesn't look like the known one, skipping!\n");
 		}
 
 		// Take over the presents in the three frame functions. The instruction that loads the

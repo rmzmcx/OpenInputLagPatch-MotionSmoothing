@@ -1,6 +1,8 @@
 // Touhou 10: Mountain of Faith v1.00a
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "patch_util.h"
 #include "limiter.h"
 #include "d3d9_hook.h"
@@ -245,6 +247,72 @@ static void th10_fps_restore(bool as_presentation) {
 		const double future = 1.0e300;
 		memcpy((char*)fps + th10_fps_window, &future, sizeof(future));
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Frame interpolation: the stage object's transition state
+// ---------------------------------------------------------------------------
+//
+// The stage's transition is not driven only by its update callback. Two of the three tasks it
+// registers live on the render chain: FUN_00402230 registers FUN_00403060 -> FUN_00402850 at key
+// 7 and FUN_00403070 -> FUN_00402CA0 at key 10, and both change its state:
+//
+//   0x402F88 (FUN_00402CA0): if ([stage+0x2A20] > 0) FUN_0044BF40(-1.0f), which subtracts one
+//                            from the stage clear timer at [stage+0x2A1C..0x2A2C]
+//   0x402A61 (FUN_00402850): if ([stage+0x2A18] & 4 and [stage+0x2A20] < 30)
+//                            FUN_0043C8B0(3, 30, 0, 0, 0), which creates a 30 frame fade to black
+//
+// The game runs that chain once per frame. An extra presentation runs it again, so with three
+// presentations per game frame the stage clear timer is decremented three times (the transition
+// runs three times as fast) and the fade factory can add more than one fade task for one game
+// frame. The fade object itself is fine: its own timer runs on the update chain, once a frame.
+//
+// So an extra pass puts the whole stage object back after its render walk, and the fade factory
+// call in FUN_00402850 is skipped while an extra is drawing. The object is 0x2B64 bytes
+// (FUN_00402640 allocates it); copying it is cheap next to a render pass.
+static const size_t th10_stage_size = 0x2B64;
+static void** const th10_stage_slots[2] = { (void**)0x004776E4, (void**)0x004776E8 };
+static unsigned char* th10_stage_saved[2];
+static bool th10_stage_saved_valid[2];
+static bool th10_in_extra;
+
+static void th10_stage_save() {
+	for (int i = 0; i < 2; ++i) {
+		th10_stage_saved_valid[i] = false;
+		void* stage = *th10_stage_slots[i];
+		if (stage == nullptr)
+			continue;
+		if (th10_stage_saved[i] == nullptr)
+			th10_stage_saved[i] = (unsigned char*)malloc(th10_stage_size);
+		if (th10_stage_saved[i] == nullptr)
+			continue;
+		memcpy(th10_stage_saved[i], stage, th10_stage_size);
+		th10_stage_saved_valid[i] = true;
+	}
+}
+
+static void th10_stage_restore() {
+	for (int i = 0; i < 2; ++i) {
+		void* stage = *th10_stage_slots[i];
+		if (!th10_stage_saved_valid[i] || stage == nullptr)
+			continue;
+		memcpy(stage, th10_stage_saved[i], th10_stage_size);
+		th10_stage_saved_valid[i] = false;
+	}
+}
+
+// FUN_0043C8B0 builds a fade object and puts both of its tasks on the chains. The call from
+// FUN_00402850 at 0x402A61 is the one that creates the stage clear fade from the render chain;
+// an extra presentation must not create another one, which is what this wrapper does while
+// th10_in_extra is set. The callers ignore the return value (the function only returns the new
+// object), so nullptr is safe. Everything else goes through to the game's own factory.
+static void* (__stdcall* th10_fade_create)(int mode, int duration, int a3, int a4, int a5) =
+	(void*(__stdcall*)(int, int, int, int, int))0x0043C8B0;
+
+static void* __stdcall th10_fade_create_extra_guard(int mode, int duration, int a3, int a4, int a5) {
+	if (th10_in_extra)
+		return nullptr;
+	return th10_fade_create(mode, duration, a3, a4, a5);
 }
 
 // ---------------------------------------------------------------------------
@@ -1151,10 +1219,16 @@ static void th10_extra_presentation(IDirect3DDevice9* device, float t) {
 	// Nothing to render into an empty scene, and the walk itself would read the object it is handed
 	void* scene = *th10_scene;
 	if (scene != nullptr) {
+		// The stage's draw callbacks advance its transition (see th10_stage_save); put the object
+		// back afterwards so an extra pass cannot move the transition a second or third time
+		th10_stage_save();
+		th10_in_extra = true;
 		// Put the shake back for this pass (see the comment above)
 		extra_float_state_begin(&th10_shake);
 		th10_render_objects(scene);
 		extra_float_state_end(&th10_shake);
+		th10_in_extra = false;
+		th10_stage_restore();
 	}
 	th10_lasers_undo();
 	th10_undo_shifts();
@@ -1363,6 +1437,16 @@ void th10_install_patches() {
 			++render_patched;
 		} else {
 			printf("th10 render call at 0x4394D8 doesn't look like the known one, skipping!\n");
+		}
+
+		// The stage's draw callback FUN_00402850 creates the stage clear fade at 0x402A61; an
+		// extra presentation must skip that (see th10_fade_create_extra_guard)
+		BYTE* fade_call = (BYTE*)0x00402A61;
+		if (fade_call[0] == 0xE8 &&
+			(DWORD)0x00402A66 + *(DWORD*)(fade_call + 1) == 0x0043C8B0) {
+			patch_call(0x00402A61, (void*)th10_fade_create_extra_guard);
+		} else {
+			printf("th10 fade creation call at 0x402A61 doesn't look like the known one, skipping!\n");
 		}
 
 		// Take over the present inside the frame function's own present helper (FUN_004391F0).

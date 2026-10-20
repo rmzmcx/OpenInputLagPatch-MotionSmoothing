@@ -1,6 +1,8 @@
 // Touhou 16: Hidden Star in Four Seasons v1.00a
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "patch_util.h"
 #include "limiter.h"
 #include "d3d9_hook.h"
@@ -136,6 +138,99 @@ static void th16_text_records_restore() {
 // many pixels away from the one the game's own pass drew - the same pattern as th08's and th20's
 // shake). The value the game's pass started with is therefore put back around every extra pass.
 static ExtraFloatState th16_shake = { (float*)0x004C1788, 2 };
+
+// ---------------------------------------------------------------------------
+// Frame interpolation: the stage object's transition state
+// ---------------------------------------------------------------------------
+//
+// The stage object at [0x4A6DA0] (and the second slot at [0x4A6D9C], 0x66F0 bytes) is drawn by
+// the callback at 0x409F90, which changes the object in two places:
+//
+//   0x40A6D0: if ([stage+0x66CC] > 0) it subtracts one from the stage clear timer at
+//             [stage+0x66C8]
+//   0x40A1AB: if ([stage+0x66C4] & 4 and [stage+0x66CC] < 30) it allocates the 0x40 byte fade
+//             object at 0x40A1BA and registers its tasks
+//
+// The game draws once a frame, so those callbacks run once a frame. An extra presentation runs the
+// render chain again, which subtracts the timer two or three times per game frame and can create
+// more than one fade for the same frame. The fade object itself is fine: its own timer runs on the
+// update chain, once a frame.
+//
+// Only the transition fields are put back, not the whole object: restoring the object's pointers
+// put back handles to objects the draw pass may have replaced, which crashed when the next stage
+// loaded. The two ranges are the flag/timer block at +0x66B8 and the fade colour/alpha byte at
+// +0x3348.
+static const size_t th16_stage_ranges[][2] = { { 0x66B8, 0x38 }, { 0x3348, 0x10 } };
+static const size_t th16_stage_range_count = sizeof(th16_stage_ranges) / sizeof(th16_stage_ranges[0]);
+static const size_t th16_stage_saved_size = 0x48;
+static void** const th16_stage_slots[2] = { (void**)0x004A6D9C, (void**)0x004A6DA0 };
+static unsigned char* th16_stage_saved[2];
+static bool th16_stage_saved_valid[2];
+static bool th16_in_extra;
+
+static void th16_stage_save() {
+	for (int i = 0; i < 2; ++i) {
+		th16_stage_saved_valid[i] = false;
+		void* stage = *th16_stage_slots[i];
+		if (stage == nullptr)
+			continue;
+		if (th16_stage_saved[i] == nullptr)
+			th16_stage_saved[i] = (unsigned char*)malloc(th16_stage_saved_size);
+		if (th16_stage_saved[i] == nullptr)
+			continue;
+		size_t offset = 0;
+		for (size_t r = 0; r < th16_stage_range_count; ++r) {
+			memcpy(th16_stage_saved[i] + offset, (char*)stage + th16_stage_ranges[r][0],
+				th16_stage_ranges[r][1]);
+			offset += th16_stage_ranges[r][1];
+		}
+		th16_stage_saved_valid[i] = true;
+	}
+}
+
+static void th16_stage_restore() {
+	for (int i = 0; i < 2; ++i) {
+		void* stage = *th16_stage_slots[i];
+		if (!th16_stage_saved_valid[i] || stage == nullptr)
+			continue;
+		size_t offset = 0;
+		for (size_t r = 0; r < th16_stage_range_count; ++r) {
+			memcpy((char*)stage + th16_stage_ranges[r][0], th16_stage_saved[i] + offset,
+				th16_stage_ranges[r][1]);
+			offset += th16_stage_ranges[r][1];
+		}
+		th16_stage_saved_valid[i] = false;
+	}
+}
+
+// The fade creation block does not check its allocation for null (it dereferences the result
+// immediately), so it cannot be skipped by making the allocation fail. Instead the branch that
+// guards the block (0x40A1B2, `jge 0x40A2AD`) is replaced with a jump to this trampoline: during an
+// extra pass it always takes the "no fade" path; otherwise it runs the game's own condition.
+static __declspec(noinline) bool th16_is_extra() {
+	return th16_in_extra;
+}
+
+static void __declspec(naked) th16_fade_create_branch() {
+	__asm {
+		push eax
+		push ecx
+		push edx
+		call th16_is_extra
+		test al, al
+		pop edx
+		pop ecx
+		pop eax
+		jne skip
+		cmp dword ptr [edi + 66CCh], 1Eh
+		jge skip
+		mov ecx, 0040A1B8h
+		jmp ecx
+	skip:
+		mov ecx, 0040A2ADh
+		jmp ecx
+	}
+}
 
 static void th16_render_hook() {
 	IDirect3DDevice9* device = d3d9_hooked_device();
@@ -866,10 +961,16 @@ static void th16_extra_presentation(float t) {
 	// The text list goes back to how the game's own run of the walk found it, so this presentation
 	// draws the same text that one drew (see th16_text_record_count above)
 	th16_text_records_restore();
+	// The stage's draw callback advances its transition (see th16_stage_save); put the object back
+	// afterwards so an extra pass cannot move the transition a second or third time
+	th16_stage_save();
+	th16_in_extra = true;
 	// Put the shake back for this pass (see the comment above)
 	extra_float_state_begin(&th16_shake);
 	th16_render_objects();
 	extra_float_state_end(&th16_shake);
+	th16_in_extra = false;
+	th16_stage_restore();
 	th16_lasers_undo();
 	th16_player_undo();
 	th16_bullets_undo();
@@ -1056,6 +1157,18 @@ void th16_install_patches() {
 			} else {
 				printf("th16 render call at 0x%x doesn't look like a known one, skipping!\n", address);
 			}
+		}
+
+		// The fade creation block does not check its allocation for null, so its guard branch is
+		// trampolined instead (see th16_fade_create_branch)
+		BYTE* fade_branch = (BYTE*)0x0040A1B2;
+		if (fade_branch[0] == 0x0F && fade_branch[1] == 0x8D &&
+			(DWORD)0x0040A1B8 + *(DWORD*)(fade_branch + 2) == 0x0040A2AD) {
+			patch_jmp(0x0040A1B2, (void*)th16_fade_create_branch);
+			BYTE nop = 0x90;
+			patch_bytes(0x0040A1B7, &nop, 1);
+		} else {
+			printf("th16 fade branch at 0x40A1B2 doesn't look like the known one, skipping!\n");
 		}
 
 		// Take over the presents in the three frame functions. The instruction that loads the

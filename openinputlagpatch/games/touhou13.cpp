@@ -1,6 +1,8 @@
 // Touhou 13: Ten Desires v1.00c
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "patch_util.h"
 #include "limiter.h"
 #include "d3d9_hook.h"
@@ -166,6 +168,70 @@ static void th13_text_pool_restore() {
 // many pixels away from the one the game's own pass drew - the same pattern as th08's and th20's
 // shake). The value the game's pass started with is therefore put back around every extra pass.
 static ExtraFloatState th13_shake = { (float*)0x004DCBE8, 2 };
+
+// ---------------------------------------------------------------------------
+// Frame interpolation: the stage object's transition state
+// ---------------------------------------------------------------------------
+//
+// The stage object at [0x4C216C] (and the second slot at [0x4C2168], 0x41C0 bytes) has an update
+// task (0x407680 -> 0x406680) and two draw tasks (0x407690 -> 0x406D90 and 0x4076A0 -> 0x407310).
+// The draw ones change the object:
+//
+//   0x4075B4 (FUN_00407310): if ([stage+0x4054] > 0) FUN_004732C0(&[stage+0x4050], -1.0f), which
+//                            subtracts one from the stage clear timer
+//   0x406F99 (FUN_00406D90): if ([stage+0x404C] & 4 and [stage+0x4054] < 30) it allocates the
+//                            0x44 byte fade object (0x406FA8 -> operator new) and registers its
+//                            tasks with callbacks 0x45EF50/0x45F4C0
+//
+// The game draws once a frame, so those callbacks run once a frame. An extra presentation runs the
+// render chain again, which subtracts the timer two or three times per game frame and can create
+// more than one fade for the same frame. The fade object itself is fine: its own timer runs on the
+// update chain, once a frame.
+//
+// Unlike th10-th12 the fade object is built inline instead of through a factory, so the allocation
+// call at 0x406FA8 is what is guarded: returning nullptr there makes the callback take its own
+// "allocation failed" path (0x407055) and skip the fade, while the rest of the draw runs normally.
+static const size_t th13_stage_size = 0x41C0;
+static void** const th13_stage_slots[2] = { (void**)0x004C2168, (void**)0x004C216C };
+static unsigned char* th13_stage_saved[2];
+static bool th13_stage_saved_valid[2];
+static bool th13_in_extra;
+
+static void th13_stage_save() {
+	for (int i = 0; i < 2; ++i) {
+		th13_stage_saved_valid[i] = false;
+		void* stage = *th13_stage_slots[i];
+		if (stage == nullptr)
+			continue;
+		if (th13_stage_saved[i] == nullptr)
+			th13_stage_saved[i] = (unsigned char*)malloc(th13_stage_size);
+		if (th13_stage_saved[i] == nullptr)
+			continue;
+		memcpy(th13_stage_saved[i], stage, th13_stage_size);
+		th13_stage_saved_valid[i] = true;
+	}
+}
+
+static void th13_stage_restore() {
+	for (int i = 0; i < 2; ++i) {
+		void* stage = *th13_stage_slots[i];
+		if (!th13_stage_saved_valid[i] || stage == nullptr)
+			continue;
+		memcpy(stage, th13_stage_saved[i], th13_stage_size);
+		th13_stage_saved_valid[i] = false;
+	}
+}
+
+// The fade object is allocated inline by FUN_00406D90 (0x406FA8). While an extra is drawing, the
+// call returns nullptr, which is exactly what the callback checks before building the fade
+// (see the comment above). Everything else goes to the game's own operator new.
+static void* (__cdecl* th13_operator_new)(size_t size) = (void*(__cdecl*)(size_t))0x0047A1E1;
+
+static void* __cdecl th13_fade_alloc_guard(size_t size) {
+	if (th13_in_extra)
+		return nullptr;
+	return th13_operator_new(size);
+}
 
 static void th13_render_hook() {
 	IDirect3DDevice9* device = th13_device();
@@ -860,10 +926,16 @@ static void th13_extra_presentation(IDirect3DDevice9* device, float t) {
 	// The pool the text is laid out in goes back to what the game's own run of the walk started with,
 	// so this presentation draws the same line the way that one did (see Th13TextPool)
 	th13_text_pool_restore();
+	// The stage's draw callbacks advance its transition (see th13_stage_save); put the object back
+	// afterwards so an extra pass cannot move the transition a second or third time
+	th13_stage_save();
+	th13_in_extra = true;
 	// Put the shake back for this pass (see the comment above)
 	extra_float_state_begin(&th13_shake);
 	th13_render_objects();
 	extra_float_state_end(&th13_shake);
+	th13_in_extra = false;
+	th13_stage_restore();
 	th13_player_undo();
 	th13_bullets_undo();
 	th13_lasers_undo();
@@ -1038,6 +1110,16 @@ void th13_install_patches() {
 			} else {
 				printf("th13 render call at 0x%x doesn't look like a known one, skipping!\n", address);
 			}
+		}
+
+		// The stage's draw callback FUN_00406D90 allocates the stage clear fade at 0x406FA8; an
+		// extra presentation must skip that (see th13_fade_alloc_guard)
+		BYTE* fade_call = (BYTE*)0x00406FA8;
+		if (fade_call[0] == 0xE8 &&
+			(DWORD)0x00406FAD + *(DWORD*)(fade_call + 1) == 0x0047A1E1) {
+			patch_call(0x00406FA8, (void*)th13_fade_alloc_guard);
+		} else {
+			printf("th13 fade allocation at 0x406FA8 doesn't look like the known one, skipping!\n");
 		}
 
 		// Take over the presents in the three frame functions. Each site starts by loading the

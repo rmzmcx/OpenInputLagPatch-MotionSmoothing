@@ -1,6 +1,8 @@
 // Touhou 11: Subterranean Animism v1.00a
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "patch_util.h"
 #include "limiter.h"
 #include "d3d9_hook.h"
@@ -787,6 +789,72 @@ static void th11_text_records_restore() {
 // extra pass (0x4C37A4 is the third float of the same vector).
 static ExtraFloatState th11_shake = { (float*)0x004C379C, 3 };
 
+// ---------------------------------------------------------------------------
+// Frame interpolation: the stage object's transition state
+// ---------------------------------------------------------------------------
+//
+// As in th10, part of the stage's transition is driven from its draw callbacks. FUN_004026xx
+// registers three tasks on the stage object at [0x4A8D60] (and its second slot [0x4A8D5C]): the
+// update one (0x403900, key 0xC) through FUN_00456B70, and two draw ones (0x403910 at key 2 and
+// 0x403920 at key 5) through FUN_00456C10. The draw ones change the object:
+//
+//   0x40383D (FUN_004035A0): if ([stage+0x2FF8] > 0) FUN_00459210(&[stage+0x2FF4], -1.0f), which
+//                            subtracts one from the stage clear timer
+//   0x40335B (FUN_00403130): if ([stage+0x2FF0] & 4 and [stage+0x2FF8] < 30)
+//                            FUN_004489E0(3, 30, 0, 0, 0x0A), which creates a 30 frame fade
+//
+// The game draws once a frame, so those callbacks run once a frame. An extra presentation runs the
+// render chain again, which subtracts the timer two or three times per game frame and can create
+// more than one fade for the same frame - the same bug th10 had. The fade object itself is fine:
+// its own timer runs on the update chain, once a frame.
+//
+// So an extra pass copies both stage objects (0x3158 bytes, the size FUN_00402470/FUN_004029E2
+// allocate) before its render walk and puts them back afterwards, and the fade factory call at
+// 0x40335B is skipped while an extra is drawing.
+static const size_t th11_stage_size = 0x3158;
+static void** const th11_stage_slots[2] = { (void**)0x004A8D5C, (void**)0x004A8D60 };
+static unsigned char* th11_stage_saved[2];
+static bool th11_stage_saved_valid[2];
+static bool th11_in_extra;
+
+static void th11_stage_save() {
+	for (int i = 0; i < 2; ++i) {
+		th11_stage_saved_valid[i] = false;
+		void* stage = *th11_stage_slots[i];
+		if (stage == nullptr)
+			continue;
+		if (th11_stage_saved[i] == nullptr)
+			th11_stage_saved[i] = (unsigned char*)malloc(th11_stage_size);
+		if (th11_stage_saved[i] == nullptr)
+			continue;
+		memcpy(th11_stage_saved[i], stage, th11_stage_size);
+		th11_stage_saved_valid[i] = true;
+	}
+}
+
+static void th11_stage_restore() {
+	for (int i = 0; i < 2; ++i) {
+		void* stage = *th11_stage_slots[i];
+		if (!th11_stage_saved_valid[i] || stage == nullptr)
+			continue;
+		memcpy(stage, th11_stage_saved[i], th11_stage_size);
+		th11_stage_saved_valid[i] = false;
+	}
+}
+
+// FUN_004489E0 builds a fade object and puts its tasks on the chains. The call from the stage's
+// draw callback at 0x40335B is the one that creates the stage clear fade; an extra presentation
+// must not create another one, which is what this wrapper does while th11_in_extra is set. The
+// callers ignore the return value, so nullptr is safe; everything else goes to the game's factory.
+static void* (__stdcall* th11_fade_create)(int mode, int duration, int a3, int a4, int a5) =
+	(void*(__stdcall*)(int, int, int, int, int))0x004489E0;
+
+static void* __stdcall th11_fade_create_extra_guard(int mode, int duration, int a3, int a4, int a5) {
+	if (th11_in_extra)
+		return nullptr;
+	return th11_fade_create(mode, duration, a3, a4, a5);
+}
+
 static void th11_render_hook() {
 	IDirect3DDevice9* device = th11_device();
 	if (device != nullptr) {
@@ -913,10 +981,16 @@ static void th11_extra_presentation(IDirect3DDevice9* device, float t) {
 	th11_bullets_advance(t);
 	th11_player_advance(t);
 	th11_lasers_advance(t);
+	// The stage's draw callbacks advance its transition (see th11_stage_save); put the object back
+	// afterwards so an extra pass cannot move the transition a second or third time
+	th11_stage_save();
+	th11_in_extra = true;
 	// Put the shake back for this pass (see the comment above)
 	extra_float_state_begin(&th11_shake);
 	th11_render_objects();
 	extra_float_state_end(&th11_shake);
+	th11_in_extra = false;
+	th11_stage_restore();
 	th11_lasers_undo();
 	th11_bullets_undo();
 	th11_undo_shifts();
@@ -1076,6 +1150,16 @@ void th11_install_patches() {
 			} else {
 				printf("th11 render call at 0x%x doesn't look like a known one, skipping!\n", address);
 			}
+		}
+
+		// The stage's draw callback FUN_00403130 creates the stage clear fade at 0x40335B; an
+		// extra presentation must skip that (see th11_fade_create_extra_guard)
+		BYTE* fade_call = (BYTE*)0x0040335B;
+		if (fade_call[0] == 0xE8 &&
+			(DWORD)0x00403360 + *(DWORD*)(fade_call + 1) == 0x004489E0) {
+			patch_call(0x0040335B, (void*)th11_fade_create_extra_guard);
+		} else {
+			printf("th11 fade creation call at 0x40335B doesn't look like the known one, skipping!\n");
 		}
 
 		// Take over the presents in the three frame functions' helpers. Each site starts by loading

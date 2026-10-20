@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 #include "patch_util.h"
 #include "limiter.h"
@@ -344,6 +345,80 @@ static bool th20_shake_fields_readable() {
 		}
 	}
 	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Frame interpolation: the stage object's transition state
+// ---------------------------------------------------------------------------
+//
+// The stage object is at [0x5C06A0] (and the second slot at [0x5C069C], 0x336C bytes). Two of its
+// tasks are on the render chain (FUN_00473160 registers them with FUN_004123B0):
+//
+//   FUN_00474860 -> FUN_00472A30 (key 6): at 0x472C57, while the stage clear timer at
+//                           [stage+0x3348] is above zero, FUN_00429420(0) subtracts one per
+//                           render pass
+//   FUN_00474870 -> FUN_00472D10 (key 3): at 0x472FE8, when that timer is below 30,
+//                           FUN_004250C0(3, 30, 0, 0, 0, 10) creates the 30 frame fade
+//
+// The game draws once a frame, so those run once a frame; an extra presentation runs the render
+// chain again and advances the transition two or three times per game frame. The fade object's own
+// timer runs on the update chain, once a frame, so only the stage's transition fields and the
+// extra creations matter.
+//
+// An extra pass puts the transition fields back afterwards, and the fade creation call at
+// 0x472FE8 is skipped while an extra is drawing. Only those fields are copied, not the whole
+// object: the draw pass may replace pointers the object holds, and putting those back left the
+// next stage loading with stale handles.
+static const size_t th20_stage_ranges[][2] = { { 0x3318, 0x08 }, { 0x3340, 0x20 } };
+static const size_t th20_stage_range_count = sizeof(th20_stage_ranges) / sizeof(th20_stage_ranges[0]);
+static const size_t th20_stage_saved_size = 0x28;
+static void** const th20_stage_slots[2] = { (void**)rebase(0x005C069C), (void**)rebase(0x005C06A0) };
+static unsigned char* th20_stage_saved[2];
+static bool th20_stage_saved_valid[2];
+static bool th20_in_extra;
+
+static void th20_stage_save() {
+	for (int i = 0; i < 2; ++i) {
+		th20_stage_saved_valid[i] = false;
+		void* stage = *th20_stage_slots[i];
+		if (stage == nullptr)
+			continue;
+		if (th20_stage_saved[i] == nullptr)
+			th20_stage_saved[i] = (unsigned char*)malloc(th20_stage_saved_size);
+		if (th20_stage_saved[i] == nullptr)
+			continue;
+		size_t offset = 0;
+		for (size_t r = 0; r < th20_stage_range_count; ++r) {
+			memcpy(th20_stage_saved[i] + offset, (char*)stage + th20_stage_ranges[r][0],
+				th20_stage_ranges[r][1]);
+			offset += th20_stage_ranges[r][1];
+		}
+		th20_stage_saved_valid[i] = true;
+	}
+}
+
+static void th20_stage_restore() {
+	for (int i = 0; i < 2; ++i) {
+		void* stage = *th20_stage_slots[i];
+		if (!th20_stage_saved_valid[i] || stage == nullptr)
+			continue;
+		size_t offset = 0;
+		for (size_t r = 0; r < th20_stage_range_count; ++r) {
+			memcpy((char*)stage + th20_stage_ranges[r][0], th20_stage_saved[i] + offset,
+				th20_stage_ranges[r][1]);
+			offset += th20_stage_ranges[r][1];
+		}
+		th20_stage_saved_valid[i] = false;
+	}
+}
+
+static void (__cdecl* th20_fade_create)(int mode, int duration, int a3, int a4, int a5, int a6) =
+	(void(__cdecl*)(int, int, int, int, int, int))rebase(0x004250C0);
+
+static void __cdecl th20_fade_create_extra_guard(int mode, int duration, int a3, int a4, int a5, int a6) {
+	if (th20_in_extra)
+		return;
+	th20_fade_create(mode, duration, a3, a4, a5, a6);
 }
 
 // Remembers what the scene is about to be drawn with, then lets the game's own render run exactly
@@ -1365,6 +1440,10 @@ static void th20_extra_presentation(float t) {
 	// The text list goes back to how the game's own pass of the walk found it, so this
 	// presentation appends its records where that pass put its own and draws the same text it drew
 	th20_text_records_restore();
+	// The stage's draw callbacks advance its transition (see th20_stage_save); put the object back
+	// afterwards so an extra pass cannot move the transition a second or third time
+	th20_stage_save();
+	th20_in_extra = true;
 	// Put the shake back around this pass, so it draws the same offset the game's own pass did (see
 	// the screen shake comment above)
 	if (th20_shake_fields_ok) {
@@ -1376,6 +1455,8 @@ static void th20_extra_presentation(float t) {
 		extra_float_state_end(&th20_shake_front);
 		extra_float_state_end(&th20_shake_back);
 	}
+	th20_in_extra = false;
+	th20_stage_restore();
 	th20_lasers_undo();
 	th20_shots_undo();
 	th20_player_undo();
@@ -1617,6 +1698,18 @@ static void th20_install_interpolation() {
 			++th20_render_patched;
 		} else {
 			printf("th20 render call at 0x%x doesn't look like a known one, skipping!\n", address);
+		}
+	}
+
+	{
+		// The stage's draw callback creates the stage clear fade at 0x472FE8; an extra
+		// presentation must skip that (see th20_fade_create_extra_guard)
+		BYTE* fade_call = (BYTE*)rebase(0x00472FE8);
+		if (fade_call[0] == 0xE8 &&
+			*(DWORD*)(fade_call + 1) == rebase(0x004250C0) - (rebase(0x00472FE8) + 5)) {
+			patch_call(rebase(0x00472FE8), (void*)th20_fade_create_extra_guard);
+		} else {
+			printf("th20 fade creation call at 0x472FE8 doesn't look like the known one, skipping!\n");
 		}
 	}
 

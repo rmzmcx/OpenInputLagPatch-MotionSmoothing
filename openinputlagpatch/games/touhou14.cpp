@@ -1,6 +1,8 @@
 // Touhou 14: Double Dealing Character v1.00b
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "patch_util.h"
 #include "limiter.h"
 #include "d3d9_hook.h"
@@ -728,6 +730,66 @@ static void th14_text_records_restore() {
 static ExtraFloatState th14_shake_back = { (float*)0x004D93B8, 2 };
 static ExtraFloatState th14_shake_front = { (float*)0x004D9610, 2 };
 
+// ---------------------------------------------------------------------------
+// Frame interpolation: the stage object's transition state
+// ---------------------------------------------------------------------------
+//
+// The stage object at [0x4DB528] (and the second slot at [0x4DB524], 0x43A0 bytes) registers its
+// tasks in FUN_0040D3D0: key 0x0D callback 0x40EB70 (update), key 3 callback 0x40EB80 and key 5
+// callback 0x40EB90 (both draw). The draw callbacks change the object:
+//
+//   0x40EA4A (FUN_0040E790): if ([stage+0x422C] > 0) it subtracts one from the stage clear timer
+//                            (the helper at 0x408B00 with &[stage+0x4228])
+//   0x40E4F6 (FUN_0040E2F0): if ([stage+0x4224] & 4 and [stage+0x422C] < 30) it allocates the 0x44
+//                            byte fade object at 0x40E513 and registers its tasks
+//
+// The game draws once a frame, so those callbacks run once a frame. An extra presentation runs the
+// render chain again, which subtracts the timer two or three times per game frame and can create
+// more than one fade for the same frame. The fade object itself is fine: its own timer runs on the
+// update chain, once a frame.
+//
+// As in th13 the fade is built inline, so the allocation call at 0x40E513 is what is guarded:
+// returning nullptr there makes the callback take its own failure path (0x40E5E7) and skip the
+// fade, while the rest of the draw runs normally.
+static const size_t th14_stage_size = 0x43A0;
+static void** const th14_stage_slots[2] = { (void**)0x004DB524, (void**)0x004DB528 };
+static unsigned char* th14_stage_saved[2];
+static bool th14_stage_saved_valid[2];
+static bool th14_in_extra;
+
+static void th14_stage_save() {
+	for (int i = 0; i < 2; ++i) {
+		th14_stage_saved_valid[i] = false;
+		void* stage = *th14_stage_slots[i];
+		if (stage == nullptr)
+			continue;
+		if (th14_stage_saved[i] == nullptr)
+			th14_stage_saved[i] = (unsigned char*)malloc(th14_stage_size);
+		if (th14_stage_saved[i] == nullptr)
+			continue;
+		memcpy(th14_stage_saved[i], stage, th14_stage_size);
+		th14_stage_saved_valid[i] = true;
+	}
+}
+
+static void th14_stage_restore() {
+	for (int i = 0; i < 2; ++i) {
+		void* stage = *th14_stage_slots[i];
+		if (!th14_stage_saved_valid[i] || stage == nullptr)
+			continue;
+		memcpy(stage, th14_stage_saved[i], th14_stage_size);
+		th14_stage_saved_valid[i] = false;
+	}
+}
+
+static void* (__cdecl* th14_operator_new)(size_t size) = (void*(__cdecl*)(size_t))0x004854AF;
+
+static void* __cdecl th14_fade_alloc_guard(size_t size) {
+	if (th14_in_extra)
+		return nullptr;
+	return th14_operator_new(size);
+}
+
 static void th14_render_hook() {
 	IDirect3DDevice9* device = d3d9_hooked_device();
 	if (device != nullptr) {
@@ -866,12 +928,18 @@ static void th14_extra_presentation(float t) {
 	// The text list goes back to how the game's own run of the walk found it, so this presentation
 	// draws the same text that one drew (see th14_text_record_count above)
 	th14_text_records_restore();
+	// The stage's draw callbacks advance its transition (see th14_stage_save); put the object back
+	// afterwards so an extra pass cannot move the transition a second or third time
+	th14_stage_save();
+	th14_in_extra = true;
 	// Put the shake back for this pass (see the comment above)
 	extra_float_state_begin(&th14_shake_back);
 	extra_float_state_begin(&th14_shake_front);
 	th14_render_objects();
 	extra_float_state_end(&th14_shake_front);
 	extra_float_state_end(&th14_shake_back);
+	th14_in_extra = false;
+	th14_stage_restore();
 	th14_lasers_undo();
 	th14_player_undo();
 	th14_bullets_undo();
@@ -1058,6 +1126,16 @@ void th14_install_patches() {
 			} else {
 				printf("th14 render call at 0x%x doesn't look like a known one, skipping!\n", address);
 			}
+		}
+
+		// The stage's draw callback FUN_0040E2F0 allocates the stage clear fade at 0x40E513; an
+		// extra presentation must skip that (see th14_fade_alloc_guard)
+		BYTE* fade_call = (BYTE*)0x0040E513;
+		if (fade_call[0] == 0xE8 &&
+			(DWORD)0x0040E518 + *(DWORD*)(fade_call + 1) == 0x004854AF) {
+			patch_call(0x0040E513, (void*)th14_fade_alloc_guard);
+		} else {
+			printf("th14 fade allocation at 0x40E513 doesn't look like the known one, skipping!\n");
 		}
 
 		// Take over the presents in the three frame functions. The instruction that loads the
