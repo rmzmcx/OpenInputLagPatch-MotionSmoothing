@@ -50,6 +50,34 @@ is also the record of what has actually been verified rather than just what was 
   started with is now put back around every extra pass, and the state that pass left is restored
   afterwards.
 
+- **Overlay readouts no longer depend on interpolation** (`1967235`)
+
+  `ShowOverlay=1` means the present-rate line by itself. The empty render-time line used to leave a
+  two-pixel background in the corner, but skipping that background also skipped the stream, index,
+  FVF and font-texture bindings that the rate line relied on, so the overlay disappeared when
+  interpolation was on. Both the D3D8 and D3D9 renderers now bind their shared pipeline before
+  either line and draw each line's background only when that line has text. All four `ShowOverlay`
+  values now behave independently of the interpolation switch, with no stray black pixel when the
+  rate line is unavailable.
+
+### Added
+
+- **Interpolation targets can be selected independently, with global defaults** (`4539e38`)
+
+  The interpolation master switch could only turn every extrapolated object on or off. A new
+  top-level `[Interpolation]` section keeps `Interpolation` as the master switch and adds
+  `PlayerBody`, `PlayerShots` and `BulletsAndLasers`, all on by default. The player switch includes
+  options, orbs and familiars; the other two split the player's shots from enemy bullets and straight
+  lasers. Each game already had separate advance and undo paths for these groups, so the switches
+  gate the existing measured extrapolation rather than introducing another rendering or logic
+  model. Old `[Option] Interpolation` files remain readable.
+
+  The patch also creates and loads
+  `%APPDATA%\ShanghaiAlice\oilp_custom\openinputlagpatch.ini` as the global default configuration,
+  then overlays only the keys present in the game directory's ini. The generated global file is
+  embedded from the shipped bilingual reference, so it keeps the full comments without silently
+  replacing an existing user file.
+
 ## 2026-10-18
 
 ### Fixed
