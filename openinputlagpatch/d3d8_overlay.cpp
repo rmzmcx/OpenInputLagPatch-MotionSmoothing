@@ -304,14 +304,20 @@ void D3D8Overlay::Draw() {
     // carry it along, so put ours back before drawing
     SetupViewportAndTransforms();
 
-    // Draw shit
-    auto rect_count = UpdateBuffers(text_buffer, text_color, 0.0f);
-
+    // Set the shared text pipeline up before either line. The present-rate line can be the only one
+    // drawn, so it cannot rely on the render-time line having done this.
     d3d8_device->SetStreamSource(0, d3d8_vertex_buf, sizeof(CUSTOMVERTEX));
     d3d8_device->SetIndices(d3d8_index_buf, 0);
     d3d8_device->SetVertexShader(D3DFVF_CUSTOMVERTEX);
     d3d8_device->SetTexture(0, d3d8_font_tex);
-    d3d8_device->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, rect_count * 2 * 3, 0, rect_count * 2);
+
+    // An empty text buffer still has the background quad in UpdateBuffers. Draw it only when there
+    // is text, otherwise the present-rate-only mode leaves a small black block in the corner.
+    if (text_buffer[0] != '\0') {
+        auto rect_count = UpdateBuffers(text_buffer, text_color, 0.0f);
+
+        d3d8_device->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, rect_count * 2 * 3, 0, rect_count * 2);
+    }
 
     // The frame rate the frames are actually presented at, right after that line (see overlay.h).
     // The D3D8 overlay's text always sits in the bottom left corner, so the rate goes next to it -
@@ -324,7 +330,7 @@ void D3D8Overlay::Draw() {
         // its own belongs in the corner rather than where the line before it would have ended
         float rate_x = strlen(text_buffer) > 0 ? (float)strlen(text_buffer) * 7.0f + 2.0f + 6.0f : 0.0f;
 
-        rect_count = UpdateBuffers(rate_text, D3DCOLOR_COLORVALUE(1.0, 1.0, 1.0, 0.9), rate_x);
+        auto rect_count = UpdateBuffers(rate_text, D3DCOLOR_COLORVALUE(1.0, 1.0, 1.0, 0.9), rate_x);
         d3d8_device->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, rect_count * 2 * 3, 0, rect_count * 2);
     }
 

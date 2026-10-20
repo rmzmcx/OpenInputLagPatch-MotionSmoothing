@@ -370,14 +370,20 @@ void D3D9Overlay::Draw() {
     // state blocks don't carry it along, so put ours back before drawing
     SetupViewportAndTransforms();
 
-    // Draw shit
-    auto rect_count = UpdateBuffers(text_buffer, text_color, 0.0f);
-
+    // Set the shared text pipeline up before either line. The present-rate line can be the only one
+    // drawn, so it cannot rely on the render-time line having done this.
     d3d9_device->SetStreamSource(0, d3d9_vertex_buf, 0, sizeof(CUSTOMVERTEX));
     d3d9_device->SetIndices(d3d9_index_buf);
     d3d9_device->SetFVF(D3DFVF_CUSTOMVERTEX);
     d3d9_device->SetTexture(0, d3d9_font_tex);
-    d3d9_device->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, rect_count * 2 * 3, 0, rect_count * 2);
+
+    // An empty text buffer still has the background quad in UpdateBuffers. Draw it only when there
+    // is text, otherwise the present-rate-only mode leaves a small black block in the corner.
+    if (text_buffer[0] != '\0') {
+        auto rect_count = UpdateBuffers(text_buffer, text_color, 0.0f);
+
+        d3d9_device->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, rect_count * 2 * 3, 0, rect_count * 2);
+    }
 
     // The frame rate the frames are actually presented at, along the bottom of the screen
     if (present_rate_shown) {
@@ -397,7 +403,7 @@ void D3D9Overlay::Draw() {
         } else {
             rate_x = (float)window_width - ((float)strlen(rate_text) * 7.0f + 2.0f);
         }
-        rect_count = UpdateBuffers(rate_text, D3DCOLOR_COLORVALUE(1.0, 1.0, 1.0, 0.9), rate_x);
+        auto rect_count = UpdateBuffers(rate_text, D3DCOLOR_COLORVALUE(1.0, 1.0, 1.0, 0.9), rate_x);
         d3d9_device->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, rect_count * 2 * 3, 0, rect_count * 2);
     }
 
