@@ -499,6 +499,13 @@ static __declspec(naked) void th8_player_sprite_hook() {
 // speed times the frame's step to endOffset and then sets startOffset to endOffset - length
 // (0x431BCF..0x431C1E, with speed at slot+0x56C and length at slot+0x560).
 //
+// The angle is not advanced by that update: the ECL opcode at 0x41BDA5 adds to it and normalises
+// the result to +/-pi with FUN_0043EDB0 (0x43EDB0). Crossing that boundary therefore makes the
+// raw per-frame difference almost 2pi even though the laser only turned a little. The angle step
+// is therefore folded to the shortest arc, and the projected angle is folded back to +/-pi:
+// theta = Wrap(theta1 + t * Wrap(theta2 - theta1)). Scripts can also set startOffset and endOffset
+// in one step (0x41C3AD, 0x41C3F7); those are not motion and are not interpolated.
+//
 // None of those fields is written by the draw - it only reads them - so a laser is moved the way a
 // bullet is: the frame's own movement of each of the four (position, angle and the two ends) is
 // measured over a frame, the extras add their fraction of it before the pass and put the fields back
@@ -562,9 +569,22 @@ static void th8_lasers_measure() {
             ++th8_lasers_in_play;
 
         for (unsigned int f = 0; f < th8_laser_fields; ++f) {
-            th8_lasers_step[i][f] = in_use && th8_lasers_used_last[i] && !reused
-                                        ? values[f] - th8_lasers_last[i][f]
-                                        : 0.0f;
+            float step = in_use && th8_lasers_used_last[i] && !reused
+                             ? values[f] - th8_lasers_last[i][f]
+                             : 0.0f;
+            if (f == 3) {
+                // The stored angle wraps at +/-pi; take the short way round the circle. This is
+                // the inner Wrap of the shortest-arc formula; the outer Wrap is applied to the
+                // result in th8_lasers_advance.
+                while (step > 3.14159265f)
+                    step -= 6.28318531f;
+                while (step < -3.14159265f)
+                    step += 6.28318531f;
+            } else if (fabsf(step) > th8_lasers_max_step) {
+                // Same for a scripted length/offset jump.
+                step = 0.0f;
+            }
+            th8_lasers_step[i][f] = step;
             th8_lasers_last[i][f] = values[f];
         }
         th8_lasers_used_last[i] = in_use;
@@ -595,7 +615,15 @@ static void th8_lasers_advance(float t) {
 
         for (unsigned int f = 0; f < th8_laser_fields; ++f) {
             th8_lasers_saved[th8_lasers_moved_count][f] = *fields[f];
-            *fields[f] = *fields[f] + th8_lasers_step[i][f] * t;
+            float value = *fields[f] + th8_lasers_step[i][f] * t;
+            if (f == 3) {
+                // Outer Wrap: theta = Wrap(theta1 + t * Wrap(theta2 - theta1)).
+                while (value > 3.14159265f)
+                    value -= 6.28318531f;
+                while (value < -3.14159265f)
+                    value += 6.28318531f;
+            }
+            *fields[f] = value;
         }
         th8_lasers_moved[th8_lasers_moved_count] = i;
         ++th8_lasers_moved_count;
@@ -952,6 +980,17 @@ static void th8_bullets_undo() {
     th8_projected_count = 0;
 }
 
+// The background's colour tint: g_Background is at 0x4E4030, its tint colour at +0x6468 and the
+// "enabled" word at +0x646C. The draw pass applies the tint the ECL set and then resets the colour
+// to 0x80808080 (0x4093be..0x4093dc), so an extra pass would apply the default grey instead of the
+// illusion tint and the background would flash between the two.
+static DWORD* const th8_background_tint = (DWORD*)0x004EA498;
+static DWORD* const th8_background_tint_enabled = (DWORD*)0x004EA49C;
+static DWORD th8_scene_tint;
+static DWORD th8_scene_tint_enabled;
+static DWORD th8_scene_tint_after;
+static DWORD th8_scene_tint_enabled_after;
+
 // Runs where the game's own draw pass starts: remembers what the scene is drawn with, watches for
 // the tool's frame (its overlay is built by now, from the calc chain's return, and drawn on the
 // return of the chain below), and then draws exactly the way the game always did.
@@ -969,6 +1008,10 @@ static void __fastcall th8_render_hook(void* chain) {
         th8_scene_shake[1] = *(float*)((char*)*th8_anm_manager + 0x20);
     }
 
+    // The tint this pass is about to apply (see th8_background_tint)
+    th8_scene_tint = *th8_background_tint;
+    th8_scene_tint_enabled = *th8_background_tint_enabled;
+
     ToolState::WatchFrameReady(th8_tool_frame_address, th8_tool_draw_address);
 
     // The frame's own pass (the extras run this hook as well, and their positions are the same ones
@@ -982,6 +1025,8 @@ static void __fastcall th8_render_hook(void* chain) {
 
     th8_drew_frame = true;
     th8_run_draw_chain(chain);
+    th8_scene_tint_after = *th8_background_tint;
+    th8_scene_tint_enabled_after = *th8_background_tint_enabled;
 }
 
 // One extra presentation of the frame: the render block the game runs, once more, so the state the
@@ -1037,10 +1082,19 @@ static void th8_extra_presentation(float t) {
     // The game counts its own frame rate off this pass (see the comment above), so its state is put
     // back around it: the extras draw the same frame rate text the game's own pass drew, and the
     // game's own accounting never sees them
+    // The tint this pass applies (see th8_background_tint); the game's own pass reset the stored
+    // colour to grey, so it has to be put back for every extra presentation.
+    *th8_background_tint = th8_scene_tint;
+    *th8_background_tint_enabled = th8_scene_tint_enabled;
+
     Th8FpsState fps;
     th8_fps_state_save(&fps);
     th8_run_draw_chain(th8_chain);
     th8_fps_state_restore(&fps);
+
+    // Leave the state the game's own pass left, for the next game frame.
+    *th8_background_tint = th8_scene_tint_after;
+    *th8_background_tint_enabled = th8_scene_tint_enabled_after;
 
     th8_extra_t = 0.0f;
 
