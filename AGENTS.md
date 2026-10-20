@@ -3,6 +3,49 @@
 本文件记录在这个工作区 / 仓库里协作时必须遵守的约定，供以后的会话（包括其它 AI）读取。
 （Windows 文件名不区分大小写，写 `agent.md` 读到的也是本文件；这里用 `AGENTS.md` 是因为
 这类工具默认会自动查找这个名字。）
+书面写作规则：
+
+When you are writing, please
+
+- be brief
+- reduce concluding sentences
+- reduce parallel words
+- reduce semicolons: adversative and progressive sentences should use correct and various conjunctions
+- reduce negatively emphasising semantics like "..., not ..." / "..., rather than ..." / "..., without ..."
+- stop reasserting a certain rule
+- reduce abuse of semantics like "retain" / "remain" / "keep"
+- reduce abuse of identical sentence structures
+- reduce bold or highlighting
+- stop using non-UTF8 symbols
+- prevent a mechanical feel
+- be nature and more human-like
+
+---
+
+代码工作与问题解决规则：
+
+- 回答要简洁且突出重点，步骤要明晰，不要重复总结。
+- 遇到不确定的情况时积极联网查找信息，不要猜测。
+- 修改代码时严格检查之前对同一个任务做过的所有工作，从整体上优化算法，能合并的就合并，不要把功能堆成屎山。
+
+---
+
+文档清洁规则：
+
+- 不要把不相关的内容加到各点下。
+- 不要重复同一内容以强调。
+- 不要把提示词和你的思考过程作为规则加入文档内强调。
+- 不要把文档和代码堆成屎山。
+- 每次文档生成或修改完毕后按此清洁规则做文档清洁，以减少屎山的堆积。
+
+---
+
+代码清洁规则：
+
+- 更新算法时，旧框架应当 prune。导致的无用代码可删除，不需要保留。
+- 旧方案除无法迁移到新方案的部分，应当全部优化。后续若新方案的功能完成，框架应当被 prune。
+- 同类文件过多时，应当合并同类项，减少复杂的嵌套调用。
+- 每次代码生成或修改完毕后按此清洁规则做代码清洁，以减少屎山的堆积。
 
 ## 工作区与仓库
 
@@ -59,15 +102,11 @@
 
 ## 逆向工具
 
-- Ghidra：`E:\东方MotionSmoothing相关\ghidra_12.1.4_PUBLIC`，工程 `%TEMP%\th15_ghidra_proj`
-  （导入自 `%TEMP%\th15_dev\th15.exe`；**CJK 路径会静默导入失败**，务必用 ASCII 路径）。
-- 查询脚本：`E:\东方MotionSmoothing相关\_analysis\ghidra_scripts\Q.java`，支持
-  `fn:`（反编译所在函数）/ `ref:` / `callers:` / `callees:` / `funcs:` / `str:` / `sym:` /
-  `dw:`（dump 数据）/ `vt:`（vtable＋RTTI 类名）/ `classes:`（扫全部 RTTI 类名）/ `find:`（扫全内存找 dword）。
-- 无头调用要点（踩过的坑）：
-  - `JAVA_HOME` 指向 `C:\Program Files\Java\jdk-21`，并且把 `APPDATA` 与
-    `GHIDRA_JAVA_OPTIONS="-Duser.home=..."` 都指到 `%TEMP%`，否则 Ghidra 启动器会因为无法在
-    `%APPDATA%\ghidra` 建目录而报「找不到 JDK」。
-  - 脚本目录也在 `%TEMP%`（ASCII 路径），例如 `%TEMP%\gs`。
-- 整份反汇编在 `%TEMP%\th15_disasm.txt`；**按助记符文本搜索**（比如 `push ebp` 后跟 `mov ebp,esp`），
-  不要按字节模式（`55 8B EC`）搜函数入口，否则会得到「找不到函数」的假结论。
+- 优先使用 IDA-MCP 工作流。新开 IDA 逆向前先询问我，由我手动加载并选择 th095.exe；不要自行启动多份IDA 或自行选择别的程序。
+- 如果 IDA-MCP 不可用，先说明阻塞点并询问我，不要静默改用别的数据库。
+- 只有在现有结论已写在文档里时，才可直接引用；任何新逆向都需要先询问并得到我的确认。
+- 辅助工具仍可用 dumpbin /DISASM；按助记符文本搜索，MSVC 可能把“基址+静态偏移”折成绝对地址。
+- Ghidra 路径(次要选择，IDA无法使用再考虑)：
+  E:\东方MotionSmoothing相关\ghidra_12.1.4_PUBLIC
+  中文路径会让 log4j 失败，需要 %TEMP% 下 ASCII junction；脚本在
+  _analysis\ghidra_scripts\Q.java。
