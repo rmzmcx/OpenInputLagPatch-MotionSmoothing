@@ -46,23 +46,21 @@ Not every game is supported, but support for more games is actively being worked
 | Danmakufu ph3                        |❌|❔|
 
 # Configuration
-OpenInputLagPatch is configured via a file called `openinputlagpatch.ini` stored in the same directory as the game executable. The game will run perfectly fine without the config file, but there's always the option of manually creating one. Here's an example config file:
+OpenInputLagPatch is configured through ini files. On startup the patch loads the global config at `%APPDATA%\ShanghaiAlice\oilp_custom\openinputlagpatch.ini`; if it does not exist, the patch creates it with the default values. It then loads `openinputlagpatch.ini` from the game executable's directory, if present: any key in that file overrides the global one. Without that file only the global config is used. Here's an example config file:
 ```
-; OpenInputLagPatch 参考配置（[Option] 与 [Window] 两节），注释为中英双语，键名与取值保持不变。
+; OpenInputLagPatch 参考配置（[Interpolation]、[Option] 与 [Window] 三节），注释为中英双语，键名与取值保持不变。
 ;
-; OpenInputLagPatch reference config ([Option] and [Window]), with bilingual comments. The keys
-; and their values are unchanged.
+; OpenInputLagPatch reference config ([Interpolation], [Option] and [Window]), with bilingual
+; comments. The keys and their values are unchanged.
+;
+; 全局配置默认在 %APPDATA%\ShanghaiAlice\oilp_custom\openinputlagpatch.ini，不存在时会自动创建；
+; 游戏目录下的同名文件会覆盖其中出现的键。
+;
+; The global config defaults to %APPDATA%\ShanghaiAlice\oilp_custom\openinputlagpatch.ini and is
+; created automatically when it does not exist; a file with the same name in the game directory
+; overrides the keys it contains.
 
-[Option]
-
-; 目标帧率。
-; 超过 60 不会让画面更顺滑，只会让游戏跑得更快。
-;
-; Target framerate of the game.
-; Going above 60 doesn't make the game any smoother, it just makes it faster.
-;
-; 默认 / Default: 60
-GameFPS = 60
+[Interpolation]
 
 ; 补帧（动态平滑）：在游戏自己的帧之间多画几帧，游戏保持自己的帧率，但呈现得更频繁。
 ;
@@ -71,8 +69,7 @@ GameFPS = 60
 ; 反向插值——是单向的向前外推（extrapolation），不是常见的双向插值。
 ;
 ; 目前对东方红魔乡（th06）、东方妖妖梦（th07）、东方永夜抄（th08）、东方风神录（th10）、东方地灵殿（th11）、东方星莲船（th12）、东方神灵庙（th13）、东方辉针城（th14）、东方绀珠传（th15）、
-; 东方天空璋（th16）、东方鬼形兽（th17）、东方虹龙洞（th18）、东方兽王园（th19）与东方锦上京（th20）生效：
-; 子弹、自机本体（含子机/option 与自机弹）、直线激光会被外推；敌人本体不做，曲线激光不做。
+; 东方天空璋（th16）、东方鬼形兽（th17）、东方虹龙洞（th18）、东方兽王园（th19）与东方锦上京（th20）生效。
 ; ShowOverlay 勾了「帧率」这一项时，会显示实际呈现率（每秒呈现多少次）。
 ;
 ; 取值：0 关闭；1 补到显示屏刷新率（144hz 显示器就呈现 144fps，60fps 逻辑则是每帧 2/3 次交替）；-1 取显示屏刷新率里游戏帧率的最大整数倍（间隔最均匀）；
@@ -86,11 +83,6 @@ GameFPS = 60
 ; drawn, and put back again, so the game's own logic and its random numbers never see it. No
 ; previous frame is kept and nothing is interpolated backwards - this is forward extrapolation.
 ;
-; Touhou 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 and 20 for now: their bullets, the
-; player itself (with its options or orbs and its shots) and the straight lasers are extrapolated;
-; the enemies aren't interpolated and the curve lasers are left alone. When ShowOverlay asks for the
-; rate readout, the rate the frames are actually presented at is shown as well.
-;
 ; 0: off, 1: present at the display's own refresh rate (a 144hz display shows 144fps, which for
 ; 60fps logic is 2 and 3 presentations a frame alternating), -1: pick the largest whole multiple of
 ; the game's frame rate the display can show (evenly spaced presentations),
@@ -103,6 +95,35 @@ GameFPS = 60
 ;
 ; 默认 / Default: 1
 Interpolation = 1
+
+; 上面的 Interpolation 是总开关。以下几个开关只在总开关开启时，选择要外推的内容。
+; The Interpolation setting above is the master switch. The following switches select what is
+; extrapolated while the master switch is on.
+;
+; 是否补帧自机本体（包括子机/option、orb 等跟随自机的东西）。
+; Whether to extrapolate the player body (including options, orbs and other things that follow it).
+;
+; 是否补帧自机子弹。
+; Whether to extrapolate the player's own shots.
+;
+; 是否补帧敌弹和直线激光。
+; Whether to extrapolate enemy bullets and straight lasers.
+;
+; 默认 / Default: 1
+PlayerBody = 1
+PlayerShots = 1
+BulletsAndLasers = 1
+
+[Option]
+
+; 目标帧率。
+; 超过 60 不会让画面更顺滑，只会让游戏跑得更快。
+;
+; Target framerate of the game.
+; Going above 60 doesn't make the game any smoother, it just makes it faster.
+;
+; 默认 / Default: 60
+GameFPS = 60
 
 ; 是否允许控制 replay 回放速度（会覆盖游戏自带的回放速度控制，如果有的话）。
 ;
@@ -338,6 +359,7 @@ AlwaysOnTop = 0
 ;
 ; 默认 / Default: 0
 CoverTaskbar = 0
+
 ```
 
 # Technical details

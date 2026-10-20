@@ -1327,10 +1327,18 @@ static void th19_extra_presentation(float t) {
 	// ones the drawing reads itself are put back then just the same, so the game's own logic never
 	// sees a projected one).
 	ToolState::ReadyToDraw();
-	th19_bullets_advance(t);
-	th19_player_advance(t);
-	th19_shots_advance(t);
-	th19_lasers_advance(t);
+	if (Config::InterpolateBulletsAndLasers) {
+		th19_bullets_advance(t);
+	}
+	if (Config::InterpolatePlayerBody) {
+		th19_player_advance(t);
+	}
+	if (Config::InterpolatePlayerShots) {
+		th19_shots_advance(t);
+	}
+	if (Config::InterpolateBulletsAndLasers) {
+		th19_lasers_advance(t);
+	}
 	// The text list goes back to how the game's own pass of the walk found it, so this
 	// presentation appends its records where that pass put its own and draws the same text it drew
 	// (see th19_text_record_count above)

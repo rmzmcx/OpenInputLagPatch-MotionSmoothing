@@ -694,19 +694,24 @@ static void th13_player_advance(float t) {
 		float* position = tracked.shift;
 		for (int axis = 0; axis < 3; ++axis)
 			th13_tracked_saved[i][axis] = position[axis];
-		position[0] += tracked.motion->delta_x * t;
-		position[1] += tracked.motion->delta_y * t;
+		const bool move = tracked.kind == th13_kind_shot
+		                      ? Config::InterpolatePlayerShots
+		                      : Config::InterpolatePlayerBody;
+		if (move) {
+			position[0] += tracked.motion->delta_x * t;
+			position[1] += tracked.motion->delta_y * t;
 
-		switch (tracked.kind) {
-		case th13_kind_body:
-			++th13_body_sprites;
-			break;
-		case th13_kind_option:
-			++th13_option_sprites;
-			break;
-		default:
-			++th13_shot_sprites;
-			break;
+			switch (tracked.kind) {
+			case th13_kind_body:
+				++th13_body_sprites;
+				break;
+			case th13_kind_option:
+				++th13_option_sprites;
+				break;
+			default:
+				++th13_shot_sprites;
+				break;
+			}
 		}
 	}
 }
@@ -920,9 +925,13 @@ static void th13_extra_presentation(IDirect3DDevice9* device, float t) {
 	ToolState::ReadyToDraw();
 	// Everything is drawn where it will be t frames from now; the render bakes those positions into
 	// what it draws, so they can all go back right after it
-	th13_bullets_advance(t);
+	if (Config::InterpolateBulletsAndLasers) {
+		th13_bullets_advance(t);
+	}
 	th13_player_advance(t);
-	th13_lasers_advance(t);
+	if (Config::InterpolateBulletsAndLasers) {
+		th13_lasers_advance(t);
+	}
 	// The pool the text is laid out in goes back to what the game's own run of the walk started with,
 	// so this presentation draws the same line the way that one did (see Th13TextPool)
 	th13_text_pool_restore();

@@ -738,27 +738,31 @@ static void th12_player_advance(float t) {
 	if (player == nullptr)
 		return;
 
-	if (th12_motion_frame == th12_body_motion.frame) {
-		th12_shift((float*)((char*)player + th12_player_position), th12_body_motion, t);
-		++th12_body_sprites;
-	}
+	if (Config::InterpolatePlayerBody) {
+		if (th12_motion_frame == th12_body_motion.frame) {
+			th12_shift((float*)((char*)player + th12_player_position), th12_body_motion, t);
+			++th12_body_sprites;
+		}
 
-	for (unsigned int i = 0; i < th12_player_option_count; ++i) {
-		if (th12_motion_frame != th12_option_motions[i].frame)
-			continue;
-		for (int sprite = 0; sprite < 2; ++sprite) {
-			if (th12_option_sprite_pos[i][sprite] == nullptr)
+		for (unsigned int i = 0; i < th12_player_option_count; ++i) {
+			if (th12_motion_frame != th12_option_motions[i].frame)
 				continue;
-			th12_shift(th12_option_sprite_pos[i][sprite], th12_option_motions[i], t);
-			++th12_option_sprites;
+			for (int sprite = 0; sprite < 2; ++sprite) {
+				if (th12_option_sprite_pos[i][sprite] == nullptr)
+					continue;
+				th12_shift(th12_option_sprite_pos[i][sprite], th12_option_motions[i], t);
+				++th12_option_sprites;
+			}
 		}
 	}
 
-	for (unsigned int i = 0; i < th12_player_shot_count; ++i) {
-		if (th12_shot_sprite_pos[i] == nullptr || th12_motion_frame != th12_shot_motions[i].frame)
-			continue;
-		th12_shift(th12_shot_sprite_pos[i], th12_shot_motions[i], t);
-		++th12_shot_sprites;
+	if (Config::InterpolatePlayerShots) {
+		for (unsigned int i = 0; i < th12_player_shot_count; ++i) {
+			if (th12_shot_sprite_pos[i] == nullptr || th12_motion_frame != th12_shot_motions[i].frame)
+				continue;
+			th12_shift(th12_shot_sprite_pos[i], th12_shot_motions[i], t);
+			++th12_shot_sprites;
+		}
 	}
 }
 
@@ -977,9 +981,13 @@ static void th12_extra_presentation(IDirect3DDevice9* device, float t) {
 	ToolState::ReadyToDraw();
 	// Everything is drawn where it will be t frames from now; the render bakes those positions into
 	// what it draws, so they can all go back right after it
-	th12_bullets_advance(t);
+	if (Config::InterpolateBulletsAndLasers) {
+		th12_bullets_advance(t);
+	}
 	th12_player_advance(t);
-	th12_lasers_advance(t);
+	if (Config::InterpolateBulletsAndLasers) {
+		th12_lasers_advance(t);
+	}
 	// The text list goes back to how the game's own run of the walk found it, so this presentation
 	// draws the same text that one drew (see th12_text_record_count above)
 	th12_text_records_restore();

@@ -439,32 +439,36 @@ static void th11_player_advance(float t) {
 	if (player == nullptr)
 		return;
 
-	if (th11_motion_frame == th11_body_motion.frame) {
-		// The draw copies this into the body animation object, and it runs below, so the position
-		// the extra presentation draws is this one
-		th11_shift_position((float*)((char*)player + th11_player_position), th11_body_motion, t);
-		++th11_body_sprites;
-	}
+	if (Config::InterpolatePlayerBody) {
+		if (th11_motion_frame == th11_body_motion.frame) {
+			// The draw copies this into the body animation object, and it runs below, so the
+			// position the extra presentation draws is this one
+			th11_shift_position((float*)((char*)player + th11_player_position), th11_body_motion, t);
+			++th11_body_sprites;
+		}
 
-	for (unsigned int i = 0; i < th11_player_option_count; ++i) {
-		if (th11_motion_frame != th11_option_motions[i].frame)
-			continue;
-		for (int sprite = 0; sprite < 2; ++sprite) {
-			if (th11_option_sprites[i][sprite] == nullptr)
+		for (unsigned int i = 0; i < th11_player_option_count; ++i) {
+			if (th11_motion_frame != th11_option_motions[i].frame)
 				continue;
-			th11_shift_sprite(th11_option_sprites[i][sprite], th11_option_motions[i], t);
-			++th11_option_sprites_moved;
+			for (int sprite = 0; sprite < 2; ++sprite) {
+				if (th11_option_sprites[i][sprite] == nullptr)
+					continue;
+				th11_shift_sprite(th11_option_sprites[i][sprite], th11_option_motions[i], t);
+				++th11_option_sprites_moved;
+			}
 		}
 	}
 
-	for (unsigned int i = 0; i < th11_player_shot_count; ++i) {
-		if (th11_motion_frame != th11_shot_motions[i].frame)
-			continue;
-		for (int sprite = 0; sprite < 2; ++sprite) {
-			if (th11_shot_sprites[i][sprite] == nullptr)
+	if (Config::InterpolatePlayerShots) {
+		for (unsigned int i = 0; i < th11_player_shot_count; ++i) {
+			if (th11_motion_frame != th11_shot_motions[i].frame)
 				continue;
-			th11_shift_sprite(th11_shot_sprites[i][sprite], th11_shot_motions[i], t);
-			++th11_shot_sprites_moved;
+			for (int sprite = 0; sprite < 2; ++sprite) {
+				if (th11_shot_sprites[i][sprite] == nullptr)
+					continue;
+				th11_shift_sprite(th11_shot_sprites[i][sprite], th11_shot_motions[i], t);
+				++th11_shot_sprites_moved;
+			}
 		}
 	}
 }
@@ -978,9 +982,13 @@ static void th11_extra_presentation(IDirect3DDevice9* device, float t) {
 	th11_text_records_restore();
 	// Everything is drawn where it will be t frames from now; the render bakes those positions into
 	// what it draws, so they can all go back right after it
-	th11_bullets_advance(t);
+	if (Config::InterpolateBulletsAndLasers) {
+		th11_bullets_advance(t);
+	}
 	th11_player_advance(t);
-	th11_lasers_advance(t);
+	if (Config::InterpolateBulletsAndLasers) {
+		th11_lasers_advance(t);
+	}
 	// The stage's draw callbacks advance its transition (see th11_stage_save); put the object back
 	// afterwards so an extra pass cannot move the transition a second or third time
 	th11_stage_save();

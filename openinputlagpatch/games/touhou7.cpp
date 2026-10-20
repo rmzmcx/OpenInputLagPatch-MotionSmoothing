@@ -1042,10 +1042,18 @@ static void th7_extra_presentation(float t) {
 
     // Where the bullets are a fraction of a frame on from here; put back right after the pass drew
     // them (see the stage 1 comment above)
-    th7_bullets_advance(t);
-    th7_player_advance(t);
-    th7_shots_advance(t);
-    th7_lasers_advance(t);
+    if (Config::InterpolateBulletsAndLasers) {
+        th7_bullets_advance(t);
+    }
+    if (Config::InterpolatePlayerBody) {
+        th7_player_advance(t);
+    }
+    if (Config::InterpolatePlayerShots) {
+        th7_shots_advance(t);
+    }
+    if (Config::InterpolateBulletsAndLasers) {
+        th7_lasers_advance(t);
+    }
 
     // The game counts its own frame rate off this pass (see the comment above), so its state is put
     // back around it: the extras draw the same frame rate text the game's own pass drew, and the

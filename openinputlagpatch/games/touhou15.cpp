@@ -283,7 +283,11 @@ struct Th15SpriteMotion {
 struct Th15Tracked {
 	float* shift;             // the position that gets moved (3 floats)
 	Th15SpriteMotion* motion; // what it moved by, from the frame before
+	unsigned int kind;        // body (options included) or player shot
 };
+
+static const unsigned int th15_kind_body = 0;
+static const unsigned int th15_kind_shot = 1;
 
 static Th15SpriteMotion th15_motions[th15_tracked_max];
 static unsigned int th15_motion_frame = 1;
@@ -364,7 +368,7 @@ static Th15SpriteMotion* th15_sprite_motion(void* sprite) {
 
 // Adds a sprite to what this frame moves, and works out what it moved by since the frame before
 // out of the position that the game's own update left in watch
-static void th15_track(float* shift, const void* watch, bool watch_is_int) {
+static void th15_track(float* shift, const void* watch, bool watch_is_int, unsigned int kind) {
 	if (th15_tracked_count >= th15_tracked_max)
 		return;
 	// Two ids can name the same sprite (the game doesn't mind), and moving one twice would put it
@@ -414,6 +418,7 @@ static void th15_track(float* shift, const void* watch, bool watch_is_int) {
 	Th15Tracked& tracked = th15_tracked[th15_tracked_count++];
 	tracked.shift = shift;
 	tracked.motion = motion;
+	tracked.kind = kind;
 }
 
 // Collects what is on screen this frame and works out what it moved by since the frame before.
@@ -429,7 +434,7 @@ static void th15_player_measure() {
 
 	// The player itself: its own position is what the render pass reads
 	th15_track((float*)((char*)player + th15_player_position),
-		(const char*)player + th15_player_position, false);
+		(const char*)player + th15_player_position, false, th15_kind_body);
 	if (th15_tracked_count > 0) {
 		const Th15SpriteMotion* motion = th15_tracked[0].motion;
 		const float x = motion->delta_x < 0.0f ? -motion->delta_x : motion->delta_x;
@@ -449,7 +454,7 @@ static void th15_player_measure() {
 			if (object == nullptr)
 				continue;
 			th15_track((float*)((char*)object + th15_object_position),
-				slot + th15_player_option_position, true);
+				slot + th15_player_option_position, true, th15_kind_body);
 		}
 	}
 
@@ -461,7 +466,7 @@ static void th15_player_measure() {
 		if (object == nullptr)
 			continue;
 		th15_track((float*)((char*)object + th15_object_position),
-			slot + th15_player_shot_position, false);
+			slot + th15_player_shot_position, false, th15_kind_shot);
 	}
 
 }
@@ -475,8 +480,13 @@ static void th15_player_advance(float t) {
 		for (int axis = 0; axis < 3; ++axis) {
 			th15_tracked_saved[i][axis] = position[axis];
 		}
-		position[0] += tracked.motion->delta_x * t;
-		position[1] += tracked.motion->delta_y * t;
+		const bool move = tracked.kind == th15_kind_shot
+		                      ? Config::InterpolatePlayerShots
+		                      : Config::InterpolatePlayerBody;
+		if (move) {
+			position[0] += tracked.motion->delta_x * t;
+			position[1] += tracked.motion->delta_y * t;
+		}
 	}
 }
 
@@ -909,9 +919,13 @@ static void th15_extra_presentation(float t) {
 	ToolState::ReadyToDraw();
 	// The objects are drawn where they will be t frames from now; the render bakes the positions
 	// into the sprite queue, so they can go back right after it
-	th15_bullets_advance(t);
+	if (Config::InterpolateBulletsAndLasers) {
+		th15_bullets_advance(t);
+	}
 	th15_player_advance(t);
-	th15_lasers_advance(t);
+	if (Config::InterpolateBulletsAndLasers) {
+		th15_lasers_advance(t);
+	}
 	// The text list goes back to how the game's own run of the walk found it, so this presentation
 	// draws the same text that one drew (see th15_text_record_count above)
 	th15_text_records_restore();

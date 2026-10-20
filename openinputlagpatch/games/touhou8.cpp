@@ -1069,15 +1069,23 @@ static void th8_extra_presentation(float t) {
 
     // Where the bullets are a fraction of a frame on from here; put back right after the pass drew
     // them (see the stage 1 comment above)
-    th8_bullets_advance(t);
-    th8_shots_advance(t);
-    th8_familiars_advance(t);
-    th8_lasers_advance(t);
+    if (Config::InterpolateBulletsAndLasers) {
+        th8_bullets_advance(t);
+    }
+    if (Config::InterpolatePlayerShots) {
+        th8_shots_advance(t);
+    }
+    if (Config::InterpolatePlayerBody) {
+        th8_familiars_advance(t);
+    }
+    if (Config::InterpolateBulletsAndLasers) {
+        th8_lasers_advance(t);
+    }
 
     // The player's sprite, the familiars and the player's own shots are drawn from positions the
     // game's own code writes while drawing, so those are nudged where they are drawn instead - this
     // is what tells them how far along this presentation sits (see th8_player_sprite_hook)
-    th8_extra_t = t;
+    th8_extra_t = Config::InterpolatePlayerBody ? t : 0.0f;
 
     // The game counts its own frame rate off this pass (see the comment above), so its state is put
     // back around it: the extras draw the same frame rate text the game's own pass drew, and the

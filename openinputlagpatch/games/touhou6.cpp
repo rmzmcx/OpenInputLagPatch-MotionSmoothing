@@ -995,10 +995,18 @@ static void th6_extra_presentation(float t) {
 
     // Where the objects are a fraction of a frame on from here; put back right after the pass drew
     // them (see the stage 1 comments above)
-    th6_bullets_advance(t);
-    th6_player_advance(t);
-    th6_shots_advance(t);
-    th6_lasers_advance(t);
+    if (Config::InterpolateBulletsAndLasers) {
+        th6_bullets_advance(t);
+    }
+    if (Config::InterpolatePlayerBody) {
+        th6_player_advance(t);
+    }
+    if (Config::InterpolatePlayerShots) {
+        th6_shots_advance(t);
+    }
+    if (Config::InterpolateBulletsAndLasers) {
+        th6_lasers_advance(t);
+    }
 
     // The game counts its own frame rate off this pass (see the comment above), so its state is put
     // back around it

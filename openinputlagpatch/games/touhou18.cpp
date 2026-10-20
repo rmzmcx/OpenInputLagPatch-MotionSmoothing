@@ -533,8 +533,12 @@ struct Th18SpriteMotion {
 static Th18SpriteMotion th18_motions[th18_tracked_max];
 static unsigned int th18_motion_frame = 1;
 static float* th18_tracked[th18_tracked_max];
+static unsigned int th18_tracked_kind[th18_tracked_max];
 static size_t th18_tracked_count;
 static float th18_tracked_saved[th18_tracked_max][3];
+
+static const unsigned int th18_kind_body = 0;
+static const unsigned int th18_kind_shot = 1;
 
 // Diagnostics: the largest movement the player's own position had since the last dump
 static float th18_player_movement;
@@ -603,7 +607,7 @@ static Th18SpriteMotion* th18_sprite_motion(void* sprite) {
 }
 
 // Adds a sprite to what this frame moves, and works out what it moved by since the frame before
-static void th18_track(float* position) {
+static void th18_track(float* position, unsigned int kind) {
 	if (th18_tracked_count >= th18_tracked_max)
 		return;
 	// Two ids can name the same sprite (the game doesn't mind), and moving one twice would put it
@@ -644,6 +648,7 @@ static void th18_track(float* position) {
 	motion->last_x = x;
 	motion->last_y = y;
 
+	th18_tracked_kind[th18_tracked_count] = kind;
 	th18_tracked[th18_tracked_count++] = position;
 }
 
@@ -659,7 +664,7 @@ static void th18_player_measure() {
 		return;
 
 	// The player itself: its own position is what the render pass reads
-	th18_track((float*)((char*)player + th18_player_position));
+	th18_track((float*)((char*)player + th18_player_position), th18_kind_body);
 	if (th18_tracked_count > 0) {
 		const Th18SpriteMotion* motion = th18_sprite_motion(th18_tracked[0]);
 		if (motion != nullptr) {
@@ -675,7 +680,7 @@ static void th18_player_measure() {
 	{
 		void* object = th18_object_by_id(*(unsigned int*)((char*)player + th18_player_shot_sprite));
 		if (object != nullptr)
-			th18_track((float*)((char*)object + th18_object_position));
+			th18_track((float*)((char*)object + th18_object_position), th18_kind_shot);
 	}
 
 	// The shots, which are only measured while they are up
@@ -686,7 +691,7 @@ static void th18_player_measure() {
 		void* object = th18_object_by_id(*(const unsigned int*)(slot + th18_player_shot_sprite_id));
 		if (object == nullptr)
 			continue;
-		th18_track((float*)((char*)object + th18_object_position));
+		th18_track((float*)((char*)object + th18_object_position), th18_kind_shot);
 	}
 
 	// The effect sprite of every ability card the player carries, which the card's code puts
@@ -699,7 +704,7 @@ static void th18_player_measure() {
 			if (card != nullptr) {
 				void* object = th18_object_by_id(*(const unsigned int*)((char*)card + th18_card_effect_sprite));
 				if (object != nullptr)
-					th18_track((float*)((char*)object + th18_object_position));
+					th18_track((float*)((char*)object + th18_object_position), th18_kind_body);
 			}
 			node = *(void**)((char*)node + th18_ability_next);
 		}
@@ -714,7 +719,10 @@ static void th18_player_advance(float t) {
 		for (int axis = 0; axis < 3; ++axis)
 			th18_tracked_saved[i][axis] = position[axis];
 		const Th18SpriteMotion* motion = th18_sprite_motion(position);
-		if (motion != nullptr) {
+		const bool move = th18_tracked_kind[i] == th18_kind_shot
+		                      ? Config::InterpolatePlayerShots
+		                      : Config::InterpolatePlayerBody;
+		if (move && motion != nullptr) {
 			position[0] += motion->delta_x * t;
 			position[1] += motion->delta_y * t;
 		}
@@ -1010,9 +1018,13 @@ static void th18_extra_presentation(float t) {
 	ToolState::ReadyToDraw();
 	// The objects are drawn where they will be t frames from now; the render bakes the positions
 	// into the sprite queue, so they can go back right after it
-	th18_bullets_advance(t);
+	if (Config::InterpolateBulletsAndLasers) {
+		th18_bullets_advance(t);
+	}
 	th18_player_advance(t);
-	th18_lasers_advance(t);
+	if (Config::InterpolateBulletsAndLasers) {
+		th18_lasers_advance(t);
+	}
 	// The text list goes back to how the game's own run of the walk found it, so this presentation
 	// draws the same text that one drew (see th18_text_record_count above)
 	th18_text_records_restore();

@@ -18,6 +18,10 @@
     <Filter Include="Source Files\games">
       <UniqueIdentifier>{0750d48e-b22d-431e-9396-fe2f57fc3791}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{b9bc6f2e-54ad-4a72-96b0-c5868e69d923}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">
@@ -169,6 +173,9 @@
     <ClInclude Include="config.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="default_ini.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="games_def.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -255,5 +262,10 @@
     <None Include="openinputlagpatch.def">
       <Filter>Source Files</Filter>
     </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="default_ini.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
   </ItemGroup>
 </Project>

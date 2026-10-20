@@ -498,8 +498,12 @@ struct Th16SpriteMotion {
 static Th16SpriteMotion th16_motions[th16_tracked_max];
 static unsigned int th16_motion_frame = 1;
 static float* th16_tracked[th16_tracked_max];
+static unsigned int th16_tracked_kind[th16_tracked_max];
 static size_t th16_tracked_count;
 static float th16_tracked_saved[th16_tracked_max][3];
+
+static const unsigned int th16_kind_body = 0;
+static const unsigned int th16_kind_shot = 1;
 
 // Diagnostics: the largest movement the player's own position had since the last dump
 static float th16_player_movement;
@@ -568,7 +572,7 @@ static Th16SpriteMotion* th16_sprite_motion(void* sprite) {
 }
 
 // Adds a sprite to what this frame moves, and works out what it moved by since the frame before
-static void th16_track(float* position) {
+static void th16_track(float* position, unsigned int kind) {
 	if (th16_tracked_count >= th16_tracked_max)
 		return;
 	// Two ids can name the same sprite (the game doesn't mind), and moving one twice would put it
@@ -609,6 +613,7 @@ static void th16_track(float* position) {
 	motion->last_x = x;
 	motion->last_y = y;
 
+	th16_tracked_kind[th16_tracked_count] = kind;
 	th16_tracked[th16_tracked_count++] = position;
 }
 
@@ -624,7 +629,7 @@ static void th16_player_measure() {
 		return;
 
 	// The player itself: its own position is what the render pass reads
-	th16_track((float*)((char*)player + th16_player_position));
+	th16_track((float*)((char*)player + th16_player_position), th16_kind_body);
 	if (th16_tracked_count > 0) {
 		const Th16SpriteMotion* motion = th16_sprite_motion(th16_tracked[0]);
 		if (motion != nullptr) {
@@ -650,7 +655,7 @@ static void th16_player_measure() {
 				void* object = th16_object_by_id(*(const unsigned int*)(slot + th16_player_option_sprite + sprite * 4));
 				if (object == nullptr)
 					continue;
-				th16_track((float*)((char*)object + th16_object_position));
+				th16_track((float*)((char*)object + th16_object_position), th16_kind_body);
 			}
 		}
 	}
@@ -662,7 +667,7 @@ static void th16_player_measure() {
 		void* object = th16_object_by_id(*(const unsigned int*)(slot + th16_player_shot_sprite));
 		if (object == nullptr)
 			continue;
-		th16_track((float*)((char*)object + th16_object_position));
+		th16_track((float*)((char*)object + th16_object_position), th16_kind_shot);
 	}
 }
 
@@ -674,7 +679,10 @@ static void th16_player_advance(float t) {
 		for (int axis = 0; axis < 3; ++axis)
 			th16_tracked_saved[i][axis] = position[axis];
 		const Th16SpriteMotion* motion = th16_sprite_motion(position);
-		if (motion != nullptr) {
+		const bool move = th16_tracked_kind[i] == th16_kind_shot
+		                      ? Config::InterpolatePlayerShots
+		                      : Config::InterpolatePlayerBody;
+		if (move && motion != nullptr) {
 			position[0] += motion->delta_x * t;
 			position[1] += motion->delta_y * t;
 		}
@@ -955,9 +963,13 @@ static void th16_extra_presentation(float t) {
 	ToolState::ReadyToDraw();
 	// The objects are drawn where they will be t frames from now; the render bakes the positions
 	// into the sprite queue, so they can go back right after it
-	th16_bullets_advance(t);
+	if (Config::InterpolateBulletsAndLasers) {
+		th16_bullets_advance(t);
+	}
 	th16_player_advance(t);
-	th16_lasers_advance(t);
+	if (Config::InterpolateBulletsAndLasers) {
+		th16_lasers_advance(t);
+	}
 	// The text list goes back to how the game's own run of the walk found it, so this presentation
 	// draws the same text that one drew (see th16_text_record_count above)
 	th16_text_records_restore();

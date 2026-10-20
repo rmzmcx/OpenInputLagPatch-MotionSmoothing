@@ -1433,10 +1433,18 @@ static void th20_extra_presentation(float t) {
 	// The reset above emptied the queue, exactly the way the game's own block empties it right
 	// before it draws the objects into it - so the objects are drawn again here to fill it
 	ToolState::ReadyToDraw();
-	th20_bullets_advance(t);
-	th20_player_advance(t);
-	th20_shots_advance(t);
-	th20_lasers_advance(t);
+	if (Config::InterpolateBulletsAndLasers) {
+		th20_bullets_advance(t);
+	}
+	if (Config::InterpolatePlayerBody) {
+		th20_player_advance(t);
+	}
+	if (Config::InterpolatePlayerShots) {
+		th20_shots_advance(t);
+	}
+	if (Config::InterpolateBulletsAndLasers) {
+		th20_lasers_advance(t);
+	}
 	// The text list goes back to how the game's own pass of the walk found it, so this
 	// presentation appends its records where that pass put its own and draws the same text it drew
 	th20_text_records_restore();

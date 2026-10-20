@@ -490,8 +490,12 @@ struct Th17SpriteMotion {
 static Th17SpriteMotion th17_motions[th17_tracked_max];
 static unsigned int th17_motion_frame = 1;
 static float* th17_tracked[th17_tracked_max];
+static unsigned int th17_tracked_kind[th17_tracked_max];
 static size_t th17_tracked_count;
 static float th17_tracked_saved[th17_tracked_max][3];
+
+static const unsigned int th17_kind_body = 0;
+static const unsigned int th17_kind_shot = 1;
 
 // Diagnostics: the largest movement the player's own position had since the last dump
 static float th17_player_movement;
@@ -560,7 +564,7 @@ static Th17SpriteMotion* th17_sprite_motion(void* sprite) {
 }
 
 // Adds a sprite to what this frame moves, and works out what it moved by since the frame before
-static void th17_track(float* position) {
+static void th17_track(float* position, unsigned int kind) {
 	if (th17_tracked_count >= th17_tracked_max)
 		return;
 	// Two ids can name the same sprite (the game doesn't mind), and moving one twice would put it
@@ -601,6 +605,7 @@ static void th17_track(float* position) {
 	motion->last_x = x;
 	motion->last_y = y;
 
+	th17_tracked_kind[th17_tracked_count] = kind;
 	th17_tracked[th17_tracked_count++] = position;
 }
 
@@ -616,7 +621,7 @@ static void th17_player_measure() {
 		return;
 
 	// The player itself: its own position is what the render pass reads
-	th17_track((float*)((char*)player + th17_player_position));
+	th17_track((float*)((char*)player + th17_player_position), th17_kind_body);
 	if (th17_tracked_count > 0) {
 		const Th17SpriteMotion* motion = th17_sprite_motion(th17_tracked[0]);
 		if (motion != nullptr) {
@@ -632,7 +637,7 @@ static void th17_player_measure() {
 	{
 		void* object = th17_object_by_id(*(unsigned int*)((char*)player + th17_player_shot_sprite));
 		if (object != nullptr)
-			th17_track((float*)((char*)object + th17_object_position));
+			th17_track((float*)((char*)object + th17_object_position), th17_kind_shot);
 	}
 
 	// The beast spirits and the sprites the roar draws with them, which sit on the player too
@@ -643,7 +648,7 @@ static void th17_player_measure() {
 			for (size_t i = 0; i < th17_beast_sprite_count; ++i) {
 				void* object = th17_object_by_id(*(unsigned int*)((char*)beast + th17_beast_sprites[i]));
 				if (object != nullptr)
-					th17_track((float*)((char*)object + th17_object_position));
+					th17_track((float*)((char*)object + th17_object_position), th17_kind_body);
 			}
 			beast = *(void**)((char*)beast + th17_beast_next);
 		}
@@ -657,7 +662,7 @@ static void th17_player_measure() {
 		void* object = th17_object_by_id(*(const unsigned int*)(slot + th17_player_shot_sprite_id));
 		if (object == nullptr)
 			continue;
-		th17_track((float*)((char*)object + th17_object_position));
+		th17_track((float*)((char*)object + th17_object_position), th17_kind_shot);
 	}
 }
 
@@ -669,7 +674,10 @@ static void th17_player_advance(float t) {
 		for (int axis = 0; axis < 3; ++axis)
 			th17_tracked_saved[i][axis] = position[axis];
 		const Th17SpriteMotion* motion = th17_sprite_motion(position);
-		if (motion != nullptr) {
+		const bool move = th17_tracked_kind[i] == th17_kind_shot
+		                      ? Config::InterpolatePlayerShots
+		                      : Config::InterpolatePlayerBody;
+		if (move && motion != nullptr) {
 			position[0] += motion->delta_x * t;
 			position[1] += motion->delta_y * t;
 		}
@@ -946,9 +954,13 @@ static void th17_extra_presentation(float t) {
 	ToolState::ReadyToDraw();
 	// The objects are drawn where they will be t frames from now; the render bakes the positions
 	// into the sprite queue, so they can go back right after it
-	th17_bullets_advance(t);
+	if (Config::InterpolateBulletsAndLasers) {
+		th17_bullets_advance(t);
+	}
 	th17_player_advance(t);
-	th17_lasers_advance(t);
+	if (Config::InterpolateBulletsAndLasers) {
+		th17_lasers_advance(t);
+	}
 	// The text list goes back to how the game's own run of the walk found it, so this presentation
 	// draws the same text that one drew (see th17_text_record_count above)
 	th17_text_records_restore();

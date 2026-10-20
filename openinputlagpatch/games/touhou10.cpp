@@ -823,51 +823,56 @@ static void th10_player_advance(float t) {
 	if (player == nullptr)
 		return;
 
-	if (th10_motion_frame == th10_body_motion.frame) {
-		// The render walk copies this position into the animation the player object itself carries
-		// (drawn at +0x354/+0x358), so moving it here covers the body; the sprite the player wears
-		// as a handle is placed by the update instead (FUN_004492F0), so it moves with it, the way
-		// th13's notes ended up covering both.
-		th10_shift_position((float*)((char*)player + th10_player_position), th10_body_motion, t);
-		th10_shift_position((float*)((char*)player + th10_player_drawn), th10_body_motion, t);
-		++th10_body_sprites;
-		const unsigned int handle = *(const unsigned int*)((char*)player + th10_player_sprite);
-		void* sprite = th10_sprite_by_handle(handle);
-		if (sprite != nullptr) {
-			th10_shift_sprite(sprite, th10_body_motion, t);
-		} else if (handle != 0) {
-			++th10_sprites_untracked;
+	if (Config::InterpolatePlayerBody) {
+		if (th10_motion_frame == th10_body_motion.frame) {
+			// The render walk copies this position into the animation the player object itself
+			// carries (drawn at +0x354/+0x358), so moving it here covers the body; the sprite the
+			// player wears as a handle is placed by the update instead (FUN_004492F0), so it moves
+			// with it, the way th13's notes ended up covering both.
+			th10_shift_position((float*)((char*)player + th10_player_position), th10_body_motion, t);
+			th10_shift_position((float*)((char*)player + th10_player_drawn), th10_body_motion, t);
+			++th10_body_sprites;
+			const unsigned int handle = *(const unsigned int*)((char*)player + th10_player_sprite);
+			void* sprite = th10_sprite_by_handle(handle);
+			if (sprite != nullptr) {
+				th10_shift_sprite(sprite, th10_body_motion, t);
+			} else if (handle != 0) {
+				++th10_sprites_untracked;
+			}
+		}
+
+		for (unsigned int i = 0; i < th10_player_option_count; ++i) {
+			if (th10_motion_frame != th10_option_motions[i].frame)
+				continue;
+			for (int sprite = 0; sprite < 2; ++sprite) {
+				if (th10_option_sprites[i][sprite] == nullptr)
+					continue;
+				th10_shift_sprite(th10_option_sprites[i][sprite], th10_option_motions[i], t);
+				++th10_option_sprites_moved;
+			}
 		}
 	}
 
-	for (unsigned int i = 0; i < th10_player_option_count; ++i) {
-		if (th10_motion_frame != th10_option_motions[i].frame)
-			continue;
-		for (int sprite = 0; sprite < 2; ++sprite) {
-			if (th10_option_sprites[i][sprite] == nullptr)
+	if (Config::InterpolatePlayerShots) {
+		// The shots: a slot that was measured this frame still has the sprites it was drawn as,
+		// and those are what moves
+		for (unsigned int i = 0; i < th10_player_shot_count; ++i) {
+			if (th10_motion_frame != th10_shot_motions[i].frame)
 				continue;
-			th10_shift_sprite(th10_option_sprites[i][sprite], th10_option_motions[i], t);
-			++th10_option_sprites_moved;
+			for (int sprite = 0; sprite < 2; ++sprite) {
+				if (th10_shot_sprites[i][sprite] == nullptr)
+					continue;
+				th10_shift_sprite(th10_shot_sprites[i][sprite], th10_shot_motions[i], t);
+				++th10_shot_sprites_moved;
+			}
 		}
-	}
 
-	// The shots: a slot that was measured this frame still has the sprites it was drawn as, and those
-	// are what moves
-	for (unsigned int i = 0; i < th10_player_shot_count; ++i) {
-		if (th10_motion_frame != th10_shot_motions[i].frame)
-			continue;
-		for (int sprite = 0; sprite < 2; ++sprite) {
-			if (th10_shot_sprites[i][sprite] == nullptr)
-				continue;
-			th10_shift_sprite(th10_shot_sprites[i][sprite], th10_shot_motions[i], t);
+		// The single shot object: the same, for the one sprite it wears
+		if (th10_motion_frame == th10_shot_object_motion.frame &&
+			th10_shot_object_sprite_object != nullptr) {
+			th10_shift_sprite(th10_shot_object_sprite_object, th10_shot_object_motion, t);
 			++th10_shot_sprites_moved;
 		}
-	}
-
-	// The single shot object: the same, for the one sprite it wears
-	if (th10_motion_frame == th10_shot_object_motion.frame && th10_shot_object_sprite_object != nullptr) {
-		th10_shift_sprite(th10_shot_object_sprite_object, th10_shot_object_motion, t);
-		++th10_shot_sprites_moved;
 	}
 }
 
@@ -1213,9 +1218,13 @@ static void th10_extra_presentation(IDirect3DDevice9* device, float t) {
 	th10_fps_restore(true);
 	// Everything is drawn where it will be t frames from now; the render bakes those positions into
 	// what it draws, so they can all go back right after it
-	th10_bullets_advance(t);
+	if (Config::InterpolateBulletsAndLasers) {
+		th10_bullets_advance(t);
+	}
 	th10_player_advance(t);
-	th10_lasers_advance(t);
+	if (Config::InterpolateBulletsAndLasers) {
+		th10_lasers_advance(t);
+	}
 	// Nothing to render into an empty scene, and the walk itself would read the object it is handed
 	void* scene = *th10_scene;
 	if (scene != nullptr) {
