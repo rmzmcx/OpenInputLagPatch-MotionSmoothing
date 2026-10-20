@@ -357,7 +357,7 @@ CoverTaskbar = 0
 
 # 已知问题
 
-- 转场时背景淡入淡出动画可能视觉上变快，但不影响游戏实际速度。
+- 高倍率补帧长时间游玩后可能出现补帧下滑，详见 [KNOWN_ISSUES.md](KNOWN_ISSUES.md)。
 
 # TODO
 

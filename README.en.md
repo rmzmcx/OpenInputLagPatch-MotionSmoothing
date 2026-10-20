@@ -351,7 +351,7 @@ Finally, the in-game frame limiter is disabled and a heavily simplified version 
 
 # Known issues
 
-- During stage transitions the background fade in/out animation can look faster than it should; the game itself still runs at its own speed.
+- At high interpolation targets the presentation rate can drop after playing for a while; see [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
 
 # TODO
 - Support more games
