@@ -292,6 +292,11 @@ int D3D8Overlay::UpdateBuffers(char* text, D3DCOLOR color, float x_offset) {
 }
 
 void D3D8Overlay::Draw() {
+    // D3D8 state blocks restore the pipeline state, but not the viewport.
+    D3DVIEWPORT8 original_viewport = {};
+    const bool restore_viewport =
+        SUCCEEDED(d3d8_device->GetViewport(&original_viewport));
+
     // Save the current render state so the game's graphics don't get messed up
     DWORD original_state = 0;
     d3d8_device->CreateStateBlock(D3DSBT_ALL, &original_state);
@@ -336,6 +341,8 @@ void D3D8Overlay::Draw() {
 
     // Restore the original render state
     d3d8_device->ApplyStateBlock(original_state);
+    if (restore_viewport)
+        d3d8_device->SetViewport(&original_viewport);
     d3d8_device->DeleteStateBlock(original_state);
 }
 

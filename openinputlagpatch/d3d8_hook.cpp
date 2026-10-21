@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <intrin.h>
 
 #include "d3d8_hook.h"
 #include "d3d8/d3d8.h"
@@ -23,6 +24,9 @@ namespace {
 	IDirect3DDevice8* d3d8_device = nullptr;
 	bool device_hooks_installed = false;
 	bool create8_hooked = false;
+	D3D8Hook::DeviceResetCallback device_reset_callback = nullptr;
+	D3D8Hook::Direct3DCreateCallback direct3d_create_callback = nullptr;
+	D3D8Hook::PresentInfo present_info = {};
 
 	// Forces the presentation parameters into the mode that was picked on boot, if the
 	// window mode question is enabled
@@ -136,6 +140,10 @@ namespace {
 
 		auto result = Present_orig(device, src_rect, dst_rect, dst_window, dirty_region);
 
+		// The first completed Present is the first frame safe to expose. th095's startup window is
+		// hidden until this point so device/window setup cannot flash an intermediate frame.
+		WindowMode::ShowStartupWindow();
+
 		// One presentation reached the display (see overlay.h; the rate readout is only drawn by
 		// the games that turn it on)
 		overlay_mark_presentation();
@@ -144,7 +152,14 @@ namespace {
 
 	HRESULT __stdcall Reset_hook(IDirect3DDevice8* device, D3DPRESENT_PARAMETERS* present_params) {
 		printf("D3D8 Reset intercepted!\n");
+		void* caller = _ReturnAddress();
 		apply_presentation_overrides(present_params);
+		present_info.width = present_params->BackBufferWidth;
+		present_info.height = present_params->BackBufferHeight;
+		present_info.back_buffer_count = present_params->BackBufferCount;
+		present_info.swap_effect = present_params->SwapEffect;
+		present_info.presentation_interval = present_params->FullScreen_PresentationInterval;
+		present_info.windowed = present_params->Windowed != FALSE;
 
 		// The overlay's resources are all in D3DPOOL_DEFAULT, and D3D8's Reset fails when any
 		// of them are still alive (the game releases its own surfaces for exactly this
@@ -167,6 +182,9 @@ namespace {
 				present_params->Windowed
 			);
 
+			if (device_reset_callback != nullptr)
+				device_reset_callback(device, caller);
+
 			if (recreate_overlay)
 				D3D8Overlay::Instance = new D3D8Overlay(device, present_params->BackBufferWidth, present_params->BackBufferHeight);
 		}
@@ -178,6 +196,12 @@ namespace {
 	                                    DWORD BehaviorFlags, D3DPRESENT_PARAMETERS* pp, IDirect3DDevice8** ppReturnedDeviceInterface) {
 		printf("D3D8 CreateDevice intercepted!\n");
 		apply_presentation_overrides(pp);
+		present_info.width = pp->BackBufferWidth;
+		present_info.height = pp->BackBufferHeight;
+		present_info.back_buffer_count = pp->BackBufferCount;
+		present_info.swap_effect = pp->SwapEffect;
+		present_info.presentation_interval = pp->FullScreen_PresentationInterval;
+		present_info.windowed = pp->Windowed != FALSE;
 
 		auto ret = CreateDevice_orig(self, Adapter, DeviceType, hFocusWindow, BehaviorFlags, pp, ppReturnedDeviceInterface);
 
@@ -201,6 +225,8 @@ namespace {
 		// Window mode: this runs after the game read its config but before it creates its
 		// window, which is the point where the game's own windowed flag has to be set
 		WindowMode::OnD3DCreate();
+		if (direct3d_create_callback != nullptr)
+			direct3d_create_callback();
 
 		auto d3d8 = Direct3DCreate8_orig(SDKVersion);
 		if (d3d8 == nullptr)
@@ -245,6 +271,18 @@ void D3D8Hook::Install(IDirect3DDevice8* device) {
 	patch_bytes(&vtbl[15], &present_hook, sizeof(DWORD));
 
 	device_hooks_installed = true;
+}
+
+void D3D8Hook::SetDeviceResetCallback(DeviceResetCallback callback) {
+	device_reset_callback = callback;
+}
+
+void D3D8Hook::SetDirect3DCreateCallback(Direct3DCreateCallback callback) {
+	direct3d_create_callback = callback;
+}
+
+D3D8Hook::PresentInfo D3D8Hook::GetPresentInfo() {
+	return present_info;
 }
 
 // Presents without going through the hooks other patches and tools put on the device (see the

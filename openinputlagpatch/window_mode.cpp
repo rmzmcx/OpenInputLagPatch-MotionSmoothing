@@ -3,6 +3,7 @@
 #include <string.h>
 #include <wchar.h>
 #include <shobjidl.h>
+#include <intrin.h>
 #include "window_mode.h"
 #include "config.h"
 #include "games.h"
@@ -15,14 +16,20 @@
 namespace {
 	typedef HANDLE(WINAPI* CreateMutexA_t)(LPSECURITY_ATTRIBUTES, BOOL, LPCSTR);
 	typedef HANDLE(WINAPI* CreateMutexW_t)(LPSECURITY_ATTRIBUTES, BOOL, LPCWSTR);
+	typedef HWND(WINAPI* CreateWindowExA_t)(DWORD, LPCSTR, LPCSTR, DWORD, int, int, int, int,
+		HWND, HMENU, HINSTANCE, LPVOID);
 
 	CreateMutexA_t CreateMutexA_orig = nullptr;
 	CreateMutexW_t CreateMutexW_orig = nullptr;
+	CreateWindowExA_t CreateWindowExA_orig = nullptr;
 
 	WindowMode::Override override_mode = WindowMode::Override::None;
 	bool handled = false;
 	bool hooked = false;
 	TouhouGame game = TouhouGame::Unknown;
+	HWND window_mode_applied = nullptr;
+	HWND hidden_startup_window = nullptr;
+	WindowMode::EarlyWindowStats early_window_stats = {};
 
 	// Touhou 6 to 9.5 have no way of changing the screen mode from inside the game, which is
 	// why vpatch (and this) asks on boot. Touhou 10 and up have their own option for it.
@@ -81,6 +88,48 @@ namespace {
 	}
 
 	void write_windowed_flag();
+	bool game_still_agrees();
+	void apply_to_window(HWND hwnd);
+
+	bool window_should_be_adjusted() {
+		if (!Config::WindowEnabled)
+			return false;
+		// CreateWindowExA_hook only accepts the game's windowed MainWindow call site. Its
+		// fullscreen branch uses another return address, so no additional mode check is needed.
+		return true;
+	}
+
+	// vpatch replaces the CreateWindowExA call at 0x420CAF with a wrapper and applies its window
+	// settings before that call returns. Repeating the change after Direct3DCreate8 leaves th095
+	// visible for one frame at the original size and position first, which dgVoodoo2 shows as the
+	// startup flash. Match vpatch's timing by applying the settings while returning from the same
+	// call site. The unmodified game uses the six-byte indirect call `FF 15 [IAT]` at 0x420CAF, so
+	// its return address is 0x420CB5 (vpatch's five-byte replacement returns at 0x420CB4).
+	HWND WINAPI CreateWindowExA_hook(DWORD ex_style, LPCSTR class_name, LPCSTR window_name,
+	                                 DWORD style, int x, int y, int width, int height,
+	                                 HWND parent, HMENU menu, HINSTANCE instance, LPVOID param) {
+		++early_window_stats.create_calls;
+		void* return_address = _ReturnAddress();
+		early_window_stats.last_return_address = return_address;
+		const bool main_window =
+			game == TouhouGame::Th95 && return_address == (void*)0x00420CB5;
+		const DWORD create_style = main_window ? style & ~WS_VISIBLE : style;
+		HWND window = CreateWindowExA_orig(ex_style, class_name, window_name, create_style,
+			x, y, width, height, parent, menu, instance, param);
+		if (window != nullptr && main_window) {
+			++early_window_stats.main_window_calls;
+			if (window_should_be_adjusted()) {
+				apply_to_window(window);
+				window_mode_applied = window;
+				++early_window_stats.applications;
+			}
+			// apply_to_window can restore WS_VISIBLE when the title bar is disabled. Hide again so
+			// dgVoodoo and the game's own startup retry cannot expose an intermediate frame.
+			ShowWindow(window, SW_HIDE);
+			hidden_startup_window = window;
+		}
+		return window;
+	}
 
 	HANDLE WINAPI CreateMutexA_hook(LPSECURITY_ATTRIBUTES attributes, BOOL initial_owner, LPCSTR name) {
 		auto ret = CreateMutexA_orig(attributes, initial_owner, name);
@@ -305,6 +354,11 @@ void WindowMode::Hook() {
 	// table is enough
 	CreateMutexA_orig = (CreateMutexA_t)iat_hook(NULL, "kernel32.dll", "CreateMutexA", (void*)&CreateMutexA_hook);
 	CreateMutexW_orig = (CreateMutexW_t)iat_hook(NULL, "kernel32.dll", "CreateMutexW", (void*)&CreateMutexW_hook);
+	if (game == TouhouGame::Th95) {
+		CreateWindowExA_orig =
+			(CreateWindowExA_t)iat_hook(NULL, "user32.dll", "CreateWindowExA",
+				(void*)&CreateWindowExA_hook);
+	}
 }
 
 void WindowMode::AskIfNeeded() {
@@ -332,6 +386,20 @@ WindowMode::Override WindowMode::GetEffectiveOverride() {
 void WindowMode::Apply(HWND hwnd, BOOL windowed) {
 	if (!Config::WindowEnabled || hwnd == NULL || !windowed)
 		return;
+	if (hwnd == window_mode_applied)
+		return;
 
 	apply_to_window(hwnd);
+	window_mode_applied = hwnd;
+}
+
+WindowMode::EarlyWindowStats WindowMode::GetEarlyWindowStats() {
+	return early_window_stats;
+}
+
+void WindowMode::ShowStartupWindow() {
+	HWND window = hidden_startup_window;
+	hidden_startup_window = nullptr;
+	if (window != nullptr && IsWindow(window))
+		ShowWindow(window, SW_SHOW);
 }

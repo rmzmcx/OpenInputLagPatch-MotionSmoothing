@@ -8,6 +8,18 @@
 struct IDirect3DDevice8;
 
 namespace D3D8Hook {
+	typedef void (*DeviceResetCallback)(IDirect3DDevice8* device, void* caller);
+	typedef void (*Direct3DCreateCallback)();
+
+	struct PresentInfo {
+		unsigned int width;
+		unsigned int height;
+		unsigned int back_buffer_count;
+		unsigned int swap_effect;
+		unsigned int presentation_interval;
+		bool windowed;
+	};
+
 	// IAT hooks Direct3DCreate8 so the game's IDirect3D8::CreateDevice call can be
 	// intercepted. This is where window mode is forced for D3D8 titles, which also covers
 	// wrappers that never go through d3d9.dll (dgVoodoo2 in particular).
@@ -19,6 +31,16 @@ namespace D3D8Hook {
 	// Safe to call every frame: it does nothing until a device is available, and only
 	// installs the hook once.
 	void Install(IDirect3DDevice8* device);
+
+	// Called after a successful IDirect3DDevice8::Reset. The th08-equivalent thprac hook uses a
+	// game-side device recreation point to reinitialize the tool against the new device.
+	void SetDeviceResetCallback(DeviceResetCallback callback);
+
+	// Called before the game creates its IDirect3D8 object. This is the last point after the game
+	// has loaded its own config but before it builds presentation parameters or a window.
+	void SetDirect3DCreateCallback(Direct3DCreateCallback callback);
+
+	PresentInfo GetPresentInfo();
 }
 
 // Presents with the Present that was in place when the device was created, i.e. without the hooks

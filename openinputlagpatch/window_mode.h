@@ -17,6 +17,13 @@
 // (position, size, title bar, always on top, keeping the taskbar out of the way) apply to every
 // supported game though.
 namespace WindowMode {
+	struct EarlyWindowStats {
+		unsigned int create_calls;
+		unsigned int main_window_calls;
+		unsigned int applications;
+		void* last_return_address;
+	};
+
 	// Installs the hooks the window mode question relies on. Call this from the patcher
 	// entry point, before the game's own code runs.
 	void Hook();
@@ -49,4 +56,10 @@ namespace WindowMode {
 	// Applies the [Window] settings to the window the game renders into. Call this once the
 	// device has been created or reset; `windowed` is the mode the device ended up in.
 	void Apply(HWND hwnd, BOOL windowed);
+
+	EarlyWindowStats GetEarlyWindowStats();
+
+	// Keep the first game window hidden until its first completed Present. th095 can finish
+	// dgVoodoo's window-size transition and its own startup retry while the window is invisible.
+	void ShowStartupWindow();
 }
