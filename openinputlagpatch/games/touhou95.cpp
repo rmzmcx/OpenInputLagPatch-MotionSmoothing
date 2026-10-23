@@ -70,8 +70,9 @@ static auto th95_game_present = (int(__cdecl*)())0x00420920;
 // extra drawing. The extra path never calls 420920, 421D00 or either copy helper.
 //
 // A frame is drawn from the state left by the calculation chain. The scene snapshot below is taken
-// just before the game's own RunDrawChain and put back before each repeat. Object positions, input,
-// timers and random state are not written by stage 0 at all.
+// just before the game's own RunDrawChain and put back only inside a repeated draw. Input, timers,
+// random state and photo scoring only run in the game's own frame. Enemy bullets and lasers receive
+// the measured visual step between frames, and every changed field is restored after the repeat.
 static bool th95_drew_frame;
 static bool th95_in_extra_presentation;
 static unsigned int th95_extra_game_present_calls;
@@ -100,6 +101,14 @@ static unsigned int th95_window_update_nonzero;
 static unsigned int th95_window_update_calls;
 
 static bool th95_interpolation_install_attempted;
+static void th95_capture_game_draw_state();
+static void th95_bullets_measure();
+static void th95_bullets_advance(float t);
+static void th95_bullets_undo();
+static void th95_lasers_measure();
+static void th95_lasers_advance(float t);
+static void th95_lasers_undo();
+static bool th95_has_interpolated_objects();
 
 struct Th95SceneState {
     struct BackgroundVmDrawState {
@@ -141,14 +150,20 @@ struct Th95SceneState {
     void* view_layer;
     unsigned int view_layer_index;
 
-    // 4235D0 advances the "Press Shot Button" HUD counter at window+0x714 once per draw.
+    // 4235D0 advances the "Press Shot Button" HUD counter at window+0x714 and changes the text
+    // pipeline globals at 0x4B1FE4..0x4B1FF4. An extra draw has to start from the same values as
+    // the game's own draw and put the live values back afterwards.
     int shutter_prompt_frame;
+    int shutter_text_colour;
+    float shutter_text_scale_x;
+    float shutter_text_scale_y;
+    unsigned int shutter_text_x;
+    unsigned int shutter_text_y;
 
     bool captured;
 };
 
 static Th95SceneState th95_scene;
-static Th95SceneState th95_scene_after_game_draw;
 
 static void th95_capture_scene_state(Th95SceneState* state) {
     IDirect3DDevice8* device = th95_device();
@@ -201,6 +216,11 @@ static void th95_capture_scene_state(Th95SceneState* state) {
     state->view_layer = *(void**)(th95_game_window + 0x3C4);
     state->view_layer_index = *(unsigned int*)(th95_game_window + 0x3C8);
     state->shutter_prompt_frame = *(int*)(th95_game_window + 0x714);
+    state->shutter_text_colour = *(int*)0x004B1FEC;
+    state->shutter_text_scale_x = *(float*)0x004B1FF0;
+    state->shutter_text_scale_y = *(float*)0x004B1FF4;
+    state->shutter_text_x = *(unsigned int*)0x004B1FE4;
+    state->shutter_text_y = *(unsigned int*)0x004B1FE8;
 }
 
 static void th95_restore_scene_state(const Th95SceneState* state) {
@@ -251,6 +271,11 @@ static void th95_restore_scene_state(const Th95SceneState* state) {
     *(void**)(th95_game_window + 0x3C4) = state->view_layer;
     *(unsigned int*)(th95_game_window + 0x3C8) = state->view_layer_index;
     *(int*)(th95_game_window + 0x714) = state->shutter_prompt_frame;
+    *(int*)0x004B1FEC = state->shutter_text_colour;
+    *(float*)0x004B1FF0 = state->shutter_text_scale_x;
+    *(float*)0x004B1FF4 = state->shutter_text_scale_y;
+    *(unsigned int*)0x004B1FE4 = state->shutter_text_x;
+    *(unsigned int*)0x004B1FE8 = state->shutter_text_y;
 }
 
 // The game's own frame rate is counted from the draw chain:
@@ -319,6 +344,15 @@ static void th95_fps_state_restore(const Th95FpsState* state) {
     *(int*)0x004B1FEC = state->text_colour;
 }
 
+static Th95FpsState th95_scene_fps;
+
+static void th95_capture_game_draw_state() {
+    th95_capture_scene_state(&th95_scene);
+    th95_fps_state_save(&th95_scene_fps);
+    th95_bullets_measure();
+    th95_lasers_measure();
+}
+
 // These two values are AnmManager's screenshot texture requests. 421D00 consumes them immediately
 // after the game's Present. Drawing itself never consumes them, so a change around an extra pass
 // would mean photo work had leaked into the repeat.
@@ -350,11 +384,6 @@ static bool th95_ready_to_draw() {
            th95_anm_manager != nullptr && *th95_anm_manager != nullptr;
 }
 
-static int __fastcall th95_skip_static_background_draw(void* self, void*) {
-    (void)self;
-    return 1;
-}
-
 static int __cdecl th95_startup_chain_hook() {
     th95_startup_flags_before = *(unsigned int*)(th95_game_window + 0x444);
     th95_startup_reset_flag_before = *(unsigned int*)(th95_game_window + 0x654);
@@ -367,9 +396,13 @@ static int __cdecl th95_startup_chain_hook() {
     return th95_startup_chain_result;
 }
 
-// The game's RunDrawChain call. The game's own pass runs the original unmodified call through this
-// hook; the extra pass calls 418DA0 directly after restoring the scene snapshot.
+// The game's RunDrawChain call. This is the first point in a game frame after the calculation
+// chain and before any draw callback, so it is also where the measured bullet/laser step and the
+// state the scene is about to be drawn with are sampled.
 static int __fastcall th95_render_hook(void* chain) {
+    if (!th95_drew_frame)
+        th95_capture_game_draw_state();
+
     int result = th95_run_draw_chain(chain);
     th95_drew_frame = true;
     return result;
@@ -568,15 +601,27 @@ static bool th95_draw_thprac_overlay(IDirect3DDevice8* device) {
     return true;
 }
 
-static void th95_extra_draw_pass() {
+static bool th95_extra_draw_pass(float t) {
     IDirect3DDevice8* device = th95_device();
+    if (device == nullptr || th95_anm_manager == nullptr || *th95_anm_manager == nullptr)
+        return false;
+
     void* anm = *th95_anm_manager;
+
+    // Keep the live post-Present state. The extra pass starts from the state captured immediately
+    // before the game's own draw, so the same callbacks produce the same background and HUD, and
+    // puts the live state back afterwards.
+    Th95SceneState live_scene;
+    th95_capture_scene_state(&live_scene);
+    Th95FpsState live_fps;
+    th95_fps_state_save(&live_fps);
+    th95_restore_scene_state(&th95_scene);
+    th95_fps_state_restore(&th95_scene_fps);
 
     device->BeginScene();
     th95_reset_vertex_buffer(anm);
     *(unsigned int*)0x004C4DD8 = 0xFF;
     th95_disable_fog(th95_game_window);
-    th95_restore_scene_state(&th95_scene);
 
     // The scene's original pass finished with its depth buffer populated. A repeated background
     // draw at equal depth can be rejected and leave the previous menu frame visible, so begin the
@@ -585,32 +630,13 @@ static void th95_extra_draw_pass() {
 
     ToolState::ReadyToDraw();
 
-    // 4024A0 stores the two static background draw-chain nodes at BackGroundInf+0x2014 and
-    // +0x2018. Their callbacks (402BF0/402C20) are not pure draws: they mutate layer flags,
-    // background VM transforms and render state. The game's own present already contains the
-    // background, so an extra frame replaces just these callbacks while the rest of the draw chain
-    // still draws bullets, lasers, player and shots.
-    unsigned char* background = *(unsigned char**)0x004BDD90;
-    void* draw_nodes[2] = {};
-    DWORD draw_callbacks[2] = {};
-    if (background != nullptr) {
-        draw_nodes[0] = *(void**)(background + 0x2014);
-        draw_nodes[1] = *(void**)(background + 0x2018);
-        for (unsigned int i = 0; i < 2; ++i) {
-            if (draw_nodes[i] != nullptr) {
-                draw_callbacks[i] = *(DWORD*)((unsigned char*)draw_nodes[i] + 8);
-                *(DWORD*)((unsigned char*)draw_nodes[i] + 8) =
-                    (DWORD)th95_skip_static_background_draw;
-            }
-        }
-    }
+    th95_bullets_advance(t);
+    th95_lasers_advance(t);
 
     th95_run_draw_chain(th95_chain);
 
-    for (unsigned int i = 0; i < 2; ++i) {
-        if (draw_nodes[i] != nullptr)
-            *(DWORD*)((unsigned char*)draw_nodes[i] + 8) = draw_callbacks[i];
-    }
+    th95_bullets_undo();
+    th95_lasers_undo();
 
     th95_flush_vertex_buffer(anm);
     device->SetTexture(0, nullptr);
@@ -620,21 +646,24 @@ static void th95_extra_draw_pass() {
     th95_draw_thprac_overlay(device);
 
     device->EndScene();
+
+    th95_fps_state_restore(&live_fps);
+    th95_restore_scene_state(&live_scene);
+    return true;
 }
 
-// Stage 0 has no object movement. The scene is drawn once more from the same calculated state, so
-// the photo buffer, HUD, shutter frame, enemy bullets, player and every text object remain exactly
-// where the game's own presentation left them.
-//
-// thprac's th095 module uses one hook at 0x4208D6, and that single call starts, updates and draws
-// its GUI. There is no separate frame-ready return to restore without running its update again.
-// The extra pass therefore stops at the scene draw chain; ToolState is still notified at the normal
-// points for the shared code, and the oilp overlay is drawn by the bypass-present path.
 static void th95_extra_presentation(float t) {
-    (void)t;
-    // Stage 0 has no object displacement. Its additional presentation is the exact frame the game
-    // already drew, so no draw-chain callback is run again. This keeps every background, menu,
-    // HUD and photo draw callback from mutating state at presentation rate.
+    unsigned char* game_manager = *(unsigned char**)0x004BDEC8;
+    const bool paused =
+        game_manager != nullptr && (*(unsigned int*)(game_manager + 0xFC) & 4) != 0;
+    if (Config::InterpolateBulletsAndLasers && !paused &&
+        th95_has_interpolated_objects()) {
+        th95_extra_draw_pass(t);
+    }
+
+    // With no eligible moving object this is the exact back buffer the game presented, so a
+    // repeated Present is enough. Extra frames never call the game Present wrapper, calculation
+    // chain, input, timers, photo scoring or the screenshot helpers.
     d3d8_present_bypassing_hooks();
 }
 
@@ -674,6 +703,8 @@ static const unsigned int th95_bullet_slots = 1600;
 static const unsigned int th95_bullet_slot_size = 0x65C;
 static const unsigned int th95_bullet_state_offset = 0x352;
 static const unsigned int th95_bullet_next_offset = 0x358;
+static const unsigned int th95_bullet_position_offset = 0x2D0;
+static const unsigned int th95_bullet_angle_offset = 0x300;
 static const unsigned int th95_bullet_layers = 6;
 static const unsigned int th95_bullet_layer_heads_offset = 0x04;
 static const unsigned int th95_bullet_count_offset = 0x27C5B4;
@@ -700,6 +731,290 @@ static unsigned int th95_count_active_bullet_slots(unsigned char* manager) {
             ++count;
     }
     return count;
+}
+
+// BulletInf::OnDraw is 4058C0 -> 405900. It walks the six layer chains and draws each bullet's
+// Anm at bullet+4 from the world position at +0x2D0; 405900 also derives the sprite rotation from
+// the angle at +0x300. Measuring those two values once per game frame covers every bullet state
+// and custom mover without treating spawn states as ordinary velocity integration.
+struct Th95BulletMotion {
+    float position[3];
+    float step[3];
+    float angle;
+    float angle_step;
+    bool active;
+};
+
+static Th95BulletMotion th95_bullet_motion[th95_bullet_slots];
+static unsigned int th95_bullets_in_play;
+static unsigned int th95_bullets_projected;
+static unsigned int th95_bullets_managers_say;
+
+static void th95_bullets_measure() {
+    unsigned char* manager = *(unsigned char**)0x004BDD98;
+    if (manager == nullptr) {
+        memset(th95_bullet_motion, 0, sizeof(th95_bullet_motion));
+        th95_bullets_in_play = 0;
+        th95_bullets_projected = 0;
+        th95_bullets_managers_say = 0;
+        return;
+    }
+
+    unsigned int active = 0;
+    for (unsigned int i = 0; i < th95_bullet_slots; ++i) {
+        unsigned char* bullet = manager + 0x4C + (size_t)i * th95_bullet_slot_size;
+        Th95BulletMotion& motion = th95_bullet_motion[i];
+        if (*(unsigned short*)(bullet + th95_bullet_state_offset) == 0) {
+            motion.active = false;
+            continue;
+        }
+
+        ++active;
+        const float* position = (const float*)(bullet + th95_bullet_position_offset);
+        const float angle = *(float*)(bullet + th95_bullet_angle_offset);
+        if (motion.active) {
+            for (unsigned int axis = 0; axis < 3; ++axis) {
+                const float delta = position[axis] - motion.position[axis];
+                motion.step[axis] = delta > -48.0f && delta < 48.0f ? delta : 0.0f;
+                motion.position[axis] = position[axis];
+            }
+            const float angle_delta = angle - motion.angle;
+            motion.angle_step =
+                angle_delta > -0.75f && angle_delta < 0.75f ? angle_delta : 0.0f;
+            motion.angle = angle;
+        } else {
+            memset(motion.step, 0, sizeof(motion.step));
+            motion.angle_step = 0.0f;
+            memcpy(motion.position, position, sizeof(motion.position));
+            motion.angle = angle;
+            motion.active = true;
+        }
+    }
+
+    th95_bullets_in_play = active;
+    th95_bullets_projected = active;
+    th95_bullets_managers_say = *(unsigned int*)(manager + th95_bullet_count_offset);
+}
+
+struct Th95ProjectedBullet {
+    unsigned char* bullet;
+    float position[3];
+    float angle;
+};
+
+static Th95ProjectedBullet th95_projected_bullets[th95_bullet_slots];
+static unsigned int th95_projected_bullet_count;
+
+static void th95_bullets_advance(float t) {
+    unsigned char* manager = *(unsigned char**)0x004BDD98;
+    th95_projected_bullet_count = 0;
+    if (manager == nullptr)
+        return;
+
+    for (unsigned int i = 0; i < th95_bullet_slots; ++i) {
+        Th95BulletMotion& motion = th95_bullet_motion[i];
+        if (!motion.active)
+            continue;
+
+        unsigned char* bullet = manager + 0x4C + (size_t)i * th95_bullet_slot_size;
+        float* position = (float*)(bullet + th95_bullet_position_offset);
+        float* angle = (float*)(bullet + th95_bullet_angle_offset);
+        Th95ProjectedBullet& projected =
+            th95_projected_bullets[th95_projected_bullet_count++];
+        projected.bullet = bullet;
+        memcpy(projected.position, position, sizeof(projected.position));
+        projected.angle = *angle;
+
+        for (unsigned int axis = 0; axis < 3; ++axis)
+            position[axis] += motion.step[axis] * t;
+        *angle += motion.angle_step * t;
+    }
+}
+
+static void th95_bullets_undo() {
+    for (unsigned int i = 0; i < th95_projected_bullet_count; ++i) {
+        const Th95ProjectedBullet& projected = th95_projected_bullets[i];
+        memcpy((float*)(projected.bullet + th95_bullet_position_offset),
+               projected.position, sizeof(projected.position));
+        *(float*)(projected.bullet + th95_bullet_angle_offset) = projected.angle;
+    }
+    th95_projected_bullet_count = 0;
+}
+
+// LaserInf is the pointer at 0x4C45E0. 41DAB0 walks the list at manager+8 (next at node+8) and
+// calls each laser's draw virtual. The two concrete vtables built by 41DE50/41DD80 are 0x4958E4
+// and 0x495904. Their draw virtuals (41E6D0 and 41F990) read the position at +0x1C, angle at
+// +0x34 and the Anm scale fields written by the update at +0xA8/+0xAC or +0xC8/+0xCC.
+// 41DFA0 uses a different virtual for scoring collision, so no collision code runs here.
+static const unsigned int th95_laser_count = 256;
+static const unsigned int th95_laser_next_offset = 0x08;
+static const unsigned int th95_laser_position_offset = 0x1C;
+static const unsigned int th95_laser_angle_offset = 0x34;
+static const unsigned int th95_laser_manager_count_offset = 0x54;
+static const DWORD th95_laser_vtable_type_2 = 0x004958E4;
+static const DWORD th95_laser_vtable_type_3 = 0x00495904;
+static const unsigned int th95_laser_type_2_scale_offset = 0xA8;
+static const unsigned int th95_laser_type_3_scale_offset = 0xC8;
+
+struct Th95LaserMotion {
+    unsigned char* laser;
+    DWORD vtable;
+    unsigned int generation;
+    float position[3];
+    float angle;
+    float scale[2];
+    float step[6];
+};
+
+static Th95LaserMotion th95_laser_motion[th95_laser_count];
+static unsigned int th95_laser_generation;
+static unsigned int th95_lasers_in_play;
+static unsigned int th95_lasers_projected;
+static unsigned int th95_lasers_managers_say;
+
+static unsigned int th95_laser_scale_offset(DWORD vtable) {
+    if (vtable == th95_laser_vtable_type_2)
+        return th95_laser_type_2_scale_offset;
+    if (vtable == th95_laser_vtable_type_3)
+        return th95_laser_type_3_scale_offset;
+    return 0;
+}
+
+static Th95LaserMotion* th95_find_laser_motion(unsigned char* laser) {
+    Th95LaserMotion* reusable = nullptr;
+    for (unsigned int i = 0; i < th95_laser_count; ++i) {
+        Th95LaserMotion& motion = th95_laser_motion[i];
+        if (motion.laser == laser)
+            return &motion;
+        if (motion.generation != th95_laser_generation &&
+            (reusable == nullptr || motion.generation < reusable->generation)) {
+            reusable = &motion;
+        }
+    }
+    return reusable;
+}
+
+static void th95_lasers_measure() {
+    unsigned char* manager = *(unsigned char**)0x004C45E0;
+    ++th95_laser_generation;
+    if (th95_laser_generation == 0)
+        th95_laser_generation = 1;
+
+    unsigned int count = 0;
+    unsigned int projected = 0;
+    if (manager != nullptr) {
+        for (unsigned char* laser = *(unsigned char**)(manager + th95_laser_next_offset);
+             laser != nullptr && count < th95_laser_count;
+             laser = *(unsigned char**)(laser + th95_laser_next_offset)) {
+            ++count;
+            const DWORD vtable = *(DWORD*)laser;
+            const unsigned int scale_offset = th95_laser_scale_offset(vtable);
+            if (scale_offset == 0)
+                continue;
+
+            Th95LaserMotion* motion = th95_find_laser_motion(laser);
+            if (motion == nullptr)
+                continue;
+
+            const float* position = (const float*)(laser + th95_laser_position_offset);
+            const float angle = *(float*)(laser + th95_laser_angle_offset);
+            const float* scale = (const float*)(laser + scale_offset);
+            if (motion->laser == laser && motion->vtable == vtable &&
+                motion->generation + 1 == th95_laser_generation) {
+                for (unsigned int axis = 0; axis < 3; ++axis) {
+                    const float delta = position[axis] - motion->position[axis];
+                    motion->step[axis] =
+                        delta > -48.0f && delta < 48.0f ? delta : 0.0f;
+                }
+                const float angle_delta = angle - motion->angle;
+                motion->step[3] =
+                    angle_delta > -0.75f && angle_delta < 0.75f ? angle_delta : 0.0f;
+                for (unsigned int axis = 0; axis < 2; ++axis) {
+                    const float delta = scale[axis] - motion->scale[axis];
+                    motion->step[4 + axis] =
+                        delta > -64.0f && delta < 64.0f ? delta : 0.0f;
+                }
+            } else {
+                memset(motion->step, 0, sizeof(motion->step));
+            }
+
+            motion->laser = laser;
+            motion->vtable = vtable;
+            motion->generation = th95_laser_generation;
+            memcpy(motion->position, position, sizeof(motion->position));
+            motion->angle = angle;
+            memcpy(motion->scale, scale, sizeof(motion->scale));
+            ++projected;
+        }
+    }
+
+    th95_lasers_in_play = count;
+    th95_lasers_projected = projected;
+    th95_lasers_managers_say =
+        manager != nullptr ? *(unsigned int*)(manager + th95_laser_manager_count_offset) : 0;
+}
+
+struct Th95ProjectedLaser {
+    unsigned char* laser;
+    unsigned int scale_offset;
+    float position[3];
+    float angle;
+    float scale[2];
+};
+
+static Th95ProjectedLaser th95_projected_lasers[th95_laser_count];
+static unsigned int th95_projected_laser_count;
+
+static void th95_lasers_advance(float t) {
+    unsigned char* manager = *(unsigned char**)0x004C45E0;
+    th95_projected_laser_count = 0;
+    if (manager == nullptr)
+        return;
+
+    for (unsigned char* laser = *(unsigned char**)(manager + th95_laser_next_offset);
+         laser != nullptr && th95_projected_laser_count < th95_laser_count;
+         laser = *(unsigned char**)(laser + th95_laser_next_offset)) {
+        Th95LaserMotion* motion = th95_find_laser_motion(laser);
+        if (motion == nullptr || motion->generation != th95_laser_generation)
+            continue;
+
+        const unsigned int scale_offset = th95_laser_scale_offset(motion->vtable);
+        if (scale_offset == 0)
+            continue;
+
+        float* position = (float*)(laser + th95_laser_position_offset);
+        float* angle = (float*)(laser + th95_laser_angle_offset);
+        float* scale = (float*)(laser + scale_offset);
+        Th95ProjectedLaser& projected =
+            th95_projected_lasers[th95_projected_laser_count++];
+        projected.laser = laser;
+        projected.scale_offset = scale_offset;
+        memcpy(projected.position, position, sizeof(projected.position));
+        projected.angle = *angle;
+        memcpy(projected.scale, scale, sizeof(projected.scale));
+
+        for (unsigned int axis = 0; axis < 3; ++axis)
+            position[axis] += motion->step[axis] * t;
+        *angle += motion->step[3] * t;
+        for (unsigned int axis = 0; axis < 2; ++axis)
+            scale[axis] += motion->step[4 + axis] * t;
+    }
+}
+
+static void th95_lasers_undo() {
+    for (unsigned int i = 0; i < th95_projected_laser_count; ++i) {
+        const Th95ProjectedLaser& projected = th95_projected_lasers[i];
+        memcpy((float*)(projected.laser + th95_laser_position_offset),
+               projected.position, sizeof(projected.position));
+        *(float*)(projected.laser + th95_laser_angle_offset) = projected.angle;
+        memcpy((float*)(projected.laser + projected.scale_offset),
+               projected.scale, sizeof(projected.scale));
+    }
+    th95_projected_laser_count = 0;
+}
+
+static bool th95_has_interpolated_objects() {
+    return th95_bullets_in_play != 0 || th95_lasers_in_play != 0;
 }
 
 static void th95_diag_dump() {
@@ -761,14 +1076,17 @@ static void th95_diag_dump() {
         unsigned char* manager = *(unsigned char**)0x004BDD98;
         if (manager != nullptr) {
             fprintf(file, "bullets: %u on draw chains, %u active slots, manager count %u, "
-                          "0 projected forward (stage 0)\n",
+                          "%u projected forward\n",
                     th95_count_bullet_chain(manager),
                     th95_count_active_bullet_slots(manager),
-                    *(unsigned int*)(manager + th95_bullet_count_offset));
+                    *(unsigned int*)(manager + th95_bullet_count_offset),
+                    th95_bullets_projected);
         } else {
             fprintf(file, "bullets: BulletInf is not available\n");
         }
     }
+    fprintf(file, "lasers: %u on chain, %u with measured motion, manager count %u\n",
+            th95_lasers_in_play, th95_lasers_projected, th95_lasers_managers_say);
 
     // Extra draws invoke only RunDrawChain. The screenshot copy is inside the game-present wrapper,
     // and PhotoInf::OnUpdate is a calc-chain callback. Both paths are absent from the extra path.
@@ -960,7 +1278,7 @@ static void th95_install_interpolation() {
 
     // The actual presentation rate is counted by the D3D8 Present path. ShowOverlay still decides
     // whether the overlay exists; this only enables the rate line when the overlay is drawn.
-    printf("Frame interpolation: th95 stage 0 extra presentations installed (setting %d)\n",
+    printf("Frame interpolation: th95 enemy bullets and lasers installed (setting %d)\n",
            Config::Interpolation);
 }
 
