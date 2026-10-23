@@ -108,6 +108,9 @@ static void th95_bullets_undo();
 static void th95_lasers_measure();
 static void th95_lasers_advance(float t);
 static void th95_lasers_undo();
+static void th95_player_measure();
+static void th95_player_advance(float t);
+static void th95_player_undo();
 static bool th95_has_interpolated_objects();
 
 struct Th95SceneState {
@@ -351,6 +354,7 @@ static void th95_capture_game_draw_state() {
     th95_fps_state_save(&th95_scene_fps);
     th95_bullets_measure();
     th95_lasers_measure();
+    th95_player_measure();
 }
 
 // These two values are AnmManager's screenshot texture requests. 421D00 consumes them immediately
@@ -630,11 +634,16 @@ static bool th95_extra_draw_pass(float t) {
 
     ToolState::ReadyToDraw();
 
-    th95_bullets_advance(t);
-    th95_lasers_advance(t);
+    if (Config::InterpolatePlayerBody)
+        th95_player_advance(t);
+    if (Config::InterpolateBulletsAndLasers) {
+        th95_bullets_advance(t);
+        th95_lasers_advance(t);
+    }
 
     th95_run_draw_chain(th95_chain);
 
+    th95_player_undo();
     th95_bullets_undo();
     th95_lasers_undo();
 
@@ -656,8 +665,7 @@ static void th95_extra_presentation(float t) {
     unsigned char* game_manager = *(unsigned char**)0x004BDEC8;
     const bool paused =
         game_manager != nullptr && (*(unsigned int*)(game_manager + 0xFC) & 4) != 0;
-    if (Config::InterpolateBulletsAndLasers && !paused &&
-        th95_has_interpolated_objects()) {
+    if (!paused && th95_has_interpolated_objects()) {
         th95_extra_draw_pass(t);
     }
 
@@ -1013,8 +1021,109 @@ static void th95_lasers_undo() {
     th95_projected_laser_count = 0;
 }
 
+// PlayerInf::OnDrawHighPrio is 430110. It copies the Float3 at +0x1E30 into the player.anm VM
+// screen position at +0x15C and draws the VM at +8. Player callback 430240 calls 4340F0 on the
+// camera subobject at +0x1E3C, which draws the four child VMs at +0x3C/+0x308/
+// +0x5D4/+0x8A0 and its animation handles. 430AB0 keeps those children coherent with these five
+// positions: the main point at +0x1E30, the child anchor at +0x1E40, the copied target at
+// +0x29B0, and the two camera/focus points at +0x2A00/+0x2A0C. Measuring all five keeps the
+// self and its followers together without advancing any Anm script or touching the photo frame.
+static const unsigned int th95_player_motion_points = 5;
+static const unsigned int th95_player_motion_offsets[th95_player_motion_points] = {
+    0x1E30,
+    0x1E40,
+    0x29B0,
+    0x2A00,
+    0x2A0C,
+};
+
+static float th95_player_motion_position[th95_player_motion_points][3];
+static float th95_player_motion_step[th95_player_motion_points][3];
+static bool th95_player_motion_ready;
+static bool th95_player_motion_active;
+static float th95_player_delta_x;
+static float th95_player_delta_y;
+
+static void th95_player_measure() {
+    unsigned char* player = *(unsigned char**)0x004C4E70;
+    th95_player_motion_active = false;
+    th95_player_delta_x = 0.0f;
+    th95_player_delta_y = 0.0f;
+    if (player == nullptr) {
+        th95_player_motion_ready = false;
+        return;
+    }
+
+    for (unsigned int point = 0; point < th95_player_motion_points; ++point) {
+        const float* position =
+            (const float*)(player + th95_player_motion_offsets[point]);
+        if (th95_player_motion_ready) {
+            for (unsigned int axis = 0; axis < 3; ++axis) {
+                const float delta = position[axis] - th95_player_motion_position[point][axis];
+                th95_player_motion_step[point][axis] =
+                    delta > -48.0f && delta < 48.0f ? delta : 0.0f;
+            }
+        } else {
+            memset(th95_player_motion_step[point], 0,
+                   sizeof(th95_player_motion_step[point]));
+        }
+        memcpy(th95_player_motion_position[point], position,
+               sizeof(th95_player_motion_position[point]));
+    }
+
+    th95_player_motion_ready = true;
+    for (unsigned int point = 0; point < th95_player_motion_points; ++point) {
+        if (th95_player_motion_step[point][0] != 0.0f ||
+            th95_player_motion_step[point][1] != 0.0f ||
+            th95_player_motion_step[point][2] != 0.0f) {
+            th95_player_motion_active = true;
+            break;
+        }
+    }
+    th95_player_delta_x = th95_player_motion_step[0][0];
+    th95_player_delta_y = th95_player_motion_step[0][1];
+}
+
+struct Th95ProjectedPlayerPoint {
+    float* position;
+    float value[3];
+};
+
+static Th95ProjectedPlayerPoint
+    th95_projected_player[th95_player_motion_points];
+static unsigned int th95_projected_player_count;
+
+static void th95_player_advance(float t) {
+    unsigned char* player = *(unsigned char**)0x004C4E70;
+    th95_projected_player_count = 0;
+    if (player == nullptr || !th95_player_motion_ready)
+        return;
+
+    for (unsigned int point = 0; point < th95_player_motion_points; ++point) {
+        float* position =
+            (float*)(player + th95_player_motion_offsets[point]);
+        Th95ProjectedPlayerPoint& projected =
+            th95_projected_player[th95_projected_player_count++];
+        projected.position = position;
+        memcpy(projected.value, position, sizeof(projected.value));
+        for (unsigned int axis = 0; axis < 3; ++axis)
+            position[axis] += th95_player_motion_step[point][axis] * t;
+    }
+}
+
+static void th95_player_undo() {
+    for (unsigned int i = 0; i < th95_projected_player_count; ++i) {
+        const Th95ProjectedPlayerPoint& projected = th95_projected_player[i];
+        memcpy(projected.position, projected.value, sizeof(projected.value));
+    }
+    th95_projected_player_count = 0;
+}
+
 static bool th95_has_interpolated_objects() {
-    return th95_bullets_in_play != 0 || th95_lasers_in_play != 0;
+    if (Config::InterpolatePlayerBody && th95_player_motion_active)
+        return true;
+    return Config::InterpolateBulletsAndLasers &&
+           (th95_bullets_in_play != 0 || th95_lasers_in_play != 0);
 }
 
 static void th95_diag_dump() {
@@ -1087,6 +1196,12 @@ static void th95_diag_dump() {
     }
     fprintf(file, "lasers: %u on chain, %u with measured motion, manager count %u\n",
             th95_lasers_in_play, th95_lasers_projected, th95_lasers_managers_say);
+    fprintf(file, "player: %u measured points, movement %s, last step %.3f/%.3f px, "
+                  "body switch %d, shots switch %d (no player shots in th095)\n",
+            th95_player_motion_ready ? th95_player_motion_points : 0,
+            th95_player_motion_active ? "active" : "still",
+            th95_player_delta_x, th95_player_delta_y,
+            Config::InterpolatePlayerBody, Config::InterpolatePlayerShots);
 
     // Extra draws invoke only RunDrawChain. The screenshot copy is inside the game-present wrapper,
     // and PhotoInf::OnUpdate is a calc-chain callback. Both paths are absent from the extra path.
