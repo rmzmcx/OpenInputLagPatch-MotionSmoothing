@@ -7,6 +7,41 @@ Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/O
 Only changes that have been tested in-game and confirmed working are listed here, so this file
 is also the record of what has actually been verified rather than just what was attempted.
 
+## 2026-10-23
+
+### Added
+
+- **Shoot the Bullet has frame interpolation** (`851a9ff`, `cd408d8`, `31fe6d5`)
+
+  th09.5 keeps its calculation, drawing and photo work on one frame path. Reusing that path for an
+  extra frame would advance timers and could make a second screenshot request, so the game frame
+  remains the only logic frame and extra presentations use the device Present after it. Enemy
+  bullets are measured from the game's 1600 fixed slots and six layer chains; straight lasers are
+  measured from the game's LaserInf list and the position, angle and two visual scale fields of its
+  two concrete classes. PlayerBody covers the player and the four child/viewfinder components
+  through the five positions maintained by the player's camera subobject. th09.5 has no player-shot
+  object group, so PlayerShots intentionally moves nothing.
+
+  The screenshot request and `snapshot/th###.bmp` write stay in the game Present tail before an
+  extra can run. The shutter, HUD, score text, photo strip and BOSS/enemy bodies are not moved.
+  Extra draws save the live post-Present scene, restore the state captured before the game's own
+  draw, and put the live state back after the repeat. The user's 300-frame diagnostic recorded
+  three presentations for every in-stage frame at 5.56/11.11 ms spacing, 60.01 fps in the game's
+  own counter, a zero lag ratio, 101/101/101 enemy-bullet counts and zero photo-state changes.
+
+### Fixed
+
+- **th09.5 startup avoids the benchmark window flash, and thprac stays valid across resets**
+  (`851a9ff`)
+
+  Removing the original limiter made the first-launch benchmark select forced-60 mode and restart
+  the window. The patch now selects that mode before device creation and keeps the first game
+  window hidden until a frame has actually been presented. thprac's th095 module has one combined
+  GUI update/render hook, so extras draw its cached frame data instead of running the update again.
+  Reset also invalidates the render backend; the game now reinitializes thprac after a successful
+  D3D8 Reset. The D3D8 overlay restores its full state block and separately restores the viewport,
+  which a state block does not contain.
+
 ## 2026-10-20
 
 ### Fixed
