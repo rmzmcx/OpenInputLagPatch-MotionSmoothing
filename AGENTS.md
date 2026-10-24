@@ -77,8 +77,10 @@ When you are writing, please
 3. `RELEASE_NOTES_v<ver>.md`：写「v<ver> 改动 / 安装 / 配置 / 校验」，作为 GitHub release 的正文，
    **不进压缩包**。
 4. `UPDATES&USAGES_v<ver>.md`：就是 `RELEASE_NOTES` 去掉「校验 / Checksums」那一节，**进压缩包**。
-   两份都是两段 `<details>`（先简体中文、后 English，summary 写 `简体中文 / Simplified Chinese`
-   与 `English / 英文`），标题形如 `# OpenInputLagPatch - Motion Smoothing v1.7（简体中文）` /
+   两份都是三段 `<details>`（依次为简体中文、日本语、English，summary 写
+   `简体中文 / Simplified Chinese`、`日本語 / Japanese` 与 `English / 英文`），标题形如
+   `# OpenInputLagPatch - Motion Smoothing v1.7（简体中文）` /
+   `# OpenInputLagPatch - Motion Smoothing v1.7（日本語）` /
    `# OpenInputLagPatch - Motion Smoothing v1.7`，正文小节的写法照
    `Release/RELEASE_NOTES_v1.6.md`、`Release/UPDATES&USAGES_v1.6.md` 抄。
 5. commit 用**长说明**，写清「为什么」，不是 changelog。

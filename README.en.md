@@ -363,6 +363,47 @@ CoverTaskbar = 0
 
 ```
 
+## GameOverride
+
+`GameOverride` is an `[Option]` entry. Its default is `-1`, which detects the game from the
+executable hash. Overriding skips that hash check and applies the selected game's address table.
+Use it only when the executable version, image base and function layout exactly match a supported
+build; a wrong value can patch the wrong addresses and crash the game.
+
+| Game | GameOverride value |
+|---|---:|
+| Automatic detection (recommended) | `-1` |
+| `custom.exe`; patch installation returns immediately, so no patches are applied | `0` |
+| TH06 v1.02h | `1` |
+| TH07 v1.00b | `3` |
+| TH08 v1.00d | `4` |
+| TH09 v1.50a | `5` |
+| TH09.5 v1.02a | `14` |
+| TH10 v1.00a | `2` |
+| TH11 v1.00a | `6` |
+| TH12 v1.00b | `7` |
+| TH12.5 v1.00a | `15` |
+| TH12.8 v1.00a | `16` |
+| TH13 v1.00c | `8` |
+| TH14 v1.00b | `9` |
+| TH14.3 v1.00a | `17` |
+| TH15 v1.00b | `10` |
+| TH16 v1.00a | `11` |
+| TH16.5 v1.00a | `18` |
+| TH17 v1.00b | `12` |
+| TH18 v1.00a | `13` |
+| TH18.5 v1.00a | `19` |
+| TH19 v1.10c | `20` |
+| TH19 v1.00a | `22` |
+| TH20 v1.00c | `21` |
+
+For example, force the patch onto a modified Shoot the Bullet executable:
+
+```ini
+[Option]
+GameOverride = 14
+```
+
 # Technical details
 *(Touhou 6-7 only)* The game loop is modified to run the drawing logic *after* the game update logic instead of the other way around, which should shave off a frame of input lag.
 
