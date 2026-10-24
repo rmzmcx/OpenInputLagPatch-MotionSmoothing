@@ -8,6 +8,7 @@
 #include "limiter.h"
 #include "overlay.h"
 #include "patch_util.h"
+#include "present_diag.h"
 #include "window_mode.h"
 
 namespace {
@@ -138,7 +139,13 @@ namespace {
 
 		draw_overlay();
 
+		LARGE_INTEGER present_start;
+		LARGE_INTEGER present_end;
+		QueryPerformanceCounter(&present_start);
 		auto result = Present_orig(device, src_rect, dst_rect, dst_window, dirty_region);
+		QueryPerformanceCounter(&present_end);
+		present_diag_note_present_duration((uint64_t)present_start.QuadPart,
+		                                   (uint64_t)present_end.QuadPart);
 
 		// The first completed Present is the first frame safe to expose. th095's startup window is
 		// hidden until this point so device/window setup cannot flash an intermediate frame.
@@ -206,6 +213,7 @@ namespace {
 		auto ret = CreateDevice_orig(self, Adapter, DeviceType, hFocusWindow, BehaviorFlags, pp, ppReturnedDeviceInterface);
 
 		if (SUCCEEDED(ret) && ppReturnedDeviceInterface != nullptr && *ppReturnedDeviceInterface != nullptr) {
+			present_diag_set_window(hFocusWindow ? hFocusWindow : pp->hDeviceWindow);
 			D3D8Hook::Install(*ppReturnedDeviceInterface);
 			WindowMode::Apply(hFocusWindow ? hFocusWindow : pp->hDeviceWindow, pp->Windowed);
 
@@ -294,7 +302,13 @@ HRESULT d3d8_present_bypassing_hooks() {
 		return E_FAIL;
 
 	draw_overlay();
+	LARGE_INTEGER present_start;
+	LARGE_INTEGER present_end;
+	QueryPerformanceCounter(&present_start);
 	auto result = Present_orig(d3d8_device, nullptr, nullptr, nullptr, nullptr);
+	QueryPerformanceCounter(&present_end);
+	present_diag_note_present_duration((uint64_t)present_start.QuadPart,
+	                                   (uint64_t)present_end.QuadPart);
 	overlay_mark_presentation();
 	return result;
 }

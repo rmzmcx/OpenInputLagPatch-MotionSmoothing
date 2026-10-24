@@ -3,6 +3,7 @@
 #include "common.h"
 #include "overlay_font.h"
 #include "d3d9_overlay.h"
+#include "present_diag.h"
 
 D3D9Overlay* D3D9Overlay::Instance = nullptr;
 
@@ -56,6 +57,7 @@ void overlay_mark_presentation() {
 
 	LARGE_INTEGER now;
 	QueryPerformanceCounter(&now);
+	present_diag_mark_presentation((uint64_t)now.QuadPart);
 	if (present_rate_since.QuadPart == 0) {
 		present_rate_since = now;
 		present_rate_count = 0;

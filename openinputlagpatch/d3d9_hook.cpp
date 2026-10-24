@@ -3,16 +3,19 @@
 
 #include <stdio.h>
 #include <d3d9.h>
+#include "d3d9_hook.h"
 #include "patch_util.h"
 #include "common.h"
 #include "config.h"
 #include "d3d9_overlay.h"
 #include "limiter.h"
 #include "overlay.h"
+#include "present_diag.h"
 #include "window_mode.h"
 
 static IDirect3D9* d3d9 = nullptr;
 static IDirect3DDevice9* d3d9_device = nullptr;
+static D3D9PresentInfo present_info = {};
 
 // The device's own Present, taken before anything else can replace it. The frame interpolation
 // presents its extra frames with this: they should reach the driver, not the Present hook of the
@@ -30,12 +33,35 @@ IDirect3DDevice9* d3d9_hooked_device() {
 HRESULT d3d9_present_bypassing_hooks() {
 	if (present_unhooked == nullptr || d3d9_device == nullptr)
 		return E_FAIL;
-	return present_unhooked(d3d9_device, nullptr, nullptr, nullptr, nullptr);
+	LARGE_INTEGER present_start;
+	LARGE_INTEGER present_end;
+	QueryPerformanceCounter(&present_start);
+	const HRESULT result =
+		present_unhooked(d3d9_device, nullptr, nullptr, nullptr, nullptr);
+	QueryPerformanceCounter(&present_end);
+	present_diag_note_present_duration((uint64_t)present_start.QuadPart,
+	                                   (uint64_t)present_end.QuadPart);
+	return result;
 }
 
 // Whether a D3D9 device exists, i.e. whether the D3D9 overlay is the one drawing (overlay.h)
 bool d3d9_overlay_available() {
 	return d3d9_device != nullptr;
+}
+
+D3D9PresentInfo d3d9_get_present_info() {
+	return present_info;
+}
+
+static void capture_present_info(const D3DPRESENT_PARAMETERS* params) {
+	present_info.width = params->BackBufferWidth;
+	present_info.height = params->BackBufferHeight;
+	present_info.back_buffer_count = params->BackBufferCount;
+	present_info.swap_effect = params->SwapEffect;
+	present_info.presentation_interval = params->PresentationInterval;
+	present_info.refresh_rate = params->FullScreen_RefreshRateInHz;
+	present_info.windowed = params->Windowed != FALSE;
+	present_info.d3d9ex = Config::D3D9Ex != 0;
 }
 
 // Replaces D3DPOOL_MANAGED with D3DPOOL_DEFAULT because it's deprecated on D3D9Ex
@@ -145,6 +171,7 @@ auto Reset_orig = (HRESULT(__stdcall*)(IDirect3DDevice9*, D3DPRESENT_PARAMETERS*
 HRESULT __stdcall Reset_hook(IDirect3DDevice9* self, D3DPRESENT_PARAMETERS* pPresentationParameters) {
 	printf("Reset intercepted!\n");
 	modify_presentation_parameters(pPresentationParameters);
+	capture_present_info(pPresentationParameters);
 
 	HRESULT ret;
 
@@ -229,6 +256,7 @@ HRESULT __stdcall CreateDevice_hook(IDirect3D9* self, UINT Adapter, D3DDEVTYPE D
 
 	// Disable vsync on the parameters
 	modify_presentation_parameters(pPresentationParameters);
+	capture_present_info(pPresentationParameters);
 	
 	// Create the device
 	IDirect3DDevice9* device = nullptr;
@@ -266,6 +294,7 @@ HRESULT __stdcall CreateDevice_hook(IDirect3D9* self, UINT Adapter, D3DDEVTYPE D
 	}
 
 	*ppReturnedDeviceInterface = device;
+	present_diag_set_window(hFocusWindow ? hFocusWindow : pPresentationParameters->hDeviceWindow);
 
 	// Set the CPU thread to high priority
 	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);

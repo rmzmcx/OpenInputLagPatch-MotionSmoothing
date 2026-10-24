@@ -122,6 +122,7 @@
     <ClCompile Include="limiter.cpp" />
     <ClCompile Include="oilp_api.cpp" />
     <ClCompile Include="patch_util.cpp" />
+    <ClCompile Include="present_diag.cpp" />
     <ClCompile Include="sha256.c" />
     <ClCompile Include="games\touhou10.cpp" />
     <ClCompile Include="games\touhou6.cpp" />
@@ -163,6 +164,7 @@
     <ClInclude Include="limiter.h" />
     <ClInclude Include="overlay_font.h" />
     <ClInclude Include="patch_util.h" />
+    <ClInclude Include="present_diag.h" />
     <ClInclude Include="sha256.h" />
     <ClInclude Include="games\touhou10.h" />
     <ClInclude Include="games\touhou6.h" />
