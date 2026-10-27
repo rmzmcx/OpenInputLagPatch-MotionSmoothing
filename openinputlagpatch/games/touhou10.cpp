@@ -495,6 +495,9 @@ static void th10_bullets_undo() {
 	static void** const th10_player = (void**)0x00477834;
 	static const size_t th10_player_position = 0x3C0;        // 2 floats, in pixels
 	static const size_t th10_player_sprite = 0x329C;         // the handle of its own sprite
+	static const size_t th10_player_option_hold = 0x4308;    // 0..30; Marisa C is held below 30
+	static int* const th10_character = (int*)0x474C68;
+	static int* const th10_shot_type = (int*)0x474C6C;
 	// The animation the player object carries itself, drawn at +0x354/+0x358 (FUN_00426360 copies
 	// the logical position into it every frame, adding the play field's origin)
 	static const size_t th10_player_drawn = 0x354;
@@ -692,9 +695,23 @@ static void* th10_shot_object_sprite_object;
 static unsigned int th10_sprites_untracked;
 static unsigned int th10_body_sprites;
 static unsigned int th10_option_sprites_moved;
+static unsigned int th10_options_held;
 static unsigned int th10_shot_sprites_moved;
 static float th10_shot_movement;
 static float th10_player_movement;
+
+	// Marisa C freezes her options while focus is held and keeps them frozen for a
+	// short delay after focus is released. The player update identifies that option
+	// family as 3 * character + shot_type == 5. The same update resets +0x4308
+	// to zero on focus and only starts the smoothing interpolation once it reaches
+	// 30 (0x4251A3 and 0x425610). Measuring the transition frame as ordinary motion
+	// would therefore extrapolate one more step after the game has stopped them.
+	static bool th10_options_are_held(const void* player) {
+		const int character = *th10_character;
+		const int shot_type = *th10_shot_type;
+		const int hold = *(const int*)((const char*)player + th10_player_option_hold);
+		return 3 * character + shot_type == 5 && hold < 30;
+	}
 
 // Collects what the player owns this frame and works out what it moved by since the frame before.
 // This runs once per game frame, from the game's own present (see th10_present_hook).
@@ -703,6 +720,7 @@ static void th10_player_measure() {
 	th10_sprites_untracked = 0;
 	th10_body_sprites = 0;
 	th10_option_sprites_moved = 0;
+	th10_options_held = 0;
 	th10_shot_sprites_moved = 0;
 	th10_shots_in_flight = 0;
 
@@ -773,6 +791,7 @@ static void th10_player_measure() {
 	void* player = *th10_player;
 	if (player == nullptr)
 		return;
+	const bool options_held = th10_options_are_held(player);
 
 	for (unsigned int i = 0; i < th10_player_option_count; ++i) {
 		const char* slot = (const char*)player + th10_player_options + i * th10_player_option_size;
@@ -786,6 +805,11 @@ static void th10_player_measure() {
 		th10_measure(th10_option_motions[i],
 			(float)position[0] / th10_units_per_pixel, (float)position[1] / th10_units_per_pixel,
 			th10_max_step);
+		if (options_held) {
+			th10_option_motions[i].delta_x = 0.0f;
+			th10_option_motions[i].delta_y = 0.0f;
+			++th10_options_held;
+		}
 		for (int sprite = 0; sprite < 2; ++sprite) {
 			const unsigned int handle =
 				*(const unsigned int*)(slot + th10_player_option_sprite + sprite * 4);
@@ -1130,6 +1154,8 @@ static void th10_diag_dump() {
 		th10_lasers_in_play, th10_lasers_projected);
 	fprintf(file, "player: %u body, %u option and %u shot sprite(s) projected (last game frame, %u shot(s) in flight)\n",
 		th10_body_sprites, th10_option_sprites_moved, th10_shot_sprites_moved, th10_shots_in_flight);
+	fprintf(file, "player: %u option motion(s) zeroed by Marisa C's focus hold\n",
+		th10_options_held);
 	fprintf(file, "player: %u sprite(s) this frame had no movement record (a handle the game had just"
 		" taken the sprite away from; costs that sprite one frame)\n",
 		th10_sprites_untracked);
