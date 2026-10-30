@@ -883,6 +883,15 @@ static void th7_shots_undo() {
 // drawn as, is worked out in the update as well; the extras leave it where the frame put it, which
 // leaves the laser a fraction of a frame's growth short at most.
 //
+// ECL can turn a laser continuously with ECL_ADD_LASER_ANGLE, storing the result through
+// AddNormalizeAngle (opcode 85). Crossing +/- pi makes the raw frame difference almost 2 pi even
+// when the visible turn is small, the same problem fixed for th08. The measured angle step is
+// folded to the shortest arc and the projected angle is folded back to +/- pi.
+//
+// ECL can also set a laser angle outright (opcode 152) or aim it at the player (86), and set both
+// offsets at once (158). Those are scripted jumps rather than frame motion. A shortest-arc angle
+// step larger than 45 degrees, or any offset jump over the slot-reuse limit, is kept at zero.
+//
 // A slot the game hands to a different laser between two samples is not projected across the jump,
 // the same guard the bullets and the player's shots have.
 
@@ -899,6 +908,9 @@ static const unsigned int th7_laser_end_offset = 0x4AC;
 static const unsigned int th7_laser_fields = 6;
 
 static const float th7_lasers_max_step = 48.0f;
+static const float th7_pi = 3.14159265f;
+static const float th7_two_pi = 6.28318531f;
+static const float th7_lasers_max_angle_step = th7_pi / 4.0f;
 
 static unsigned char* th7_laser_slot(unsigned int index) {
     // g_BulletManager (0x0062F958) - the bullets are in the same manager, so that is the address
@@ -922,10 +934,12 @@ static float th7_lasers_step[th7_lasers_max][th7_laser_fields];
 static bool th7_lasers_used_last[th7_lasers_max];
 
 static unsigned int th7_lasers_in_play;
+static unsigned int th7_lasers_angle_jumps;
 
 // Called once a frame, from the frame's own draw, next to th7_shots_measure
 static void th7_lasers_measure() {
     th7_lasers_in_play = 0;
+    th7_lasers_angle_jumps = 0;
 
     for (unsigned int i = 0; i < th7_lasers_max; ++i) {
         const bool in_use = *(const unsigned int*)(th7_laser_slot(i) + th7_laser_in_use_offset) != 0;
@@ -941,9 +955,22 @@ static void th7_lasers_measure() {
             ++th7_lasers_in_play;
 
         for (unsigned int f = 0; f < th7_laser_fields; ++f) {
-            th7_lasers_step[i][f] = in_use && th7_lasers_used_last[i] && !reused
-                                        ? values[f] - th7_lasers_last[i][f]
-                                        : 0.0f;
+            float step = in_use && th7_lasers_used_last[i] && !reused
+                             ? values[f] - th7_lasers_last[i][f]
+                             : 0.0f;
+            if (f == 3) {
+                while (step > th7_pi)
+                    step -= th7_two_pi;
+                while (step < -th7_pi)
+                    step += th7_two_pi;
+                if (fabsf(step) > th7_lasers_max_angle_step) {
+                    step = 0.0f;
+                    ++th7_lasers_angle_jumps;
+                }
+            } else if (fabsf(step) > th7_lasers_max_step) {
+                step = 0.0f;
+            }
+            th7_lasers_step[i][f] = step;
             th7_lasers_last[i][f] = values[f];
         }
         th7_lasers_used_last[i] = in_use;
@@ -974,7 +1001,14 @@ static void th7_lasers_advance(float t) {
 
         for (unsigned int f = 0; f < th7_laser_fields; ++f) {
             th7_lasers_saved[th7_lasers_moved_count][f] = *fields[f];
-            *fields[f] = *fields[f] + th7_lasers_step[i][f] * t;
+            float value = *fields[f] + th7_lasers_step[i][f] * t;
+            if (f == 3) {
+                while (value > th7_pi)
+                    value -= th7_two_pi;
+                while (value < -th7_pi)
+                    value += th7_two_pi;
+            }
+            *fields[f] = value;
         }
         th7_lasers_moved[th7_lasers_moved_count] = i;
         ++th7_lasers_moved_count;
@@ -1144,8 +1178,9 @@ static void th7_diag_dump() {
             th7_shots_in_play, th7_shots_flying, th7_shots_exploding, th7_shots_projected);
     // The lasers (see their stage 1 comment above): their slots are in the same manager as the
     // bullets, and the flag that says a slot is in use is the game's own
-    fprintf(file, "lasers: %u in play, %u projected forward (last presentation)\n",
-            th7_lasers_in_play, th7_lasers_projected);
+    fprintf(file, "lasers: %u in play, %u projected forward, %u scripted angle jump(s) "
+                  "ignored (last presentation)\n",
+            th7_lasers_in_play, th7_lasers_projected, th7_lasers_angle_jumps);
     double presents = 0.0;
     double first = 0.0;
     double last = 0.0;
