@@ -70,8 +70,8 @@ When you are writing, please
    - tag 由用户自己打，历史上是 `v1.4`、`v1.5`、`V1.6`（大小写不一致）
    `.gitignore` 已经忽略 `Release/` 与 `build/`——**不要动 `.gitignore`**。
 2. `build/` 放所有中间文件（obj / tlog / iobj）与测试构建；编译器输出到这里，不要污染 `Release/`。
-   **发布 zip 里只有四个文件，平铺、不要多套一层目录**：`openinputlagpatch.dll`、
-   `oilp_loader.exe`、随包的 `openinputlagpatch.ini`、`UPDATES&USAGES_v<ver>.md`。
+   **发布 zip 里只有三个文件，平铺、不要多套一层目录**：`openinputlagpatch.dll`、
+   `oilp_loader.exe`、`UPDATES&USAGES_v<ver>.md`。
    `RELEASE_NOTES_v<ver>.md` **不放进去**（它只作为 release 正文，见第 3 条）。
    ini 从仓库根目录复制（`dist/` 里那份可能是旧的）。
 3. `RELEASE_NOTES_v<ver>.md`：写「v<ver> 改动 / 安装 / 配置 / 校验」，作为 GitHub release 的正文，
