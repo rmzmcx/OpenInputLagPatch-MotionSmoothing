@@ -85,9 +85,13 @@ When you are writing, please
    `Release/RELEASE_NOTES_v1.6.md`、`Release/UPDATES&USAGES_v1.6.md` 抄。
 5. commit 用**长说明**，写清「为什么」，不是 changelog。
    **每次修改后先等用户确认，确认之后再提交本地 commit。**
-6. `CHANGELOG.md` / `CHANGELOG.zh-CN.md`（中英两版）：一般等用户确认功能没问题之后才写。
+6. `CHANGELOG/CHANGELOG.en.md` / `CHANGELOG/CHANGELOG.zh-CN.md` / `CHANGELOG/CHANGELOG.ja.md`
+   （中英日三版）：一般等用户确认功能没问题之后才写。
    只记录已经在游戏里实测确认的改动，标题用 `- **一句话**（`commit`）`，正文分段讲「为什么」，
    结尾要写清还没做的部分。
+7. `CHANGELOG/Non-AI-CHANGELOG.zh-CN.md` 由人工书写。未经用户明确允许，AI 严禁改动。
+8. `CHANGELOG/Non-AI-CHANGELOG.en.md` 与 `CHANGELOG/Non-AI-CHANGELOG.ja.md` 由 AI 维护，只翻译
+   `CHANGELOG/Non-AI-CHANGELOG.zh-CN.md` 的内容。严禁增删、改写、纠正或补充原文；发现原文有疑问时先向用户确认。
 
 ## 构建 / 部署 / 实测流程
 

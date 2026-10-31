@@ -1,9 +1,10 @@
 # 已知未解决问题 / Known unresolved issues
 
-这里记录已经确认但还没有修复的问题。已经修复的内容看 `CHANGELOG.md` / `CHANGELOG.zh-CN.md`。
+这里记录已经确认但还没有修复的问题。已经修复的内容看
+`CHANGELOG/CHANGELOG.en.md` / `CHANGELOG/CHANGELOG.zh-CN.md` / `CHANGELOG/CHANGELOG.ja.md`。
 
 This file records confirmed bugs that are still open. Fixed changes are listed in
-`CHANGELOG.md` / `CHANGELOG.zh-CN.md`.
+`CHANGELOG/CHANGELOG.en.md` / `CHANGELOG/CHANGELOG.zh-CN.md` / `CHANGELOG/CHANGELOG.ja.md`.
 
 ## 高倍率补帧长时间游玩后补帧下滑 / Presentation rate drops at high interpolation targets
 

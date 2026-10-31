@@ -1,6 +1,6 @@
 # 更新日志
 
-[English](CHANGELOG.md) | 简体中文
+[English](CHANGELOG.en.md) | 简体中文 | [日本語](CHANGELOG.ja.md)
 
 本文件记录相对上游 [OpenInputLagPatch](https://github.com/khang06/OpenInputLagPatch) 的改动。
 
