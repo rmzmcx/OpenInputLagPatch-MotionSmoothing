@@ -105,6 +105,7 @@ When you are writing, please
 ## 逆向工具
 
 - 优先使用 IDA-MCP 工作流，并使用Ida-Sequential技能来操控IDA。
+- IDA目录：`D:\IDA_Pro_v8.3_Portable\ida.exe`
 - 如果 IDA-MCP 不可用，先说明阻塞点并询问我，不要静默改用别的数据库。
 - 只有在现有结论已写在文档里时，才可直接引用；任何新逆向都需要先询问并得到我的确认。
 - 辅助工具仍可用 dumpbin /DISASM；按助记符文本搜索，MSVC 可能把“基址+静态偏移”折成绝对地址。
