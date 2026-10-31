@@ -7,6 +7,38 @@ Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/O
 Only changes that have been tested in-game and confirmed working are listed here, so this file
 is also the record of what has actually been verified rather than just what was attempted.
 
+## 2026-11-01
+
+### Added
+
+- **Impossible Spell Card (th14.3) gets frame interpolation** (`61b5021`)
+
+  th14.3 has its own three scene frame functions and Present sites. The patch takes them over so an
+  extra presentation replays only the scene render and bypasses the original Present setup. Logic,
+  timers, input, replay state, screenshots, item cards and stage scripts stay on the game's own
+  frame. The extra pass saves and restores the scene viewport, transforms, selected D3D states,
+  texture, camera and sprite-queue position. Menu text record counts are restored before each extra
+  render, so text is not appended or drawn twice.
+
+  thprac combines its GUI update and draw in one EndScene hook in this game. Re-running that hook
+  advanced ImGui and made both the tool and game picture flicker. The patch now calls the verified
+  C9 DX9 backend in draw-only mode, after checking its RVAs and machine-code signatures. If a
+  different tool build is loaded, the overlay replay is skipped safely.
+
+  Enemy bullets are projected from the game's own in-play manager chain using the state-dependent
+  movement factors, the per-render update count, slowdown scale and pause flags. Player movement is
+  measured from the visible logical position. The eight option slots and the 256 player-fire
+  registry slots are resolved to their real sprite objects, with their drawn positions measured,
+  projected and restored. Line and infinite lasers are measured over their position, angle and
+  length, with angle differences folded across the +-pi boundary. LaserBeamInf has a stub draw and
+  LaserCurveInf remains excluded as required.
+
+  Checked in game at 180 presentations per second: dense enemy bullets, player movement, player
+  shots and straight lasers all move across the extra presentations. The final laser test recorded
+  92 of 92 active Line/Infinite lasers projected, three presentations per logic frame and about
+  180.6 presentations per second. Pause, menus, loading screens, stage changes, screenshots and
+  replay updates are outside the repeated path because only the scene render is replayed.
+
 ## 2026-10-31
 
 ### Added
