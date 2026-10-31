@@ -6,6 +6,7 @@
 #include <intrin.h>
 #include "window_mode.h"
 #include "config.h"
+#include "common.h"
 #include "games.h"
 #include "patch_util.h"
 
@@ -18,10 +19,13 @@ namespace {
 	typedef HANDLE(WINAPI* CreateMutexW_t)(LPSECURITY_ATTRIBUTES, BOOL, LPCWSTR);
 	typedef HWND(WINAPI* CreateWindowExA_t)(DWORD, LPCSTR, LPCSTR, DWORD, int, int, int, int,
 		HWND, HMENU, HINSTANCE, LPVOID);
+	typedef HWND(WINAPI* CreateWindowExW_t)(DWORD, LPCWSTR, LPCWSTR, DWORD, int, int, int, int,
+		HWND, HMENU, HINSTANCE, LPVOID);
 
 	CreateMutexA_t CreateMutexA_orig = nullptr;
 	CreateMutexW_t CreateMutexW_orig = nullptr;
 	CreateWindowExA_t CreateWindowExA_orig = nullptr;
+	CreateWindowExW_t CreateWindowExW_orig = nullptr;
 
 	WindowMode::Override override_mode = WindowMode::Override::None;
 	bool handled = false;
@@ -69,11 +73,8 @@ namespace {
 
 		// Same question vpatch asks. Answering no makes the game run in window mode even if
 		// its own config asks for fullscreen, and vice versa.
-		int answer = MessageBoxW(
-			NULL,
-			L"Launch the game in fullscreen mode?\n\n"
-			L"Yes: fullscreen, No: window mode",
-			L"OpenInputLagPatch",
+		int answer = show_ui_message(
+			UiMessage_AskFullscreen,
 			MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND
 		);
 		override_mode = answer == IDYES ? WindowMode::Override::Fullscreen : WindowMode::Override::Windowed;
@@ -108,6 +109,7 @@ namespace {
 	HWND WINAPI CreateWindowExA_hook(DWORD ex_style, LPCSTR class_name, LPCSTR window_name,
 	                                 DWORD style, int x, int y, int width, int height,
 	                                 HWND parent, HMENU menu, HINSTANCE instance, LPVOID param) {
+		show_queued_ui_messages();
 		++early_window_stats.create_calls;
 		void* return_address = _ReturnAddress();
 		early_window_stats.last_return_address = return_address;
@@ -131,9 +133,18 @@ namespace {
 		return window;
 	}
 
+	HWND WINAPI CreateWindowExW_hook(DWORD ex_style, LPCWSTR class_name, LPCWSTR window_name,
+	                                 DWORD style, int x, int y, int width, int height,
+	                                 HWND parent, HMENU menu, HINSTANCE instance, LPVOID param) {
+		show_queued_ui_messages();
+		return CreateWindowExW_orig(ex_style, class_name, window_name, style, x, y, width, height,
+			parent, menu, instance, param);
+	}
+
 	HANDLE WINAPI CreateMutexA_hook(LPSECURITY_ATTRIBUTES attributes, BOOL initial_owner, LPCSTR name) {
+		show_queued_ui_messages();
 		auto ret = CreateMutexA_orig(attributes, initial_owner, name);
-		if (is_game_mutex(name)) {
+		if (needs_window_mode(game) && is_game_mutex(name)) {
 			ask_window_mode();
 			// Harmless if the game loads its config later and overwrites this; it covers the
 			// games whose config is read before the mutex is created
@@ -143,8 +154,9 @@ namespace {
 	}
 
 	HANDLE WINAPI CreateMutexW_hook(LPSECURITY_ATTRIBUTES attributes, BOOL initial_owner, LPCWSTR name) {
+		show_queued_ui_messages();
 		auto ret = CreateMutexW_orig(attributes, initial_owner, name);
-		if (name != nullptr && _wcsnicmp(name, L"Touhou ", 7) == 0) {
+		if (needs_window_mode(game) && name != nullptr && _wcsnicmp(name, L"Touhou ", 7) == 0) {
 			ask_window_mode();
 			write_windowed_flag();
 		}
@@ -347,18 +359,18 @@ void WindowMode::Hook() {
 	hooked = true;
 
 	game = detect_game();
-	if (!needs_window_mode(game))
-		return;
 
-	// The games call CreateMutexA from their own code, so hooking the executable's import
-	// table is enough
+	// The games call these APIs from their own code, so hooking the executable's import tables
+	// is enough. They run after DllMain returns and therefore provide a safe point to show any
+	// startup message that could not run under the loader lock.
 	CreateMutexA_orig = (CreateMutexA_t)iat_hook(NULL, "kernel32.dll", "CreateMutexA", (void*)&CreateMutexA_hook);
 	CreateMutexW_orig = (CreateMutexW_t)iat_hook(NULL, "kernel32.dll", "CreateMutexW", (void*)&CreateMutexW_hook);
-	if (game == TouhouGame::Th95) {
-		CreateWindowExA_orig =
-			(CreateWindowExA_t)iat_hook(NULL, "user32.dll", "CreateWindowExA",
-				(void*)&CreateWindowExA_hook);
-	}
+	CreateWindowExA_orig =
+		(CreateWindowExA_t)iat_hook(NULL, "user32.dll", "CreateWindowExA",
+			(void*)&CreateWindowExA_hook);
+	CreateWindowExW_orig =
+		(CreateWindowExW_t)iat_hook(NULL, "user32.dll", "CreateWindowExW",
+			(void*)&CreateWindowExW_hook);
 }
 
 void WindowMode::AskIfNeeded() {

@@ -62,6 +62,7 @@
       <SDLCheck>true</SDLCheck>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <ConformanceMode>true</ConformanceMode>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <AdditionalIncludeDirectories>$(SolutionDir)openinputlagpatch;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>OILP_LOADER;WIN32;_WINDOWS;_CONSOLE;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
@@ -103,6 +104,7 @@
     <ClInclude Include="..\openinputlagpatch\common.h" />
     <ClInclude Include="..\openinputlagpatch\games.h" />
     <ClInclude Include="..\openinputlagpatch\games_def.h" />
+    <ClInclude Include="..\openinputlagpatch\games_name.h" />
     <ClInclude Include="..\openinputlagpatch\sha256.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

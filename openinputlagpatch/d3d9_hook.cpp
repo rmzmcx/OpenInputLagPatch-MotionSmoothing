@@ -134,7 +134,7 @@ UINT get_target_refresh_rate(D3DPRESENT_PARAMETERS* present_params) {
 			return max_refresh_rate;
 		}
 		default:
-			panic_msgbox(L"Invalid target refresh rate %d", Config::FullscreenRefreshRate);
+			panic_msgbox(UiMessage_InvalidRefreshRate, Config::FullscreenRefreshRate);
 	}
 }
 
@@ -203,14 +203,14 @@ HRESULT __stdcall Reset_hook(IDirect3DDevice9* self, D3DPRESENT_PARAMETERS* pPre
 					// Device can be reset!
 					ret = Reset_orig(self, pPresentationParameters);
 					if (FAILED(ret))
-						panic_msgbox(L"Reset failed!\nCode: 0x%x", ret);
+						panic_msgbox(UiMessage_DeviceResetFailed, ret);
 					break;
 				case D3D_OK:
 					// Shouldn't be possible but should be gracefully handled anyway
 					break;
 				default:
 					// Something definitely went wrong
-					panic_msgbox(L"TestCooperativeLevel failed!\nCode: 0x%x", ret);
+					panic_msgbox(UiMessage_TestCooperativeLevelFailed, ret);
 				}
 			}
 		} else {
@@ -274,7 +274,7 @@ HRESULT __stdcall CreateDevice_hook(IDirect3D9* self, UINT Adapter, D3DDEVTYPE D
 			res = self_ex->CreateDeviceEx(Adapter, DeviceType, hFocusWindow, BehaviorFlags, pPresentationParameters, NULL, (IDirect3DDevice9Ex**)&device);
 		}
 		if (FAILED(res))
-			panic_msgbox(L"CreateDeviceEx failed!\nCode: 0x%x", res);
+			panic_msgbox(UiMessage_CreateDeviceExFailed, res);
 
 		auto device_ex = (IDirect3DDevice9Ex*)device;
 
@@ -290,7 +290,7 @@ HRESULT __stdcall CreateDevice_hook(IDirect3D9* self, UINT Adapter, D3DDEVTYPE D
 	} else {
 		res = CreateDevice_orig(self, Adapter, DeviceType, hFocusWindow, BehaviorFlags, pPresentationParameters, &device);
 		if (FAILED(res))
-			panic_msgbox(L"CreateDevice failed!\nCode: 0x%x", res);
+			panic_msgbox(UiMessage_CreateDeviceFailed, res);
 	}
 
 	*ppReturnedDeviceInterface = device;
@@ -417,18 +417,18 @@ IDirect3D9* WINAPI Direct3DCreate9_hook(UINT SDKVersion) {
 	if (Config::D3D9Ex) {
 		auto create_ex = (decltype(&Direct3DCreate9Ex))get_d3d9_function("Direct3DCreate9Ex");
 		if (!create_ex)
-			panic_msgbox(L"Couldn't find Direct3DCreate9Ex!");
+			panic_msgbox(UiMessage_Direct3DCreate9ExNotFound);
 		auto create_ret = create_ex(D3D_SDK_VERSION, (IDirect3D9Ex**)&d3d9);
 		if (FAILED(create_ret) || d3d9 == nullptr)
-			panic_msgbox(L"Direct3DCreate9Ex failed!\nCode: 0x%x", create_ret);
+			panic_msgbox(UiMessage_Direct3DCreate9ExFailed, create_ret);
 		result = wrap_with_d3d9_proxy(d3d9, SDKVersion);
 	} else {
 		auto create = (decltype(&Direct3DCreate9))get_d3d9_function("Direct3DCreate9");
 		if (!create)
-			panic_msgbox(L"Couldn't find Direct3DCreate9!");
+			panic_msgbox(UiMessage_Direct3DCreate9NotFound);
 		d3d9 = create(D3D_SDK_VERSION);
 		if (d3d9 == nullptr)
-			panic_msgbox(L"Direct3DCreate9 failed!");
+			panic_msgbox(UiMessage_Direct3DCreate9Failed);
 		result = d3d9;
 	}
 

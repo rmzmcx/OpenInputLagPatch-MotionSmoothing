@@ -7,6 +7,7 @@
 #include "common.h"
 #include "games.h"
 #include "games_def.h"
+#include "games_name.h"
 
 // Try to detect the current game
 static TouhouGame detect_game_uncached() {
@@ -18,14 +19,24 @@ static TouhouGame detect_game_uncached() {
 	// Get the path to the game's executable
 	wchar_t game_path[1024] = {};
 	if (!GetModuleFileName(NULL, game_path, 1024)) {
-		MessageBox(NULL, L"Unable to get the game's path.", L"OpenInputLagPatch", MB_ICONERROR);
+		queue_ui_message(UiMessage_GamePathUnavailable, MB_ICONERROR, true);
 		return TouhouGame::Unknown;
 	}
 
-	// Hash it
+	GameNameMatch filename_match = match_game_from_executable_name(game_path);
+	TouhouGame filename_game = filename_match.game;
+
+	// Hash it first. A recognized hash is authoritative and needs no warning.
 	char hash_str[SHA256_BLOCK_SIZE * 2 + 1] = {};
 	if (!sha256_file(game_path, hash_str)) {
-		MessageBox(NULL, L"Failed to hash the game.", L"OpenInputLagPatch", MB_ICONERROR);
+		if (filename_game != TouhouGame::Unknown) {
+			printf("Could not hash the game; executable name suggests %s\n",
+				game_to_string[(size_t)filename_game]);
+			queue_ui_message(UiMessage_NonOriginalGame, MB_OK | MB_ICONWARNING, false,
+				filename_match.display_name);
+			return filename_game;
+		}
+		queue_ui_message(UiMessage_GameHashFailed, MB_ICONERROR, true);
 		return TouhouGame::Unknown;
 	}
 	printf("Game hash: %s\n", hash_str);
@@ -40,14 +51,17 @@ static TouhouGame detect_game_uncached() {
 		}
 	}
 
-	// Couldn't find it
-	MessageBox(
-		NULL,
-		L"Failed to detect the game. Please make sure that the game you're trying to play is supported.\n"
-		L"If you believe this is a mistake, please open an issue on Github.",
-		L"OpenInputLagPatch",
-		MB_ICONERROR
-	);
+	// Filename fallback keeps modified or repacked variants usable, but their patch layout is no
+	// longer backed by the hash of the exact executable.
+	if (filename_game != TouhouGame::Unknown) {
+		printf("Unrecognized game hash; executable name suggests %s\n",
+			game_to_string[(size_t)filename_game]);
+		queue_ui_message(UiMessage_NonOriginalGame, MB_OK | MB_ICONWARNING, false,
+			filename_match.display_name);
+		return filename_game;
+	}
+
+	queue_ui_message(UiMessage_UnsupportedGame, MB_ICONERROR, true);
 	return TouhouGame::Unknown;
 }
 

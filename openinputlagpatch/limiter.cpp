@@ -207,7 +207,7 @@ inline void half_spin_wait(__int64 target) {
 		timer_freq_scale = 10000000.0 / (double)freq.QuadPart;
 		waitable_timer = CreateWaitableTimer(NULL, TRUE, NULL);
 		if (waitable_timer == NULL)
-			panic_msgbox(L"Failed to create waitable timer. GLE: 0x%x", GetLastError());
+			panic_msgbox(UiMessage_WaitableTimerFailed, GetLastError());
 		half_spin_wait_inited = true;
 	}
 
@@ -339,7 +339,7 @@ LARGE_INTEGER Limiter::FrameWork() {
 // limiter is handed what the game's clock says is left of the frame and waits exactly that.
 void Limiter::TickUntil(double seconds) {
 	if (!initialized)
-		panic_msgbox(L"Tried to tick the limiter before initialization.");
+		panic_msgbox(UiMessage_LimiterNotInitialized);
 
 	LARGE_INTEGER now;
 	QueryPerformanceCounter(&now);
@@ -396,7 +396,7 @@ void Limiter::TickUntil(double seconds) {
 // Performs the actual frame limiting
 void Limiter::Tick() {
 	if (!initialized)
-		panic_msgbox(L"Tried to tick the limiter before initialization.");
+		panic_msgbox(UiMessage_LimiterNotInitialized);
 
 	// One frame of the game is about to run, which is what the measurement the games' own frame rate
 	// counters are replaced with counts (see CountGameFrame). This is the one place that is reached

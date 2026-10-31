@@ -60,6 +60,7 @@
       <SDLCheck>true</SDLCheck>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <ConformanceMode>true</ConformanceMode>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>WIN32;OPENINPUTLAGPATCH_EXPORTS;_WINDOWS;_USRDLL;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
@@ -145,6 +146,7 @@
     <ClInclude Include="d3dx9_hook.h" />
     <ClInclude Include="d3d9_hook.h" />
     <ClInclude Include="games.h" />
+    <ClInclude Include="games_name.h" />
     <ClInclude Include="games\touhou11.h" />
     <ClInclude Include="games\touhou12.h" />
     <ClInclude Include="games\touhou125.h" />

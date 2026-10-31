@@ -5,6 +5,7 @@
 #include "sha256.h"
 #include "games.h"
 #include "games_def.h"
+#include "games_name.h"
 #include "common.h"
 
 TouhouGame detect_game(wchar_t* game_path) {
@@ -23,8 +24,9 @@ TouhouGame detect_game(wchar_t* game_path) {
 		}
 	}
 
-	// Couldn't find it
-	return TouhouGame::Unknown;
+	// Modified and repacked executables no longer match a known hash. Their executable name can
+	// still identify the game layout; the injected DLL shows the non-original-version warning.
+	return game_from_executable_name(game_path);
 }
 
 // Steam App IDs of games whose Steam release is protected by SteamStub
@@ -155,6 +157,7 @@ int wmain() {
 	std::wstring err;
 	if (hFind == INVALID_HANDLE_VALUE) {
 		puts("No valid games found");
+		show_ui_message(UiMessage_UnsupportedGame, MB_ICONERROR);
 		return 1;
 	}
 	do {
@@ -167,6 +170,7 @@ int wmain() {
 		return run_game_and_inject(games[0].path.c_str(), games[0].game);
 	else if (games.size() == 0) {
 		puts("No valid games found");
+		show_ui_message(UiMessage_UnsupportedGame, MB_ICONERROR);
 		return 1;
 	}
 	for (size_t i = 0; i < games.size(); i++) {

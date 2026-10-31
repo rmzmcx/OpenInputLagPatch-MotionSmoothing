@@ -197,14 +197,14 @@ void D3D9Overlay::SetupResources() {
     IDirect3DTexture9* temp_tex;
     auto ret = d3d9_device->CreateTexture(FONT_ATLAS_WIDTH_P2, FONT_ATLAS_HEIGHT_P2, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM, &temp_tex, NULL);
     if (FAILED(ret))
-        panic_msgbox(L"Temporary font texture CreateTexture failed! Error: 0x%x", ret);
+        panic_msgbox(UiMessage_TemporaryFontTextureCreateFailed, ret);
 
     // Map the texture into memory
     D3DLOCKED_RECT locked_rect;
     RECT target_rect = { 0, 0, FONT_ATLAS_WIDTH, FONT_ATLAS_HEIGHT };
     ret = temp_tex->LockRect(0, &locked_rect, &target_rect, 0);
     if (FAILED(ret))
-        panic_msgbox(L"Temporary font texture LockRect failed! Error: 0x%x", ret);
+        panic_msgbox(UiMessage_TemporaryFontTextureLockFailed, ret);
 
     // Decompress and load the font atlas
     size_t cur_pos = 0;
@@ -226,7 +226,7 @@ void D3D9Overlay::SetupResources() {
     // Create the final texture and copy the temporary texture to it
     ret = d3d9_device->CreateTexture(FONT_ATLAS_WIDTH_P2, FONT_ATLAS_HEIGHT_P2, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &d3d9_font_tex, NULL);
     if (FAILED(ret))
-        panic_msgbox(L"Font texture CreateTexture failed! Error: 0x%x", ret);
+        panic_msgbox(UiMessage_FontTextureCreateFailed, ret);
     d3d9_device->UpdateTexture(temp_tex, d3d9_font_tex);
 
     // Clean up
@@ -239,11 +239,11 @@ void D3D9Overlay::SetupResources() {
     ret = d3d9_device->CreateVertexBuffer((OVERLAY_MAX_CHARS + 1) * 4 * sizeof(CUSTOMVERTEX), D3DUSAGE_DYNAMIC,
         D3DFVF_CUSTOMVERTEX, D3DPOOL_DEFAULT, &d3d9_vertex_buf, NULL);
     if (FAILED(ret))
-        panic_msgbox(L"CreateVertexBuffer failed! Error: 0x%x", ret);
+        panic_msgbox(UiMessage_VertexBufferCreateFailed, ret);
     ret = d3d9_device->CreateIndexBuffer((OVERLAY_MAX_CHARS + 1) * 2, D3DUSAGE_DYNAMIC, D3DFMT_INDEX16, D3DPOOL_DEFAULT,
         &d3d9_index_buf, NULL);
     if (FAILED(ret))
-        panic_msgbox(L"CreateIndexBuffer failed! Error: 0x%x", ret);
+        panic_msgbox(UiMessage_IndexBufferCreateFailed, ret);
 }
 
 // Sets up the font atlas UV lookup table
@@ -265,7 +265,7 @@ int D3D9Overlay::UpdateBuffers(char* text, D3DCOLOR color, float x_offset) {
     // Get the length of the string
     auto text_len = strlen(text);
     if (text_len > OVERLAY_MAX_CHARS)
-        panic_msgbox(L"Tried to draw too many characters");
+        panic_msgbox(UiMessage_TooManyCharacters);
 
     // Lock the buffers for writing
     CUSTOMVERTEX* vertex_data;

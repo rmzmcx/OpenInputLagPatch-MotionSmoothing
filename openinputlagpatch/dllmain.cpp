@@ -33,10 +33,7 @@ typedef struct _LDR_DLL_LOADED_NOTIFICATION_DATA
 
 // MessageBox is broken in dll_load_callback, so vpatch's entrypoint is redirected to this instead
 void vpatch_abort() {
-    panic_msgbox(
-        L"vpatch and OpenInputLagPatch are incompatible.\n"
-        L"Stop running the game via vpatch.exe or uninstall OpenInputLagPatch by deleting dinput8.dll."
-    );
+    panic_msgbox(UiMessage_VpatchIncompatible);
 }
 
 VOID CALLBACK dll_load_callback(ULONG NotificationReason, PLDR_DLL_LOADED_NOTIFICATION_DATA NotificationData, PVOID Context) {
@@ -222,7 +219,7 @@ BOOL WINAPI QueryPerformanceCounter_hook(LARGE_INTEGER* count) {
 void install_patches() {
     auto game = detect_game();
     if (game == TouhouGame::Unknown)
-        exit(1);
+        return;
     else if (game == TouhouGame::Custom)
         return;
 
@@ -246,7 +243,7 @@ void install_game_patches(TouhouGame game) {
 
     auto patch_function = get_patch_function(game);
     if (!patch_function)
-        panic_msgbox(L"The game was detected, but the per-game patch function couldn't be found.");
+        panic_msgbox(UiMessage_MissingPatchFunction);
     patch_function();
 }
 
@@ -259,15 +256,8 @@ void patcher_main() {
     QueryPerformanceCounter((LARGE_INTEGER*)&start);
 
     Config::Load();
-    if (Config::DebugWait) {
-        MessageBoxW(
-            NULL,
-            L"Waiting...\n"
-            L"If you don't want to see this, set DebugWait to 0 in the config.",
-            L"OpenInputLagPatch",
-            0
-        );
-    }
+    if (Config::DebugWait)
+        queue_ui_message(UiMessage_DebugWait, 0, false);
     if (Config::DebugConsole)
         create_console();
     WindowMode::Hook();
