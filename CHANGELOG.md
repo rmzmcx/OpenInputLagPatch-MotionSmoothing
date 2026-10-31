@@ -7,6 +7,101 @@ Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/O
 Only changes that have been tested in-game and confirmed working are listed here, so this file
 is also the record of what has actually been verified rather than just what was attempted.
 
+## 2026-10-31
+
+### Added
+
+- **100th Black Market (th18.5) gets frame interpolation** (`ce01d17`)
+
+  th18.5 uses the th18 family's task and render model, but its player fire is created from ability
+  cards at runtime. The main-shot and companion sprite handles, and the visible card-fire objects,
+  change with the active loadout, so th18's fixed shot offsets cannot be reused. The patch now takes
+  over the render and present points in both frame functions. The game's own frame keeps logic,
+  timers, input, screenshots, replay state and card updates to itself; an extra presentation replays
+  only the render chain and restores menu-text counts, stage-transition fields, viewport and sprite
+  placement. Fade creation is blocked while that render walk is repeated.
+
+  Enemy bullets move from their six manager lists using the state-dependent velocity factor. The
+  player's visible logical position drives its embedded animation object. Straight and infinite
+  lasers are measured per frame over position, angle and length. Card firepower first covers the
+  ability manager's main and companion sprites, then includes drawn sprite objects that actually
+  moved that frame. These records are deduplicated against the bullet, player and laser paths so no
+  object is advanced twice. Checked at 180 presentations per second: enemy bullets, the player,
+  the special main-shot/card firepower and straight lasers all move across extra presentations,
+  while pause, menu text, loading black screens and stage changes stay on the game's logic frame.
+
+- **Presentation diagnostics and `U` export to `oilp_display_diag.txt`** (`d810ebb`)
+
+  The diagnostic records monitor and DWM refresh rates, the effective D3D8/D3D9 presentation
+  parameters, the last 600 present intervals and how long Present blocks. This separates frames
+  the patch never submitted from frames it submitted but could not show at the requested time.
+
+### Fixed
+
+- **Startup messages are localized and modified games remain identifiable** (`f824ac9`)
+
+  Every startup and D3D initialization message now chooses Chinese or English from the Windows
+  display language or system locale. Executable hashes remain authoritative. When a hash is
+  unknown, the filename is scanned for a supported `th` plus number token, so renamed variants such
+  as `th15_n.exe` can still start; compressed work numbers are mapped back to names such as th09.5,
+  th12.8 and th18.5 before showing the non-original warning.
+
+  Startup warnings used to run inside `DllMain` while the loader lock was held, where nested
+  message loops could occasionally leave the dialog unresponsive. Messages are now queued and shown
+  from the first game-thread `CreateMutex` or `CreateWindowEx` call. Unsupported games exit only
+  after the user acknowledges the error.
+
+- **The present-rate overlay no longer shows `0.0 fps` before a measurement exists** (`ce01d17`)
+
+  The D3D8 and D3D9 overlays used to draw `0.0 fps` during the first half-second sample, or for a
+  game that never counted a presentation. The line is now drawn only after a real measurement above
+  zero exists. th18.5 also uses the same bottom-left overlay layout as the other interpolated games.
+
+## 2026-10-30
+
+### Fixed
+
+- **Perfect Cherry Blossom's rotating lasers use the shortest arc and reject scripted jumps**
+  (`95a79e3`)
+
+  th07 stores ECL-updated laser angles wrapped to the interval from -pi to pi. Crossing that
+  boundary made the raw frame difference almost 2 pi, so an extra presentation swept a small turn
+  across the screen and then snapped back. The measured step is now folded to the shortest arc and
+  the projected angle is wrapped back to the same interval. An ECL assignment that sets the angle
+  outright or aims the laser at the player is a scripted state change, not continuous motion, so
+  angle steps above 45 degrees are no longer interpolated. Checked in game on Great Funeral
+  Ghostly Wheel Concerto Grosso Monster and Resurrection Butterfly -80 Percent Reflowering.
+
+## 2026-10-27
+
+### Fixed
+
+- **Marisa C's options stay put while focus hold freezes them in Mountain of Faith** (`37c60a6`)
+
+  Marisa C freezes her options while focus is held and keeps them frozen briefly after release,
+  until the return movement begins. The old code still projected the held frame by the movement
+  measured before the freeze, which made the options jump forward when focus was toggled quickly.
+  Only that held frame's measured option step is now treated as zero; fast movement and the delayed
+  return remain interpolated.
+
+## 2026-10-24
+
+### Changed
+
+- **Fullscreen refresh rate defaults back to the game and display's normal selection** (`d810ebb`)
+
+  `FullscreenRefreshRate` no longer defaults to forcing the highest refresh rate. The old default
+  could force a game down to 60 Hz when its chosen fullscreen resolution had no suitable multiple of
+  60. The default is now `0`; an explicit ini value still overrides the game's selection.
+
+### Documentation
+
+- **The complete `GameOverride` table is documented** (`2b7968b`)
+
+  The Chinese, English and Japanese READMEs now list every value, keep hash autodetection as the
+  recommended mode, and explain that a wrong override can apply a game's addresses to an unrelated
+  executable. The Shoot the Bullet example now describes forcing the patch onto a modified build.
+
 ## 2026-10-23
 
 ### Added
