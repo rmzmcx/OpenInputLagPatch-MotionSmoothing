@@ -327,7 +327,9 @@ void D3D8Overlay::Draw() {
     // The frame rate the frames are actually presented at, right after that line (see overlay.h).
     // The D3D8 overlay's text always sits in the bottom left corner, so the rate goes next to it -
     // which is also where the games that use this (th08 and up) have room for it.
-    if (overlay_present_rate_enabled()) {
+    // The first completed measurement starts after half a second. Until then the value is still
+    // zero, so leave the line out rather than showing a temporary "0.0 fps".
+    if (overlay_present_rate_enabled() && overlay_present_rate() > 0.0) {
         char rate_text[32];
         sprintf_s(rate_text, "%.1f fps", overlay_present_rate());
         // Right after the render time line, but at the left edge itself when that line isn't drawn

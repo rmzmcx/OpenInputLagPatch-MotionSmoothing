@@ -388,7 +388,9 @@ void D3D9Overlay::Draw() {
     }
 
     // The frame rate the frames are actually presented at, along the bottom of the screen
-    if (present_rate_shown) {
+    // A game without interpolation never marks an extra presentation, so the measured rate stays
+    // zero. Keep the line hidden until a real measurement exists instead of drawing "0.0 fps".
+    if (present_rate_shown && present_rate > 0.0) {
         char rate_text[32];
         sprintf_s(rate_text, "%.1f fps", present_rate);
         // Right after the line above, at the right edge of the game's own picture, or at the right
