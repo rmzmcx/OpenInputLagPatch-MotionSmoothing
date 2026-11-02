@@ -2,6 +2,8 @@
 
 [简体中文](Non-AI-CHANGELOG.zh-CN.md) | English | [日本語](Non-AI-CHANGELOG.ja.md)
 
+## v1.13
+- Fixed the bug where Wily Beast and Weakest Creature (th17) could crash when entering the next stage with interpolation enabled (affected versions: v1.11-v1.12; players using those versions should update)
 ## v1.12
 - Added frame interpolation support for Impossible Spell Card and 100th Black Market
 - Fixed interpolation jumps in some lasers in Perfect Cherry Blossom

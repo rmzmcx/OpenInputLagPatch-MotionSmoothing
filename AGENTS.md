@@ -92,6 +92,9 @@ When you are writing, please
 7. `CHANGELOG/Non-AI-CHANGELOG.zh-CN.md` 由人工书写。未经用户明确允许，AI 严禁改动。
 8. `CHANGELOG/Non-AI-CHANGELOG.en.md` 与 `CHANGELOG/Non-AI-CHANGELOG.ja.md` 由 AI 维护，只翻译
    `CHANGELOG/Non-AI-CHANGELOG.zh-CN.md` 的内容。严禁增删、改写、纠正或补充原文；发现原文有疑问时先向用户确认。
+9. `RELEASE_NOTES_v<ver>.md` 与 `UPDATES&USAGES_v<ver>.md` 的「改动 / 更新」内容必须取自
+   `CHANGELOG/Non-AI-CHANGELOG.zh-CN.md` 的对应版本。AI 不自行补写更新内容；若人工版缺少该版本记录，
+   先在对话中列出本次更新内容，等用户写入人工版后再继续生成发布文档。安装、配置、校验等其它发布信息可单独维护。
 
 ## 构建 / 部署 / 实测流程
 
