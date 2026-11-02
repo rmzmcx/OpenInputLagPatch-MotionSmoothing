@@ -185,10 +185,19 @@ static ExtraFloatState th17_shake = { (float*)0x004B6198, 2 };
 // more than one fade for the same frame. The fade object itself is fine: its own timer runs on the
 // update chain, once a frame.
 //
-// As in th13-th16 the fade is built inline, so the allocation call at 0x40A77D is guarded:
-// returning nullptr there makes the callback take its own failure path (0x40A890) and skip the
-// fade, while the rest of the draw runs normally.
-static const size_t th17_stage_size = 0x67B8;
+// The allocation call at 0x40A77D is guarded. Unlike th13-th16, the next instruction dereferences
+// the result without checking it, so returning nullptr there crashes at 0x40A789. During an extra
+// pass the wrapper instead drops the call's return address and size argument, then jumps to the
+// callback's own failure path at 0x40A890.
+//
+// Only the transition fields are put back, not the whole object: restoring the object's pointers
+// puts back handles to objects the draw pass may have replaced, which crashes when the next stage
+// loads. The two ranges are the flag/timer block at +0x6780 and the fade colour/alpha byte at
+// +0x33B0.
+static const size_t th17_stage_ranges[][2] = { { 0x6780, 0x38 }, { 0x33B0, 0x10 } };
+static const size_t th17_stage_range_count =
+	sizeof(th17_stage_ranges) / sizeof(th17_stage_ranges[0]);
+static const size_t th17_stage_saved_size = 0x48;
 static void** const th17_stage_slots[2] = { (void**)0x004B767C, (void**)0x004B7680 };
 static unsigned char* th17_stage_saved[2];
 static bool th17_stage_saved_valid[2];
@@ -201,10 +210,15 @@ static void th17_stage_save() {
 		if (stage == nullptr)
 			continue;
 		if (th17_stage_saved[i] == nullptr)
-			th17_stage_saved[i] = (unsigned char*)malloc(th17_stage_size);
+			th17_stage_saved[i] = (unsigned char*)malloc(th17_stage_saved_size);
 		if (th17_stage_saved[i] == nullptr)
 			continue;
-		memcpy(th17_stage_saved[i], stage, th17_stage_size);
+		size_t offset = 0;
+		for (size_t r = 0; r < th17_stage_range_count; ++r) {
+			memcpy(th17_stage_saved[i] + offset, (char*)stage + th17_stage_ranges[r][0],
+				th17_stage_ranges[r][1]);
+			offset += th17_stage_ranges[r][1];
+		}
 		th17_stage_saved_valid[i] = true;
 	}
 }
@@ -214,17 +228,40 @@ static void th17_stage_restore() {
 		void* stage = *th17_stage_slots[i];
 		if (!th17_stage_saved_valid[i] || stage == nullptr)
 			continue;
-		memcpy(stage, th17_stage_saved[i], th17_stage_size);
+		size_t offset = 0;
+		for (size_t r = 0; r < th17_stage_range_count; ++r) {
+			memcpy((char*)stage + th17_stage_ranges[r][0], th17_stage_saved[i] + offset,
+				th17_stage_ranges[r][1]);
+			offset += th17_stage_ranges[r][1];
+		}
 		th17_stage_saved_valid[i] = false;
 	}
 }
 
 static void* (__cdecl* th17_operator_new)(size_t size) = (void*(__cdecl*)(size_t))0x0047B250;
 
-static void* __cdecl th17_fade_alloc_guard(size_t size) {
-	if (th17_in_extra)
-		return nullptr;
-	return th17_operator_new(size);
+static __declspec(noinline) bool th17_is_extra() {
+	return th17_in_extra;
+}
+
+static void __declspec(naked) th17_fade_alloc_hook() {
+	__asm {
+		push eax
+		push ecx
+		push edx
+		call th17_is_extra
+		test al, al
+		pop edx
+		pop ecx
+		pop eax
+		jne skip
+		mov eax, dword ptr [th17_operator_new]
+		jmp eax
+	skip:
+		add esp, 8
+		mov ecx, 0040A890h
+		jmp ecx
+	}
 }
 
 static void th17_render_hook() {
@@ -1163,11 +1200,11 @@ void th17_install_patches() {
 		}
 
 		// The stage's draw callback allocates the stage clear fade at 0x40A77D; an extra
-		// presentation must skip that (see th17_fade_alloc_guard)
+		// presentation must skip that (see th17_fade_alloc_hook)
 		BYTE* fade_call = (BYTE*)0x0040A77D;
 		if (fade_call[0] == 0xE8 &&
 			(DWORD)0x0040A782 + *(DWORD*)(fade_call + 1) == 0x0047B250) {
-			patch_call(0x0040A77D, (void*)th17_fade_alloc_guard);
+			patch_call(0x0040A77D, (void*)th17_fade_alloc_hook);
 		} else {
 			printf("th17 fade allocation at 0x40A77D doesn't look like the known one, skipping!\n");
 		}
