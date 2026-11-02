@@ -7,6 +7,20 @@ Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/O
 Only changes that have been tested in-game and confirmed working are listed here, so this file
 is also the record of what has actually been verified rather than just what was attempted.
 
+## 2026-11-02
+
+### Fixed
+
+- **Wily Beast and Weakest Creature (th17) no longer crashes on stage transitions** (`2b8447f`)
+
+  The transition guard in v1.11 and v1.12 made the fade allocation return null during an extra
+  presentation, while th17 dereferenced that result directly at `0x40A789`. Every normal
+  stage-clear transition to the next stage could crash with `0xC0000005`. Extra passes now jump to
+  the game's own failure path, while normal frames still call the original `operator new`. The
+  stage object now saves and restores only the transition fields, preventing pointers replaced by
+  the draw pass from being rolled back to stale handles for the next stage. Several consecutive
+  transitions have been completed successfully in game.
+
 ## 2026-11-01
 
 ### Added
