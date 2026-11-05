@@ -702,7 +702,10 @@ static void th7_bullets_undo() {
 //
 // A position that jumped further in one frame than anything can move is not projected across that
 // jump: an explosion's slot in the shot array can be given to a shot that was just spawned, which
-// the once-a-frame sampling cannot see, and a shot's own update can replace it the same way.
+// the once-a-frame sampling cannot see, and a shot's own update can replace it the same way. The
+// distance alone is not enough near the top of the play field, where an expired shot and its
+// replacement can be less than 48 pixels apart. Player::__shoot_bullets runs after UpdateShots, so
+// recording its free slots on entry identifies same-frame reuse exactly.
 
 static const unsigned int th7_player_pos_offset = 0x930;                 // Float3
 static const unsigned int th7_player_options_offset = 0x9B4;             // Float3[2]
@@ -747,6 +750,7 @@ static float th7_player_pos[3];              // where the player's own position 
 static Th7Step th7_player_step;
 static Th7Step th7_option_steps[2];
 static Th7Step th7_shot_steps[th7_player_bullets_max];
+static bool th7_shot_free_before_spawn[th7_player_bullets_max];
 
 // What the last extra presentation found, for the diagnostics (see th7_diag_dump)
 static unsigned int th7_shots_in_play;
@@ -767,6 +771,17 @@ static void th7_player_measure() {
                  (const float*)(th7_player + th7_player_options_offset + option * 12), 0.0f);
 }
 
+// Called immediately before Player::__shoot_bullets (0x43D880), after Player::UpdateShots. A slot
+// free at this point and occupied at the frame's draw has just been reused by a new shot.
+static void th7_shots_note_spawn_pass() {
+    for (unsigned int i = 0; i < th7_player_bullets_max; ++i) {
+        const unsigned char* shot =
+            th7_player + th7_player_bullets_offset + (size_t)i * th7_player_bullet_size;
+        th7_shot_free_before_spawn[i] =
+            *(const short*)(shot + th7_player_bullet_state_offset) == 0;
+    }
+}
+
 static void th7_shots_measure() {
     th7_shots_in_play = 0;
     th7_shots_flying = 0;
@@ -775,6 +790,8 @@ static void th7_shots_measure() {
     for (unsigned int i = 0; i < th7_player_bullets_max; ++i) {
         unsigned char* shot = th7_player + th7_player_bullets_offset + (size_t)i * th7_player_bullet_size;
         const int state = *(const short*)(shot + th7_player_bullet_state_offset);
+        const bool spawned_this_frame = th7_shot_free_before_spawn[i];
+        th7_shot_free_before_spawn[i] = false;
 
         // A slot that is not in use is forgotten rather than measured across what was there before
         // it: the shot that gets it next has not moved at all yet (see the comment above)
@@ -791,7 +808,16 @@ static void th7_shots_measure() {
 
         th7_step(&th7_shot_steps[i], (const float*)(shot + th7_player_bullet_pos_offset),
                  th7_shots_max_step);
+        if (spawned_this_frame)
+            th7_shot_steps[i].step[0] = th7_shot_steps[i].step[1] = th7_shot_steps[i].step[2] = 0.0f;
     }
+}
+
+typedef int (__thiscall* Th7ShootBullets)(void*);
+
+static int __fastcall th7_shoot_bullets_hook(void* player) {
+    th7_shots_note_spawn_pass();
+    return ((Th7ShootBullets)0x0043D880)(player);
 }
 
 // What the last extra presentation moved, so it can be put back
@@ -1354,6 +1380,15 @@ static void th7_present_hook() {
 
 // Takes over the two present calls the frame ends with
 static void th7_install_interpolation() {
+    {
+        // call 0x43D880, Player::__shoot_bullets (0x442091), immediately after UpdateShots.
+        BYTE* site = (BYTE*)0x00442091;
+        if (site[0] == 0xE8 && *(DWORD*)(site + 1) == 0x0043D880 - (0x00442091 + 5)) {
+            patch_call(0x00442091, th7_shoot_bullets_hook);
+        } else {
+            printf("th07 player shot spawn at 0x442091 doesn't look like a known one, skipping!\n");
+        }
+    }
     {
         // call 0x4345C0, GameWindow::Present (0x434A0E) - the exit the catch-up loop takes, which
         // then goes round to draw again (taken when the game's own frame skip setting is on)

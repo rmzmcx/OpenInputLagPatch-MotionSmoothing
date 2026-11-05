@@ -534,9 +534,11 @@ static void th6_bullets_undo() {
 //
 // A shot's drawn position that jumped further in one frame than anything can move is not projected
 // across that jump: a slot that was free is given to a shot that was just spawned, which the
-// once-a-frame sampling cannot see, and the same guard th07 and th08 use (48 pixels, against the
-// fastest of these shots' ten or so pixels a frame) keeps that from being drawn as a fraction of the
-// jump.
+// once-a-frame sampling cannot see. The same guard th07 and th08 use (48 pixels, against the fastest
+// of these shots' ten or so pixels a frame) catches most such jumps, but not a slot reused near the
+// top of the play field, where the old shot and the new one can be within 48 pixels of each other.
+// The spawner runs after the existing shots have been updated, so recording its free slots there
+// identifies a same-frame reuse exactly (see th6_shots_note_spawn_pass).
 
 static const unsigned int th6_player_position_offset = 0x440;      // Float3, two of them used
 static const unsigned int th6_player_orb_positions_offset = 0x4A0; // D3DXVECTOR3[2]
@@ -593,6 +595,7 @@ static void th6_step(Th6Step* state, const float* pos, float limit) {
 static Th6Step th6_player_step;
 static Th6Step th6_orb_steps[th6_orbs];
 static Th6Step th6_shot_steps[th6_player_bullets_max];
+static bool th6_shot_free_before_spawn[th6_player_bullets_max];
 
 // What the last extra presentation found, for the diagnostics (see th6_diag_dump)
 static unsigned int th6_shots_in_play;
@@ -619,6 +622,17 @@ static void th6_player_measure() {
     }
 }
 
+// Called immediately before Player::__shoot_bullets (0x429710). The shot update has already run,
+// so every slot that is free here can only contain a new shot by the time the frame is measured.
+static void th6_shots_note_spawn_pass() {
+    for (unsigned int i = 0; i < th6_player_bullets_max; ++i) {
+        const unsigned char* shot =
+            th6_player + th6_player_bullets_offset + (size_t)i * th6_player_bullet_size;
+        th6_shot_free_before_spawn[i] =
+            *(const short*)(shot + th6_player_bullet_state_offset) == 0;
+    }
+}
+
 static void th6_shots_measure() {
     th6_shots_in_play = 0;
     th6_shots_flying = 0;
@@ -627,6 +641,8 @@ static void th6_shots_measure() {
     for (unsigned int i = 0; i < th6_player_bullets_max; ++i) {
         unsigned char* shot = th6_player + th6_player_bullets_offset + (size_t)i * th6_player_bullet_size;
         const int state = *(const short*)(shot + th6_player_bullet_state_offset);
+        const bool spawned_this_frame = th6_shot_free_before_spawn[i];
+        th6_shot_free_before_spawn[i] = false;
 
         // A slot that is not in use is forgotten rather than measured across what was there before it:
         // the shot that gets it next has not moved at all yet (see the comment above)
@@ -643,7 +659,17 @@ static void th6_shots_measure() {
 
         th6_step(&th6_shot_steps[i], (const float*)(shot + th6_player_bullet_sprite_pos_offset),
                  th6_shots_max_step);
+        if (spawned_this_frame)
+            th6_shot_steps[i].step_x = th6_shot_steps[i].step_y = 0.0f;
     }
+}
+
+typedef int (__cdecl* Th6ShootBullets)(void*);
+
+// Replaces the call at 0x429199. The function itself is cdecl with the player pointer on the stack.
+static int __cdecl th6_shoot_bullets_hook(void* player) {
+    th6_shots_note_spawn_pass();
+    return ((Th6ShootBullets)0x00429710)(player);
 }
 
 // What the last extra presentation moved, so it can be put back
@@ -1240,6 +1266,16 @@ static void th6_present_hook() {
 
 // Takes over the two present calls the frame ends with
 static void th6_install_interpolation() {
+    {
+        // call 0x429710, Player::__shoot_bullets (0x429199). Its entry is after the existing shots
+        // have been updated, so this records exactly which slots the spawner may fill this frame.
+        BYTE* site = (BYTE*)0x00429199;
+        if (site[0] == 0xE8 && *(DWORD*)(site + 1) == 0x00429710 - (0x00429199 + 5)) {
+            patch_call(0x00429199, th6_shoot_bullets_hook);
+        } else {
+            printf("th06 player shot spawn at 0x429199 doesn't look like a known one, skipping!\n");
+        }
+    }
     {
         // call 0x420B50, GameWindow_Present (0x420A01) - the exit the fullscreen path takes when the
         // game's own frame skip setting says enough of this frame has been drawn, which then goes round

@@ -7,6 +7,25 @@ Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/O
 Only changes that have been tested in-game and confirmed working are listed here, so this file
 is also the record of what has actually been verified rather than just what was attempted.
 
+## 2026-11-05
+
+### Fixed
+
+- **Extra player-fire sprites no longer appear near the top of the play field in th06, th07 and th08**
+
+  These games can retire an old player shot and create a new one in the same shot slot during one
+  logic-frame update. The old implementation only treated the slot as reused when the sampled
+  position moved by at least 48 pixels. With the player near, but not touching, the top of the play
+  field, the old shot's removal point and the new shot's spawn point could be less than 48 pixels
+  apart, so the new shot was mistaken for the old one and projected from the old position. Extra
+  presentations then showed an additional player-fire sprite on the player. The patch now records
+  free slots at the earliest point where each game has finished updating shots and the player's
+  shot spawner has not yet run. A slot that is free there and occupied when the frame is drawn gets
+  zero movement for that frame; normal projection resumes on the next frame. The existing 48-pixel
+  guard remains for other obvious slot-object replacements. Checked in game for th06, th07 and th08:
+  the extra sprite no longer appears while firing near the top edge, and normal player-shot
+  interpolation still works.
+
 ## 2026-11-02
 
 ### Fixed

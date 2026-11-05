@@ -777,18 +777,28 @@ static const unsigned int th8_shot_pos_offset = 0x2A4;     // the pass copies th
 static float th8_shots_last_pos[th8_shots_max][3];
 static float th8_shots_step[th8_shots_max][3];
 static bool th8_shots_used_last[th8_shots_max];
+static bool th8_shot_free_before_spawn[th8_shots_max];
 
 // A shot that is done with its slot leaves it, and a new shot can be spawned into the same slot
-// during the same frame, which the once-a-frame sampling here cannot see: the two positions are
-// hundreds of pixels apart (the old one is up the screen where it died, the new one is at the
-// player's), and projecting that jump draws the new shot somewhere below the player on the extras
-// before it settles. Nothing a shot does in one frame comes anywhere near this far, so a step that
-// big is thrown away instead of projected - that slot's shot is drawn where the frame's own pass put
-// it for that one extra, and from the frame after on the step is the shot's own again.
+// during the same frame, which the once-a-frame sampling here cannot see. Usually the two positions
+// are hundreds of pixels apart and the distance guard below catches the jump, but near the top of
+// the play field an expired shot and its replacement can be less than 48 pixels apart.
+// Player::__shoot_bullets runs after the shot update, so recording its free slots on entry
+// identifies same-frame reuse exactly.
 static const float th8_shots_max_step = 48.0f;
 
 static unsigned char* th8_shot_slot(unsigned int index) {
     return th8_player + th8_shots_offset + (size_t)index * th8_shot_size;
+}
+
+// Called immediately before Player::__shoot_bullets (0x451500), after the shot update. A slot
+// free here and in use at the frame's draw has just received a new shot.
+static void th8_shots_note_spawn_pass() {
+    for (unsigned int i = 0; i < th8_shots_max; ++i) {
+        const unsigned char* slot = th8_shot_slot(i);
+        th8_shot_free_before_spawn[i] =
+            *(const short*)(slot + th8_shot_in_use_offset) == 0;
+    }
 }
 
 // Called once a frame, from the frame's first draw pass, next to th8_player_measure
@@ -796,6 +806,8 @@ static void th8_shots_measure() {
     for (unsigned int i = 0; i < th8_shots_max; ++i) {
         const unsigned char* slot = th8_shot_slot(i);
         const bool in_use = *(const short*)(slot + th8_shot_in_use_offset) == 1;
+        const bool spawned_this_frame = th8_shot_free_before_spawn[i];
+        th8_shot_free_before_spawn[i] = false;
         const float* pos = (const float*)(slot + th8_shot_pos_offset);
 
         const float step_x = pos[0] - th8_shots_last_pos[i][0];
@@ -807,13 +819,20 @@ static void th8_shots_measure() {
             // A slot that was not in use last frame, or one the game has reused, has just had a shot
             // spawned in it: its script has not run a step of its own yet, so there is nothing to
             // project by (see th8_shots_max_step)
-            th8_shots_step[i][c] = in_use && th8_shots_used_last[i] && !reused
+            th8_shots_step[i][c] = in_use && th8_shots_used_last[i] && !reused && !spawned_this_frame
                                        ? pos[c] - th8_shots_last_pos[i][c]
                                        : 0.0f;
             th8_shots_last_pos[i][c] = pos[c];
         }
         th8_shots_used_last[i] = in_use;
     }
+}
+
+typedef int (__thiscall* Th8ShootBullets)(void*);
+
+static int __fastcall th8_shoot_bullets_hook(void* player) {
+    th8_shots_note_spawn_pass();
+    return ((Th8ShootBullets)0x00451500)(player);
 }
 
 // What the last extra presentation moved, for the diagnostics
@@ -1402,6 +1421,15 @@ static void __fastcall th8_present_hook(void* self) {
 // Takes over the draw chain call (to watch what the scene is drawn with and where the tool's frame
 // is) and the present call that follows it
 static void th8_install_interpolation() {
+    {
+        // call 0x451500, Player::__shoot_bullets (0x44C4ED), immediately after the shot update.
+        BYTE* site = (BYTE*)0x0044C4ED;
+        if (site[0] == 0xE8 && *(DWORD*)(site + 1) == 0x00451500 - (0x0044C4ED + 5)) {
+            patch_call(0x0044C4ED, th8_shoot_bullets_hook);
+        } else {
+            printf("th08 player shot spawn at 0x44C4ED doesn't look like a known one, skipping!\n");
+        }
+    }
     {
         // call 0x43CB60, Chain::RunDrawChain (0x441FEC); the draw itself runs exactly the way it
         // always did
