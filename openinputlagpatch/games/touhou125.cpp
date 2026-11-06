@@ -661,9 +661,11 @@ static const size_t th125_bullet_position = 0x4C4;
 static const size_t th125_bullet_velocity = 0x4D0;
 static const size_t th125_bullet_state = 0x512;
 static const size_t th125_bullets_max = 2000;
+static const float th125_bullet_fast_speed = 16.0f;
 
 static unsigned int th125_bullets_in_play;
 static unsigned int th125_bullets_projected;
+static unsigned int th125_bullets_fast_excluded;
 
 struct Th125SavedBullet {
 	void* bullet;
@@ -690,6 +692,7 @@ static void th125_bullets_advance(float t) {
 	th125_saved_bullets_count = 0;
 	th125_bullets_in_play = 0;
 	th125_bullets_projected = 0;
+	th125_bullets_fast_excluded = 0;
 
 	unsigned char* manager = (unsigned char*)*th125_bullet_manager;
 	if (manager == nullptr || th125_objects_held())
@@ -710,10 +713,26 @@ static void th125_bullets_advance(float t) {
 			const unsigned short state = *(unsigned short*)(bullet + th125_bullet_state);
 			const float factor = th125_bullet_step_factor(state);
 			if (factor > 0.0f && th125_saved_bullets_count < th125_bullets_max) {
-				Th125SavedBullet& saved = th125_saved_bullets[th125_saved_bullets_count++];
-				saved.bullet = bullet;
 				float* position = (float*)(bullet + th125_bullet_position);
 				const float* velocity = (const float*)(bullet + th125_bullet_velocity);
+
+				// TH12.5-ONLY SPECIAL CASE.
+				// Ex-4's special bullet already skips collision frames at 60 FPS. Interpolating
+				// it turns those discrete jumps into an unreadable continuous sweep. This speed
+				// limit is a workaround for that scene in Double Spoiler only. Do not copy it to
+				// another game.
+				const float speed_squared =
+					velocity[0] * velocity[0] +
+					velocity[1] * velocity[1] +
+					velocity[2] * velocity[2];
+				if (speed_squared > th125_bullet_fast_speed * th125_bullet_fast_speed) {
+					++th125_bullets_fast_excluded;
+					bullet = next;
+					continue;
+				}
+
+				Th125SavedBullet& saved = th125_saved_bullets[th125_saved_bullets_count++];
+				saved.bullet = bullet;
 				for (int axis = 0; axis < 3; ++axis) {
 					saved.position[axis] = position[axis];
 					position[axis] += velocity[axis] * step * factor;
@@ -1835,8 +1854,11 @@ static void th125_diag_dump() {
 		*(int*)0x004D1228, *(DWORD*)0x004D1260,
 		*(DWORD*)0x004D8DAC, *(DWORD*)0x004D8DA8,
 		*(DWORD*)0x004D8DB0);
-	fprintf(file, "bullets: %u in play, %u projected forward (last game frame)\n",
-		th125_bullets_in_play, th125_bullets_projected);
+	fprintf(file,
+		"bullets: %u in play, %u projected forward, %u speed >16 excluded "
+		"(th12.5 special case)\n",
+		th125_bullets_in_play, th125_bullets_projected,
+		th125_bullets_fast_excluded);
 	unsigned char* player = (unsigned char*)*th125_player_manager;
 	const int photo_state = player != nullptr
 		? *(int*)(player + th125_player_camera + th125_player_camera_state)
