@@ -260,6 +260,8 @@ void patcher_main() {
         queue_ui_message(UiMessage_DebugWait, 0, false);
     if (Config::DebugConsole)
         create_console();
+    printf("Force 4:3 presentation: %s\n",
+        Config::ForceRatio43 ? "enabled" : "disabled");
     WindowMode::Hook();
     check_vpatch();
     install_patches();

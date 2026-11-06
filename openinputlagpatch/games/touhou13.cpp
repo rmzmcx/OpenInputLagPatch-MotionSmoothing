@@ -958,7 +958,7 @@ static void th13_extra_presentation(IDirect3DDevice9* device, float t) {
 	if (d3d9_hooked_device() == device)
 		d3d9_present_bypassing_hooks();
 	else
-		device->Present(nullptr, nullptr, nullptr, nullptr);
+		d3d9_present_frame(device);
 	overlay_mark_presentation();
 }
 
@@ -981,7 +981,7 @@ static HRESULT th13_present_hook() {
 	// point per frame where the movement of the player, its options and its shots can be measured
 	th13_player_measure();
 
-	HRESULT result = device->Present(nullptr, nullptr, nullptr, nullptr);
+	HRESULT result = d3d9_present_frame(device);
 	overlay_mark_presentation();
 	Limiter::MarkFrameWorkEnd();
 	ToolState::WatchFrameDrawn();

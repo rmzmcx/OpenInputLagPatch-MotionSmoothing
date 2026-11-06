@@ -28,6 +28,9 @@ public:
 	static SleepType Sleep;
 	static BOOL D3D9Ex;
 	static TargetRefreshRate FullscreenRefreshRate;
+	// Last-resort 4:3 composition for exclusive fullscreen when the driver or display cannot be
+	// made to preserve the aspect ratio any other way. This noticeably reduces image quality.
+	static BOOL ForceRatio43;
 	// What the patch's overlay shows, as a sum of the two readouts it has:
 	//   0  nothing (no overlay at all)
 	//   1  the rate the frames are actually presented at ("144.0 fps"), which is the default

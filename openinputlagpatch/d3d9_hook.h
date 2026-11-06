@@ -11,6 +11,10 @@ IDirect3DDevice9* d3d9_hooked_device();
 // that other patches and tools put in front of it (see the comment in d3d9_hook.cpp)
 HRESULT d3d9_present_bypassing_hooks();
 
+// Applies the optional forced 4:3 composition once, then calls the device's current Present.
+// Game present hooks use this instead of calling IDirect3DDevice9::Present directly.
+HRESULT d3d9_present_frame(IDirect3DDevice9* device);
+
 struct D3D9PresentInfo {
 	unsigned int width;
 	unsigned int height;

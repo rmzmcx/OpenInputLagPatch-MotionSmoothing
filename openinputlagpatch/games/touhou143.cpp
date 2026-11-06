@@ -1115,7 +1115,7 @@ static HRESULT th143_present_hook() {
 
 	th143_player_measure();
 	th143_lasers_measure();
-	HRESULT result = device->Present(nullptr, nullptr, nullptr, nullptr);
+	HRESULT result = d3d9_present_frame(device);
 	overlay_mark_presentation();
 	Limiter::MarkFrameWorkEnd();
 

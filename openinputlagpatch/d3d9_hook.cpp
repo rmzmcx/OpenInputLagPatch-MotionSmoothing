@@ -16,13 +16,269 @@
 static IDirect3D9* d3d9 = nullptr;
 static IDirect3DDevice9* d3d9_device = nullptr;
 static D3D9PresentInfo present_info = {};
+static UINT native_output_width = 0;
+static UINT native_output_height = 0;
+
+typedef HRESULT(__stdcall* Present9_t)(IDirect3DDevice9*, const RECT*, const RECT*, HWND,
+	const RGNDATA*);
 
 // The device's own Present, taken before anything else can replace it. The frame interpolation
 // presents its extra frames with this: they should reach the driver, not the Present hook of the
 // user's tool. thprac's hook measures the input latency from the input poll to the next present,
 // which only means something when there is one present per game frame - with the extra ones it
 // would report a fraction of a frame instead.
-static HRESULT(__stdcall* present_unhooked)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*) = nullptr;
+static Present9_t present_unhooked = nullptr;
+
+struct D3D9RatioVertex {
+	float x;
+	float y;
+	float z;
+	float rhw;
+	float u;
+	float v;
+};
+static_assert(sizeof(D3D9RatioVertex) == 24, "D3DFVF_XYZRHW | D3DFVF_TEX1 is 24 bytes");
+
+struct D3D9RatioResources {
+	IDirect3DDevice9* device;
+	IDirect3DTexture9* texture;
+	IDirect3DSurface9* surface;
+	UINT width;
+	UINT height;
+	D3DFORMAT format;
+};
+
+static D3D9RatioResources ratio_resources = {};
+static bool suppress_end_scene_overlay;
+static bool suppress_force_ratio_for_present;
+
+static void capture_native_output_size(HWND window) {
+	MONITORINFO monitor = {};
+	monitor.cbSize = sizeof(monitor);
+	const HMONITOR handle = MonitorFromWindow(window, MONITOR_DEFAULTTOPRIMARY);
+	if (handle != nullptr && GetMonitorInfoW(handle, &monitor)) {
+		native_output_width = monitor.rcMonitor.right - monitor.rcMonitor.left;
+		native_output_height = monitor.rcMonitor.bottom - monitor.rcMonitor.top;
+	}
+}
+
+static void release_force_ratio_resources() {
+	if (ratio_resources.surface != nullptr)
+		ratio_resources.surface->Release();
+	if (ratio_resources.texture != nullptr)
+		ratio_resources.texture->Release();
+	ratio_resources = {};
+}
+
+static bool ensure_force_ratio_resources(
+	IDirect3DDevice9* device, UINT width, UINT height, D3DFORMAT format) {
+	if (ratio_resources.device == device && ratio_resources.texture != nullptr &&
+		ratio_resources.surface != nullptr && ratio_resources.width == width &&
+		ratio_resources.height == height && ratio_resources.format == format) {
+		return true;
+	}
+
+	release_force_ratio_resources();
+	if (FAILED(device->CreateTexture(width, height, 1, D3DUSAGE_RENDERTARGET, format,
+		D3DPOOL_DEFAULT, &ratio_resources.texture, nullptr))) {
+		ratio_resources.texture = nullptr;
+		return false;
+	}
+	if (FAILED(ratio_resources.texture->GetSurfaceLevel(0, &ratio_resources.surface))) {
+		ratio_resources.texture->Release();
+		ratio_resources = {};
+		return false;
+	}
+	ratio_resources.device = device;
+	ratio_resources.width = width;
+	ratio_resources.height = height;
+	ratio_resources.format = format;
+	return true;
+}
+
+static bool render_force_ratio_4_3(IDirect3DDevice9* device) {
+	if (!Config::ForceRatio43 || device == nullptr || present_info.windowed)
+		return false;
+
+	IDirect3DSurface9* back_buffer = nullptr;
+	if (FAILED(device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &back_buffer)) ||
+		back_buffer == nullptr) {
+		return false;
+	}
+
+	D3DSURFACE_DESC desc = {};
+	if (FAILED(back_buffer->GetDesc(&desc))) {
+		back_buffer->Release();
+		return false;
+	}
+
+	UINT output_width = desc.Width;
+	UINT output_height = desc.Height;
+	D3DDISPLAYMODE display_mode = {};
+	if (SUCCEEDED(device->GetDisplayMode(0, &display_mode)) &&
+		display_mode.Width != 0 && display_mode.Height != 0) {
+		output_width = display_mode.Width;
+		output_height = display_mode.Height;
+	}
+	// Some drivers expose a 4:3 exclusive-fullscreen mode and stretch it to the panel.
+	// In that case D3D has no wider mode to report, so use the monitor size captured
+	// before the game changed display modes.
+	if ((uint64_t)output_width * 3 <= (uint64_t)output_height * 4 &&
+		(uint64_t)native_output_width * 3 > (uint64_t)native_output_height * 4) {
+		output_width = native_output_width;
+		output_height = native_output_height;
+	}
+	const double output_aspect = (double)output_width / (double)output_height;
+	const double draw_width = (double)desc.Width * (4.0 / 3.0) / output_aspect;
+	static bool ratio_logged;
+	if (!ratio_logged) {
+		ratio_logged = true;
+		D3DVIEWPORT9 viewport = {};
+		device->GetViewport(&viewport);
+		printf("Force 4:3: D3D9 back buffer %ux%u, output %ux%u, viewport %ux%u, "
+			"draw width %.1f, applicable %s\n",
+			desc.Width, desc.Height, output_width, output_height,
+			viewport.Width, viewport.Height, draw_width,
+			output_aspect > 4.0 / 3.0 ? "yes" : "no");
+	}
+	if (output_aspect <= 4.0 / 3.0) {
+		back_buffer->Release();
+		return false;
+	}
+	// In exclusive fullscreen the back buffer can still be 4:3 while the display mode is
+	// widescreen. Pre-compress the captured frame by the output aspect so the display's
+	// non-uniform stretch restores it to 4:3 with black side bars.
+	if (!ensure_force_ratio_resources(
+		device, desc.Width, desc.Height, desc.Format)) {
+		back_buffer->Release();
+		return false;
+	}
+
+	IDirect3DStateBlock9* state = nullptr;
+	if (FAILED(device->CreateStateBlock(D3DSBT_ALL, &state)) || state == nullptr) {
+		back_buffer->Release();
+		return false;
+	}
+
+	D3DVIEWPORT9 old_viewport = {};
+	IDirect3DSurface9* old_target = nullptr;
+	IDirect3DSurface9* old_depth = nullptr;
+	if (FAILED(device->GetViewport(&old_viewport)) ||
+		FAILED(device->GetRenderTarget(0, &old_target)) ||
+		FAILED(device->GetDepthStencilSurface(&old_depth))) {
+		if (old_target != nullptr)
+			old_target->Release();
+		if (old_depth != nullptr)
+			old_depth->Release();
+		state->Release();
+		back_buffer->Release();
+		return false;
+	}
+
+	if (FAILED(device->StretchRect(
+		back_buffer, nullptr, ratio_resources.surface, nullptr, D3DTEXF_NONE))) {
+		if (old_target != nullptr)
+			old_target->Release();
+		if (old_depth != nullptr)
+			old_depth->Release();
+		state->Release();
+		back_buffer->Release();
+		return false;
+	}
+	const float width = (float)desc.Width;
+	const float height = (float)desc.Height;
+	const float scaled_width = (float)draw_width;
+	const float offset_x = (width - scaled_width) * 0.5f;
+	const D3D9RatioVertex vertices[4] = {
+		{ offset_x - 0.5f, -0.5f, 0.5f, 1.0f, 0.0f, 0.0f },
+		{ offset_x + scaled_width - 0.5f, -0.5f, 0.5f, 1.0f, 1.0f, 0.0f },
+		{ offset_x - 0.5f, height - 0.5f, 0.5f, 1.0f, 0.0f, 1.0f },
+		{ offset_x + scaled_width - 0.5f, height - 0.5f, 0.5f, 1.0f, 1.0f, 1.0f },
+	};
+
+	bool target_changed = SUCCEEDED(device->SetRenderTarget(0, back_buffer));
+	if (target_changed)
+		target_changed = SUCCEEDED(device->SetDepthStencilSurface(nullptr));
+	back_buffer->Release();
+	if (target_changed) {
+		D3DVIEWPORT9 full_viewport = { 0, 0, desc.Width, desc.Height, 0.0f, 1.0f };
+		device->SetViewport(&full_viewport);
+		suppress_end_scene_overlay = true;
+		if (SUCCEEDED(device->BeginScene())) {
+			device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
+			device->Clear(0, nullptr, D3DCLEAR_TARGET, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
+
+			device->SetTexture(0, ratio_resources.texture);
+			device->SetPixelShader(nullptr);
+			device->SetVertexShader(nullptr);
+			device->SetVertexDeclaration(nullptr);
+			device->SetFVF(D3DFVF_XYZRHW | D3DFVF_TEX1);
+			device->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+			device->SetRenderState(D3DRS_LIGHTING, FALSE);
+			device->SetRenderState(D3DRS_ZENABLE, D3DZB_FALSE);
+			device->SetRenderState(D3DRS_STENCILENABLE, FALSE);
+			device->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+			device->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
+			device->SetRenderState(D3DRS_BLENDOP, D3DBLENDOP_ADD);
+			device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+			device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+			device->SetRenderState(D3DRS_SHADEMODE, D3DSHADE_GOURAUD);
+			device->SetRenderState(D3DRS_FOGENABLE, FALSE);
+			device->SetRenderState(D3DRS_COLORWRITEENABLE,
+				D3DCOLORWRITEENABLE_RED | D3DCOLORWRITEENABLE_GREEN |
+				D3DCOLORWRITEENABLE_BLUE | D3DCOLORWRITEENABLE_ALPHA);
+			device->SetRenderState(D3DRS_SRGBWRITEENABLE, FALSE);
+
+			device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
+			device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+			device->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
+			device->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
+			device->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+			device->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
+			device->SetTextureStageState(0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+			for (DWORD stage = 1; stage < 8; ++stage) {
+				device->SetTextureStageState(stage, D3DTSS_COLOROP, D3DTOP_DISABLE);
+				device->SetTextureStageState(stage, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
+			}
+			device->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+			device->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+			device->DrawPrimitiveUP(
+				D3DPT_TRIANGLESTRIP, 2, vertices, sizeof(D3D9RatioVertex));
+			device->EndScene();
+		}
+		suppress_end_scene_overlay = false;
+	}
+
+	state->Apply();
+	device->SetViewport(&old_viewport);
+	device->SetRenderTarget(0, old_target);
+	device->SetDepthStencilSurface(old_depth);
+	if (old_target != nullptr)
+		old_target->Release();
+	if (old_depth != nullptr)
+		old_depth->Release();
+	state->Release();
+	return target_changed;
+}
+
+static HRESULT __stdcall Present9_hook(IDirect3DDevice9* device, const RECT* source_rect,
+	const RECT* dest_rect, HWND dest_window, const RGNDATA* dirty_region) {
+	if (!suppress_force_ratio_for_present)
+		render_force_ratio_4_3(device);
+	return present_unhooked(device, source_rect, dest_rect, dest_window, dirty_region);
+}
+
+HRESULT d3d9_present_frame(IDirect3DDevice9* device) {
+	if (device == nullptr)
+		return E_FAIL;
+	const bool previous_suppression = suppress_force_ratio_for_present;
+	if (!previous_suppression)
+		render_force_ratio_4_3(device);
+	suppress_force_ratio_for_present = true;
+	const HRESULT result = device->Present(nullptr, nullptr, nullptr, nullptr);
+	suppress_force_ratio_for_present = previous_suppression;
+	return result;
+}
 
 // The device the patch hooked, or null while the game doesn't have one
 IDirect3DDevice9* d3d9_hooked_device() {
@@ -36,6 +292,7 @@ HRESULT d3d9_present_bypassing_hooks() {
 	LARGE_INTEGER present_start;
 	LARGE_INTEGER present_end;
 	QueryPerformanceCounter(&present_start);
+	render_force_ratio_4_3(d3d9_device);
 	const HRESULT result =
 		present_unhooked(d3d9_device, nullptr, nullptr, nullptr, nullptr);
 	QueryPerformanceCounter(&present_end);
@@ -172,6 +429,7 @@ HRESULT __stdcall Reset_hook(IDirect3DDevice9* self, D3DPRESENT_PARAMETERS* pPre
 	printf("Reset intercepted!\n");
 	modify_presentation_parameters(pPresentationParameters);
 	capture_present_info(pPresentationParameters);
+	release_force_ratio_resources();
 
 	HRESULT ret;
 
@@ -241,7 +499,7 @@ HRESULT __stdcall Reset_hook(IDirect3DDevice9* self, D3DPRESENT_PARAMETERS* pPre
 // Renders the overlay if enabled
 auto EndScene_orig = (HRESULT(__stdcall*)(IDirect3DDevice9*))nullptr;
 HRESULT __stdcall EndScene_hook(IDirect3DDevice9* self) {
-	if (D3D9Overlay::Instance)
+	if (!suppress_end_scene_overlay && D3D9Overlay::Instance)
 		D3D9Overlay::Instance->Draw();
 	return EndScene_orig(self);
 }
@@ -253,6 +511,8 @@ HRESULT __stdcall CreateDevice_hook(IDirect3D9* self, UINT Adapter, D3DDEVTYPE D
 	D3DPRESENT_PARAMETERS* pPresentationParameters, IDirect3DDevice9** ppReturnedDeviceInterface)
 {
 	printf("CreateDevice intercepted! DeviceType: %d\n", DeviceType);
+	release_force_ratio_resources();
+	capture_native_output_size(hFocusWindow ? hFocusWindow : pPresentationParameters->hDeviceWindow);
 
 	// Disable vsync on the parameters
 	modify_presentation_parameters(pPresentationParameters);
@@ -304,7 +564,10 @@ HRESULT __stdcall CreateDevice_hook(IDirect3D9* self, UINT Adapter, D3DDEVTYPE D
 
 	// Take the device's own Present before the game (and the tools it loads) get their hands on
 	// the device. This is what the frame interpolation presents its extra frames with (see above)
-	present_unhooked = (HRESULT(__stdcall*)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*))device_vtbl[17];
+	if (device_vtbl[17] != (DWORD)Present9_hook)
+		present_unhooked = (Present9_t)device_vtbl[17];
+	auto present_hook = (DWORD)Present9_hook;
+	patch_bytes(&device_vtbl[17], &present_hook, sizeof(DWORD));
 
 	Reset_orig = (HRESULT(__stdcall*)(IDirect3DDevice9*, D3DPRESENT_PARAMETERS*))device_vtbl[16];
 	auto patch_data = (DWORD)Reset_hook;

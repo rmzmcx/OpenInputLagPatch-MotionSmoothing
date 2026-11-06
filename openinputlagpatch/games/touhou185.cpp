@@ -949,7 +949,7 @@ static HRESULT th185_present_hook() {
 	th185_player_measure();
 	th185_lasers_measure();
 
-	HRESULT result = device->Present(nullptr, nullptr, nullptr, nullptr);
+	HRESULT result = d3d9_present_frame(device);
 	overlay_mark_presentation();
 	Limiter::MarkFrameWorkEnd();
 	ToolState::WatchFrameDrawn();

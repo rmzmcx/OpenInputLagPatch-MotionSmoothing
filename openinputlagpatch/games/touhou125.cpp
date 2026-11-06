@@ -1792,7 +1792,7 @@ static bool th125_extra_presentation(IDirect3DDevice9* device, float t) {
 	if (SUCCEEDED(end_result)) {
 		present_result = d3d9_hooked_device() == device
 			? d3d9_present_bypassing_hooks()
-			: device->Present(nullptr, nullptr, nullptr, nullptr);
+			: d3d9_present_frame(device);
 	}
 	if (SUCCEEDED(present_result)) {
 		overlay_mark_presentation();
@@ -1975,7 +1975,7 @@ static HRESULT th125_present_hook() {
 	}
 	++th125_present_calls;
 
-	HRESULT result = device->Present(nullptr, nullptr, nullptr, nullptr);
+	HRESULT result = d3d9_present_frame(device);
 	overlay_mark_presentation();
 	Limiter::MarkFrameWorkEnd();
 

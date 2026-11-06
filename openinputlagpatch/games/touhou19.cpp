@@ -1425,7 +1425,7 @@ static HRESULT th19_present_hook() {
 
 	// The game's own presentation of this frame, through the device it drew with, so that the
 	// hooks the user's tools have on it still see it
-	HRESULT result = device->Present(nullptr, nullptr, nullptr, nullptr);
+	HRESULT result = d3d9_present_frame(device);
 	overlay_mark_presentation();
 
 	// The game's own work of this frame ends here as far as the overlay is concerned - everything

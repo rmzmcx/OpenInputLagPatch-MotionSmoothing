@@ -14,6 +14,7 @@ UINT Config::BltPrepareTime = 2;
 SleepType Config::Sleep = SleepType::Vpatch;
 BOOL Config::D3D9Ex = TRUE;
 TargetRefreshRate Config::FullscreenRefreshRate = TargetRefreshRate::Max;
+BOOL Config::ForceRatio43 = FALSE;
 int Config::ShowOverlay = 1;
 BOOL Config::DebugConsole = FALSE;
 BOOL Config::DebugWait = FALSE;
@@ -61,6 +62,7 @@ static const char default_global_ini[] =
     "Sleep = 1\r\n"
     "D3D9Ex = 1\r\n"
     "FullscreenRefreshRate = 0\r\n"
+    "ForceRatio_4_3 = 0\r\n"
     "ShowOverlay = 1\r\n"
     "DebugConsole = 0\r\n"
     "DebugWait = 0\r\n"
@@ -152,6 +154,8 @@ static void load_config_file(const wchar_t* config_path) {
 	LOAD_SETTING(Sleep);
 	LOAD_SETTING(D3D9Ex);
 	LOAD_SETTING(FullscreenRefreshRate);
+	Config::ForceRatio43 = (BOOL)GetPrivateProfileInt(
+		TEXT("Option"), TEXT("ForceRatio_4_3"), (int)Config::ForceRatio43, config_path);
 	LOAD_SETTING(ShowOverlay);
 	LOAD_SETTING(DebugConsole);
 	LOAD_SETTING(DebugWait);
