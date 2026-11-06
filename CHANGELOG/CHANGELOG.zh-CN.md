@@ -34,6 +34,16 @@
   自机记录到 6/6 个绘制点投入补帧。Ex-4 测试中 1071 发敌弹有 647 发正常补帧，424 发因速度
   大于 16 被排除。曲线激光仍未处理，敌本体、BOSS、HUD 和照片栏仍按游戏自己的帧绘制。
 
+- **新增仅支持 rueee 版 thprac 的渲染回调 API `oilp_set_renderer`**（`e56b031`）
+
+  oilp 现在导出 `oilp_set_renderer(void (__cdecl*)(void))`，允许 thprac 在初始化时注册只负责
+  重绘的渲染函数。th09.5、th12.5 和 th14.3 的额外呈现会在 EndScene 前调用该回调，使组合式
+  `THGuiUpdate()` 作品每次 Present 都能保留 ImGui 画面，又不会重复推进 UI 或输入。
+
+  这个 API 只支持 rueee 的 thprac，不是通用 thprac 兼容层。其他作者的分支、改版或不同实现
+  不受支持，也不保证能够注册或正确调用该回调。未注册回调时，oilp 仍保留原有已校验的 draw-only
+  fallback，以便旧版 rueee thprac 继续工作。新版 rueee thprac 已与本 API 实机联调通过。
+
 ## 2026-11-05
 
 ### 修复

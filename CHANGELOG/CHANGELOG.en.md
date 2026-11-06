@@ -41,6 +41,19 @@ is also the record of what has actually been verified rather than just what was 
   for speed above 16. Curved lasers remain unsupported. Enemy and boss bodies, the HUD and the
   photo strip still follow the game's own frames.
 
+- **The `oilp_set_renderer` callback API only supports rueee's thprac** (`e56b031`)
+
+  oilp now exports `oilp_set_renderer(void (__cdecl*)(void))`, which lets thprac register a
+  draw-only renderer during initialization. Extra presentations in th09.5, th12.5 and th14.3 call
+  that renderer before EndScene, so games with a combined `THGuiUpdate()` keep their ImGui picture
+  on every Present without advancing UI or input again.
+
+  This API targets rueee's thprac only. It is not a generic thprac compatibility layer. Builds,
+  forks or implementations from other authors are unsupported and are not guaranteed to register
+  or call the callback correctly. When no callback is registered, oilp keeps the existing checked
+  draw-only fallback so older rueee thprac builds continue to work. The compatibility path has
+  been tested in game with the updated rueee thprac.
+
 ## 2026-11-05
 
 ### Fixed
