@@ -1006,7 +1006,10 @@ static bool th143_extra_presentation(float t) {
 	if (manager != nullptr)
 		th143_draw_sprite_queue(manager);
 	device->SetTexture(0, nullptr);
-	th143_draw_thprac_overlay();
+	if (Config::THPGuiUpdateFunc != nullptr)
+		Config::THPGuiUpdateFunc();
+	else
+		th143_draw_thprac_overlay();
 	device->EndScene();
 
 	th143_queue_restore(queue);

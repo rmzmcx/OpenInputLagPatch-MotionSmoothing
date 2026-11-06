@@ -70,6 +70,10 @@ public:
 	static BOOL InterpolatePlayerShots;
 	static BOOL InterpolateBulletsAndLasers;
 
+	// Registered by thprac through oilp_set_renderer so combined GUI hooks can redraw
+	// their cached frame during oilp's extra presentations.
+	static void (*THPGuiUpdateFunc)();
+
 	// Keep rendering (and presenting) while the game window isn't active, so the picture
 	// doesn't freeze after alt-tabbing. Equivalent to vpatch's AlwaysBlt.
 	// Only implemented for th06 and th07.

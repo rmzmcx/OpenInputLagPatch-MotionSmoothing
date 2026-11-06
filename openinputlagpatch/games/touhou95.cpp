@@ -650,9 +650,12 @@ static bool th95_extra_draw_pass(float t) {
     th95_flush_vertex_buffer(anm);
     device->SetTexture(0, nullptr);
 
-    // This is the draw-only half of thprac's 0x4208D6 hook. It keeps the cached UI frame on every
-    // presentation without running the tool's update.
-    th95_draw_thprac_overlay(device);
+    // New thprac builds register a renderer through oilp_set_renderer. Older builds use the
+    // checked draw-only path below.
+    if (Config::THPGuiUpdateFunc != nullptr)
+        Config::THPGuiUpdateFunc();
+    else
+        th95_draw_thprac_overlay(device);
 
     device->EndScene();
 

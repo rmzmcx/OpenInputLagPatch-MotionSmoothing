@@ -24,6 +24,7 @@ UINT Config::InterpolationFPS = 0;
 BOOL Config::InterpolatePlayerBody = TRUE;
 BOOL Config::InterpolatePlayerShots = TRUE;
 BOOL Config::InterpolateBulletsAndLasers = TRUE;
+void (*Config::THPGuiUpdateFunc)() = nullptr;
 BOOL Config::AlwaysBlt = TRUE;
 TouhouGame Config::GameOverride = TouhouGame::Unknown;
 BOOL Config::AskWindowMode = FALSE;

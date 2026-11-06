@@ -1767,7 +1767,10 @@ static bool th125_extra_presentation(IDirect3DDevice9* device, float t) {
 	th125_measure_extra_changes();
 	th125_draw_sprite_queue();
 	device->SetTexture(0, nullptr);
-	th125_draw_thprac_overlay(device);
+	if (Config::THPGuiUpdateFunc != nullptr)
+		Config::THPGuiUpdateFunc();
+	else
+		th125_draw_thprac_overlay(device);
 	const HRESULT end_result = device->EndScene();
 	th125_measure_queue_cache_changes();
 	th125_measure_background_vm_changes();

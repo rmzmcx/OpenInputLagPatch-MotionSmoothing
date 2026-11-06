@@ -8,6 +8,10 @@ bool __stdcall oilp_set_game_fps(int fps) {
 	return Limiter::SetGameFPS(fps);
 }
 
+void __stdcall oilp_set_renderer(void (*update_func)()) {
+	Config::THPGuiUpdateFunc = update_func;
+}
+
 bool __stdcall oilp_set_replay_skip_fps(int fps) {
 	Config::ReplaySkipFPS = fps;
 	return true;
