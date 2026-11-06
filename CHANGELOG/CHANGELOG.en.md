@@ -54,6 +54,27 @@ is also the record of what has actually been verified rather than just what was 
   draw-only fallback so older rueee thprac builds continue to work. The compatibility path has
   been tested in game with the updated rueee thprac.
 
+### Fixed
+
+- **The startup display selectors in th06–th09.5 and th10 can now close through X** (`7b2458d`)
+
+  With `AskWindowMode` enabled in th06–th09.5, the fullscreen question used only Yes and No, so
+  Windows disabled the title-bar X. The prompt is still drawn by the native MessageBox, but it is
+  now created with a hidden Cancel button to enable X. A thread-local CBT hook hides that button
+  before the window is shown and shrinks the dialog back to the original two-button layout.
+  Clicking X returns `IDCANCEL` and ends the process before the game can start. The font, icon,
+  button styling and title bar remain the native appearance.
+
+  th10's own startup resolution/fullscreen selector is resource dialog `0xCB`. Its
+  `DLGTEMPLATEEX` has `WS_CAPTION` and `DS_MODALFRAME` but no `WS_SYSMENU`, so the original game
+  never creates an X. The patch now hooks the game's `DialogBoxParamA` import at runtime, adds
+  `WS_SYSMENU` to this dialog and wraps its original `DialogFunc`, mapping `WM_CLOSE` to
+  `ExitProcess(0)`. Every other message is passed through unchanged, and the `th10.exe` file is not
+  modified.
+
+  Both paths have been checked in game. th11 and later already have closable startup selectors, so
+  they were left unchanged.
+
 ## 2026-11-05
 
 ### Fixed

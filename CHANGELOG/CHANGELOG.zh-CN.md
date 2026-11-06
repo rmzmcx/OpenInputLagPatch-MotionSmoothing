@@ -44,6 +44,24 @@
   不受支持，也不保证能够注册或正确调用该回调。未注册回调时，oilp 仍保留原有已校验的 draw-only
   fallback，以便旧版 rueee thprac 继续工作。新版 rueee thprac 已与本 API 实机联调通过。
 
+### 修复
+
+- **th06–th09.5 与 th10 的启动显示选择窗口现在可以用 X 退出游戏**（`7b2458d`）
+
+  在 th06–th09.5 开启 `AskWindowMode` 时，原来的“是否全屏”询问框只有“是/否”按钮，Windows
+  会因此禁用右上角 X。现在询问框仍由原生 MessageBox 绘制，但内部带一个隐藏的 Cancel 按钮来
+  启用 X。线程内的 CBT 钩子在窗口显示前隐藏该按钮，并把窗口缩回原来的“是/否”布局。点击 X
+  会返回 `IDCANCEL` 并直接结束进程，游戏不会继续启动。字体、图标、按钮样式和标题栏外观保持
+  原生效果。
+
+  th10 自带的启动分辨率/全屏选择窗口是资源对话框 `0xCB`。它的 `DLGTEMPLATEEX` 含
+  `WS_CAPTION` 和 `DS_MODALFRAME`，但没有 `WS_SYSMENU`，所以原版根本没有创建 X。现在只在
+  运行时 hook 游戏的 `DialogBoxParamA`，给这个对话框补上 `WS_SYSMENU`，并包装原
+  `DialogFunc`，把 `WM_CLOSE` 映射为 `ExitProcess(0)`。其他消息原样转交，`th10.exe` 文件本身
+  不修改。
+
+  上述两处均已实机确认。th11 及以后作品已有可选择并关闭的启动窗口，因此没有改动。
+
 ## 2026-11-05
 
 ### 修复
