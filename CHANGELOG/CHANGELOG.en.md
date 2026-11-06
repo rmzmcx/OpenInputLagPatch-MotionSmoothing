@@ -7,6 +7,40 @@ Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/O
 Only changes that have been tested in-game and confirmed working are listed here, so this file
 is also the record of what has actually been verified rather than just what was attempted.
 
+## 2026-11-07
+
+### Added
+
+- **Double Spoiler (th12.5) gets frame interpolation** (`a720f19`, `dafdcdd`)
+
+  The patch now takes over th12.5's three scene draw and Present sites. Extra presentations replay
+  only rendering and Present, while input, timers, photos, scoring, replay and stage state stay on
+  the game's own frames. An extra pass saves and restores the relevant D3D9 state, dynamic text
+  area, cameras, sprite queue and fixed render Anm objects.
+
+  The camera's dark background is handled at the background commit callback `0x428DC0`. After the
+  normal frame composes the background, the offscreen image at `[0x4D0E7C]` is copied into a
+  render target with the same format. Extra frames restore that image before drawing the
+  foreground, keeping the camera filter, viewfinder overlap and stage-entry background stable.
+
+  Enemy bullets move from the six chains under `[0x4B677C]` using their state factors. Player
+  projection covers the body, crosshair and four viewfinder Anm objects, six draw points in all.
+  This game has no separate player-shot object pool, so `PlayerShots` deliberately moves nothing.
+  Straight and infinite lasers use `[0x4B68A4]` and measure position, angle and scale. Angles use
+  the shortest arc, and a jump in position, angle or scale stops projection of that component.
+
+  One Ex-4 attack, `結界「パパラッチ撃退結界」`, has very fast bullets that already cross some
+  positions at 60 Hz. Only in this game, bullets faster than 16 are now excluded from extra-frame
+  displacement, while the other bullets remain interpolated. This limit is a Double
+  Spoiler-specific exception and must not be copied to another game.
+
+  thprac redraws its cached ImGui DrawData only when its real `g_pd3dDevice` matches the current
+  device. Normal startup, thprac startup, mid-run injection and ImGui display have all been
+  checked. The laser test recorded 69 of 69 active lines projected, and the player recorded six of
+  six draw points projected. In the Ex-4 test, 647 of 1071 bullets projected and 424 were excluded
+  for speed above 16. Curved lasers remain unsupported. Enemy and boss bodies, the HUD and the
+  photo strip still follow the game's own frames.
+
 ## 2026-11-05
 
 ### Fixed
