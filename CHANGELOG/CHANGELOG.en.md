@@ -54,6 +54,27 @@ is also the record of what has actually been verified rather than just what was 
   draw-only fallback so older rueee thprac builds continue to work. The compatibility path has
   been tested in game with the updated rueee thprac.
 
+- **Optional forced 4:3 output for exclusive fullscreen** (`c11dc56`)
+
+  `[Option]` now has `ForceRatio_4_3`, defaulting to `0`. When enabled, the patch only acts in
+  exclusive fullscreen: it copies the game's completed back buffer into a temporary texture, clears
+  the real back buffer to black, and redraws the frame into a centered 4:3 rectangle with black side
+  bars. Windowed mode returns immediately without allocating resources or replaying Present, and the
+  window size, selected display mode and game logic are unchanged.
+
+  The D3D8 path uses `CopyRects` and the D3D9 path uses `StretchRect`. Both save and restore the
+  relevant device state and release their temporary resources across device resets. Some drivers
+  stretch a 640x480 exclusive-fullscreen mode directly to a widescreen monitor without exposing the
+  real output aspect through D3D, so the patch records the monitor resolution before device creation
+  and uses it to calculate the compressed width in that case. The th10–th20 Present hooks now also
+  go through a shared entry, preventing a thprac or wrapper Present replacement from bypassing the
+  composition and guarding against double scaling or overlay redraws.
+
+  This feature resamples the final image and **significantly reduces image quality**. It should only
+  be used when the graphics driver, monitor settings or another method cannot keep the game's aspect
+  ratio in exclusive fullscreen. If the game is already 4:3, enabling it can compress the picture
+  further. Verified working for both D3D8 and D3D9 games.
+
 ### Fixed
 
 - **The startup display selectors in th06–th09.5 and th10 can now close through X** (`7b2458d`)
