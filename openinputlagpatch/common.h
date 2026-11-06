@@ -32,6 +32,7 @@ enum UiMessage {
 bool sha256_file(wchar_t* path, char* hash_str);
 const wchar_t* ui_message_text(UiMessage message);
 int show_ui_message(UiMessage message, unsigned int type, ...);
+int show_ui_yes_no_with_close(UiMessage message);
 void queue_ui_message(UiMessage message, unsigned int type, bool exit_after, const wchar_t* argument = nullptr);
 void show_queued_ui_messages();
 void __declspec(noreturn) panic_msgbox(UiMessage message, ...);

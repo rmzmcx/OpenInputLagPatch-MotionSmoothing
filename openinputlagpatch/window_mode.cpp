@@ -21,11 +21,13 @@ namespace {
 		HWND, HMENU, HINSTANCE, LPVOID);
 	typedef HWND(WINAPI* CreateWindowExW_t)(DWORD, LPCWSTR, LPCWSTR, DWORD, int, int, int, int,
 		HWND, HMENU, HINSTANCE, LPVOID);
+	typedef INT_PTR(WINAPI* DialogBoxParamA_t)(HINSTANCE, LPCSTR, HWND, DLGPROC, LPARAM);
 
 	CreateMutexA_t CreateMutexA_orig = nullptr;
 	CreateMutexW_t CreateMutexW_orig = nullptr;
 	CreateWindowExA_t CreateWindowExA_orig = nullptr;
 	CreateWindowExW_t CreateWindowExW_orig = nullptr;
+	DialogBoxParamA_t DialogBoxParamA_orig = nullptr;
 
 	WindowMode::Override override_mode = WindowMode::Override::None;
 	bool handled = false;
@@ -34,6 +36,13 @@ namespace {
 	HWND window_mode_applied = nullptr;
 	HWND hidden_startup_window = nullptr;
 	WindowMode::EarlyWindowStats early_window_stats = {};
+
+	struct Th10StartupDialogContext {
+		DLGPROC original_proc;
+		LPARAM original_param;
+	};
+
+	Th10StartupDialogContext* th10_startup_dialog_context;
 
 	// Touhou 6 to 9.5 have no way of changing the screen mode from inside the game, which is
 	// why vpatch (and this) asks on boot. Touhou 10 and up have their own option for it.
@@ -71,12 +80,12 @@ namespace {
 		if (!Config::AskWindowMode || !needs_window_mode(game))
 			return;
 
-		// Same question vpatch asks. Answering no makes the game run in window mode even if
-		// its own config asks for fullscreen, and vice versa.
-		int answer = show_ui_message(
-			UiMessage_AskFullscreen,
-			MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND
-		);
+		// Same question vpatch asks. No selects window mode even if the game's config asks
+		// for fullscreen, and vice versa. The title-bar X returns IDCANCEL without adding
+		// a Cancel button; exit before the game selects a mode or creates its window.
+		int answer = show_ui_yes_no_with_close(UiMessage_AskFullscreen);
+		if (answer == IDCANCEL)
+			ExitProcess(0);
 		override_mode = answer == IDYES ? WindowMode::Override::Fullscreen : WindowMode::Override::Windowed;
 		printf("Window mode: running in %s\n",
 			override_mode == WindowMode::Override::Windowed ? "window mode" : "fullscreen");
@@ -139,6 +148,64 @@ namespace {
 		show_queued_ui_messages();
 		return CreateWindowExW_orig(ex_style, class_name, window_name, style, x, y, width, height,
 			parent, menu, instance, param);
+	}
+
+	// th10's startup selector is resource dialog 0xCB. Its template has WS_CAPTION and a
+	// modal frame, but no WS_SYSMENU, so the system does not create a close button at all.
+	// Add the style before the dialog is shown and keep the game's own dialog procedure for
+	// everything except WM_CLOSE. The game's DialogFunc ignores WM_CLOSE, so closing the
+	// title-bar X has to end the process directly.
+	INT_PTR CALLBACK th10_startup_dialog_proc(
+		HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+		Th10StartupDialogContext* context =
+			(Th10StartupDialogContext*)GetWindowLongPtrW(hwnd, DWLP_USER);
+		if (context == nullptr)
+			context = th10_startup_dialog_context;
+		if (context == nullptr || context->original_proc == nullptr)
+			return FALSE;
+
+		if (message == WM_INITDIALOG) {
+			context = th10_startup_dialog_context;
+			SetWindowLongPtrW(hwnd, DWLP_USER, (LONG_PTR)context);
+
+			const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+			SetWindowLongPtrW(hwnd, GWL_STYLE, style | WS_SYSMENU);
+			SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+				SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+			HMENU menu = GetSystemMenu(hwnd, FALSE);
+			if (menu != nullptr) {
+				EnableMenuItem(menu, SC_CLOSE, MF_BYCOMMAND | MF_ENABLED);
+				DrawMenuBar(hwnd);
+			}
+
+			return context->original_proc(hwnd, message, wparam, context->original_param);
+		}
+		if (message == WM_CLOSE) {
+			// Returning IDCANCEL from the resource dialog only chooses windowed mode.
+			// Ending the process is what makes the X mean "do not launch the game".
+			ExitProcess(0);
+		}
+		if (message == WM_NCDESTROY) {
+			const INT_PTR result = context->original_proc(hwnd, message, wparam, lparam);
+			SetWindowLongPtrW(hwnd, DWLP_USER, 0);
+			return result;
+		}
+		return context->original_proc(hwnd, message, wparam, lparam);
+	}
+
+	INT_PTR WINAPI DialogBoxParamA_hook(
+		HINSTANCE instance, LPCSTR template_name, HWND parent,
+		DLGPROC dialog_proc, LPARAM init_param) {
+		if (game == TouhouGame::Th10 && (ULONG_PTR)template_name == 0xCB) {
+			Th10StartupDialogContext context = { dialog_proc, init_param };
+			th10_startup_dialog_context = &context;
+			const INT_PTR result = DialogBoxParamA_orig(
+				instance, template_name, parent, th10_startup_dialog_proc,
+				(LPARAM)&context);
+			th10_startup_dialog_context = nullptr;
+			return result;
+		}
+		return DialogBoxParamA_orig(instance, template_name, parent, dialog_proc, init_param);
 	}
 
 	HANDLE WINAPI CreateMutexA_hook(LPSECURITY_ATTRIBUTES attributes, BOOL initial_owner, LPCSTR name) {
@@ -371,6 +438,13 @@ void WindowMode::Hook() {
 	CreateWindowExW_orig =
 		(CreateWindowExW_t)iat_hook(NULL, "user32.dll", "CreateWindowExW",
 			(void*)&CreateWindowExW_hook);
+	if (game == TouhouGame::Th10) {
+		DialogBoxParamA_orig =
+			(DialogBoxParamA_t)iat_hook(NULL, "user32.dll", "DialogBoxParamA",
+				(void*)&DialogBoxParamA_hook);
+		if (DialogBoxParamA_orig == nullptr)
+			printf("Window mode: couldn't hook th10's startup dialog\n");
+	}
 }
 
 void WindowMode::AskIfNeeded() {

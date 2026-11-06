@@ -90,6 +90,68 @@ bool chinese_ui_is_active() {
 		PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_CHINESE ||
 		PRIMARYLANGID(GetSystemDefaultLangID()) == LANG_CHINESE;
 }
+
+HHOOK yes_no_close_hook;
+
+void fit_yes_no_message_box(HWND hwnd) {
+	HWND yes = GetDlgItem(hwnd, IDYES);
+	HWND no = GetDlgItem(hwnd, IDNO);
+	HWND cancel = GetDlgItem(hwnd, IDCANCEL);
+	if (yes == nullptr || no == nullptr || cancel == nullptr)
+		return;
+
+	RECT yes_rect = {};
+	RECT no_rect = {};
+	GetWindowRect(yes, &yes_rect);
+	GetWindowRect(no, &no_rect);
+	MapWindowPoints(nullptr, hwnd, (POINT*)&yes_rect, 2);
+	MapWindowPoints(nullptr, hwnd, (POINT*)&no_rect, 2);
+
+	const int button_width = yes_rect.right - yes_rect.left;
+	const int button_height = yes_rect.bottom - yes_rect.top;
+	const int button_gap = no_rect.left - yes_rect.right;
+	const int buttons_width = button_width * 2 + button_gap;
+	const int desired_client_width = yes_rect.left * 2 + buttons_width;
+
+	RECT client_rect = {};
+	RECT window_rect = {};
+	GetClientRect(hwnd, &client_rect);
+	GetWindowRect(hwnd, &window_rect);
+	const int old_window_width = window_rect.right - window_rect.left;
+	const int old_window_height = window_rect.bottom - window_rect.top;
+	const int nonclient_width = old_window_width - client_rect.right;
+	const int new_window_width = desired_client_width + nonclient_width;
+	const int window_x = window_rect.left + (old_window_width - new_window_width) / 2;
+
+	ShowWindow(cancel, SW_HIDE);
+	SetWindowPos(hwnd, nullptr, window_x, window_rect.top, new_window_width,
+		old_window_height, SWP_NOZORDER | SWP_NOACTIVATE);
+
+	const int button_x = (desired_client_width - buttons_width) / 2;
+	SetWindowPos(yes, nullptr, button_x, yes_rect.top, 0, 0,
+		SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+	SetWindowPos(no, nullptr, button_x + button_width + button_gap, no_rect.top, 0, 0,
+		SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+LRESULT CALLBACK yes_no_close_cbt_proc(int code, WPARAM wparam, LPARAM lparam) {
+	if (code == HCBT_ACTIVATE) {
+		HWND hwnd = (HWND)wparam;
+		wchar_t title[64] = {};
+		GetWindowTextW(hwnd, title, sizeof(title) / sizeof(title[0]));
+		if (wcscmp(title, ui_message_box_title) == 0 &&
+			GetDlgItem(hwnd, IDYES) != nullptr &&
+			GetDlgItem(hwnd, IDNO) != nullptr &&
+			GetDlgItem(hwnd, IDCANCEL) != nullptr) {
+			fit_yes_no_message_box(hwnd);
+			if (yes_no_close_hook != nullptr) {
+				UnhookWindowsHookEx(yes_no_close_hook);
+				yes_no_close_hook = nullptr;
+			}
+		}
+	}
+	return CallNextHookEx(nullptr, code, wparam, lparam);
+}
 } // namespace
 
 // Gets the SHA256 of a file
@@ -143,6 +205,18 @@ int show_ui_message(UiMessage message, unsigned int type, ...) {
 	va_end(args);
 
 	return MessageBoxW(NULL, buf, ui_message_box_title, type);
+}
+
+int show_ui_yes_no_with_close(UiMessage message) {
+	yes_no_close_hook = SetWindowsHookExW(
+		WH_CBT, yes_no_close_cbt_proc, nullptr, GetCurrentThreadId());
+	const int answer = MessageBoxW(nullptr, ui_message_text(message), ui_message_box_title,
+		MB_YESNOCANCEL | MB_DEFBUTTON1 | MB_ICONQUESTION | MB_SETFOREGROUND);
+	if (yes_no_close_hook != nullptr) {
+		UnhookWindowsHookEx(yes_no_close_hook);
+		yes_no_close_hook = nullptr;
+	}
+	return answer;
 }
 
 void queue_ui_message(UiMessage message, unsigned int type, bool exit_after, const wchar_t* argument) {
