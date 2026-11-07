@@ -11,6 +11,21 @@ is also the record of what has actually been verified rather than just what was 
 
 ### Fixed
 
+- **th20 restores GameFPS and replay-speed cooperation with current thprac** (`b54fe66`)
+
+  Current thprac (`284f8a2`) detects oilp and passes normal, replay-fast and replay-slow frame
+  rates through `oilp_set_game_fps`, `oilp_set_replay_skip_fps` and
+  `oilp_set_replay_slow_fps`; it no longer edits th20's engine-clock operand directly. th20 has
+  therefore dropped its old compatibility path that took the operand back and followed thprac's
+  private variable. Every engine-clock read now points at `Limiter::game_fps` again.
+
+  At high replay fast-forward multipliers the game's clock can remain far behind and stop
+  reaching `TickUntil()`, so releasing the shoot key did not re-read the target frame rate. The
+  Present hook now calls the neutral `Limiter::PollTargetFPS()` once per rendered frame, so key
+  release and FPS changes are noticed immediately. Checked in game with the updated thprac:
+  `GameFPS`, replay slowdown, high-multiplier fast-forward and recovery after releasing the key
+  all behave correctly.
+
 - **Single-stage practice replays no longer load a nonexistent next stage and crash** (`b211b97`)
 
   Single-stage practice replays in th10 and th13–th17 contain only the current stage header. The

@@ -10,6 +10,20 @@
 
 ### 修正
 
+- **th20 が現在の thprac と GameFPS・replay 速度制御を再び連携できるようになりました**（`b54fe66`）
+
+  更新された thprac（`284f8a2`）は oilp を検出すると、通常・replay 早送り・replay 低速の
+  フレームレートを `oilp_set_game_fps`、`oilp_set_replay_skip_fps`、
+  `oilp_set_replay_slow_fps` 経由で渡し、th20 のエンジン時計のオペランドを直接書き換えなく
+  なりました。これに合わせて th20 は、オペランドを取り戻して thprac の変数を追従する旧互換
+  処理を削除し、全エンジン時計の読み取り先を再び `Limiter::game_fps` に統一しました。
+
+  高倍率の replay 早送りではゲーム時計が大きく遅れ、`TickUntil()` に到達しないことがあり、
+  射撃キーを離しても目標 FPS が再読み込みされませんでした。現在は Present フックが描画
+  フレームごとに中立的な `Limiter::PollTargetFPS()` を呼ぶため、キーの解放や FPS の変更が
+  即座に反映されます。更新後の thprac で `GameFPS`、replay 減速、高倍率早送り、キーを離した
+  後の復帰が正しく動作することを実機で確認済みです。
+
 - **練習モードの単一ステージ replay が終了後に存在しない次ステージを読み込んでクラッシュしなくなりました**（`b211b97`）
 
   th10 と th13～th17 の単一ステージ練習 replay には、現在のステージの stage header だけが

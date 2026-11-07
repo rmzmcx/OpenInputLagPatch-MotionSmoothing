@@ -10,6 +10,18 @@
 
 ### 修复
 
+- **th20 恢复与新版 thprac 的 GameFPS 和 replay 变速协作**（`b54fe66`）
+
+  更新后的 thprac（`284f8a2`）检测到 oilp 后，会通过 `oilp_set_game_fps`、
+  `oilp_set_replay_skip_fps` 和 `oilp_set_replay_slow_fps` 传递普通、replay 快进和慢放
+  帧率，不再直接修改 th20 的时钟操作数。th20 因此移除了旧的“抢回操作数并跟随外部变量”
+  兼容层，所有游戏时钟读取重新统一指向 `Limiter::game_fps`。
+
+  高倍率 replay 快进时，游戏时钟可能长期落后而不再进入 `TickUntil()`，导致松开射键后目标
+  FPS 没有被重新读取。现在 Present hook 每个渲染帧调用一次中性的
+  `Limiter::PollTargetFPS()`，松开快进键、修改倍率或修改 `GameFPS` 都能立即被识别。
+  已用更新后的 thprac 实测：`GameFPS`、replay 减速、高倍率快进以及松开快进键后的恢复均正常。
+
 - **练习模式单面 replay 结束后不再误加载下一面并崩溃**（`b211b97`）
 
   th10 与 th13–th17 的单面练习 replay 只保存当前面的 stage header。关底对话结束后的原版
