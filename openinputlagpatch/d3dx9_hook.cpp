@@ -3,6 +3,7 @@
 #include <Windows.h>
 #include <d3d9.h>
 #include <stdio.h>
+#include "d3d9_hook.h"
 #include "patch_util.h"
 
 // Replaces D3DPOOL_MANAGED with D3DPOOL_DEFAULT because it's deprecated on D3D9Ex
@@ -11,7 +12,7 @@ auto D3DXCreateTexture_orig = (D3DXCreateTexture_ty)nullptr;
 HRESULT __stdcall D3DXCreateTexture_hook(LPDIRECT3DDEVICE9 pDevice, UINT Width, UINT Height, UINT MipLevels,
 	DWORD Usage, D3DFORMAT Format, D3DPOOL Pool, LPDIRECT3DTEXTURE9* ppTexture)
 {
-	if (Pool == D3DPOOL_MANAGED) {
+	if (d3d9ex_device_in_use() && Pool == D3DPOOL_MANAGED) {
 		Pool = D3DPOOL_DEFAULT;
 		Usage |= D3DUSAGE_DYNAMIC;
 	}
@@ -27,7 +28,7 @@ HRESULT __stdcall D3DXCreateTextureFromFileInMemoryEx_hook(LPDIRECT3DDEVICE9 pDe
 	UINT Width, UINT Height, UINT MipLevels, DWORD Usage, D3DFORMAT Format, D3DPOOL Pool, DWORD Filter, DWORD MipFilter,
 	D3DCOLOR ColorKey, void* pSrcInfo, PALETTEENTRY* pPalette, LPDIRECT3DTEXTURE9* ppTexture)
 {
-	if (Pool == D3DPOOL_MANAGED) {
+	if (d3d9ex_device_in_use() && Pool == D3DPOOL_MANAGED) {
 		Pool = D3DPOOL_DEFAULT;
 		Usage |= D3DUSAGE_DYNAMIC;
 	}

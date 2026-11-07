@@ -18,6 +18,9 @@ static IDirect3DDevice9* d3d9_device = nullptr;
 static D3D9PresentInfo present_info = {};
 static UINT native_output_width = 0;
 static UINT native_output_height = 0;
+static bool using_d3d9ex = false;
+
+static bool loaded_module_is_dgvoodoo2(const wchar_t* module_name);
 
 typedef HRESULT(__stdcall* Present9_t)(IDirect3DDevice9*, const RECT*, const RECT*, HWND,
 	const RGNDATA*);
@@ -285,6 +288,10 @@ IDirect3DDevice9* d3d9_hooked_device() {
 	return d3d9_device;
 }
 
+bool d3d9ex_device_in_use() {
+	return using_d3d9ex;
+}
+
 // Presents without going through the hooks other patches and tools put on the device (see above)
 HRESULT d3d9_present_bypassing_hooks() {
 	if (present_unhooked == nullptr || d3d9_device == nullptr)
@@ -318,7 +325,7 @@ static void capture_present_info(const D3DPRESENT_PARAMETERS* params) {
 	present_info.presentation_interval = params->PresentationInterval;
 	present_info.refresh_rate = params->FullScreen_RefreshRateInHz;
 	present_info.windowed = params->Windowed != FALSE;
-	present_info.d3d9ex = Config::D3D9Ex != 0;
+	present_info.d3d9ex = using_d3d9ex;
 }
 
 // Replaces D3DPOOL_MANAGED with D3DPOOL_DEFAULT because it's deprecated on D3D9Ex
@@ -440,7 +447,7 @@ HRESULT __stdcall Reset_hook(IDirect3DDevice9* self, D3DPRESENT_PARAMETERS* pPre
 		D3D9Overlay::Instance = nullptr;
 	}
 
-	if (Config::D3D9Ex) {
+	if (using_d3d9ex) {
 		D3DDISPLAYMODEEX display_mode = {};
 		get_fullscreen_display_mode(pPresentationParameters, &display_mode);
 
@@ -522,7 +529,7 @@ HRESULT __stdcall CreateDevice_hook(IDirect3D9* self, UINT Adapter, D3DDEVTYPE D
 	IDirect3DDevice9* device = nullptr;
 	HRESULT res = 0;
 
-	if (Config::D3D9Ex) {
+	if (using_d3d9ex) {
 		auto self_ex = (IDirect3D9Ex*)self;
 		if (pPresentationParameters->Windowed == FALSE) {
 			D3DDISPLAYMODEEX display_mode = {};
@@ -573,7 +580,7 @@ HRESULT __stdcall CreateDevice_hook(IDirect3D9* self, UINT Adapter, D3DDEVTYPE D
 	auto patch_data = (DWORD)Reset_hook;
 	patch_bytes(&device_vtbl[16], &patch_data, sizeof(DWORD));
 
-	if (Config::D3D9Ex) {
+	if (using_d3d9ex) {
 		CreateTexture_orig = (HRESULT(__stdcall*)(IDirect3DDevice9*, UINT, UINT, UINT, DWORD, D3DFORMAT, D3DPOOL, IDirect3DTexture9**, HANDLE*))device_vtbl[23];
 		patch_data = (DWORD)CreateTexture_hook;
 		patch_bytes(&device_vtbl[23], &patch_data, sizeof(DWORD));
@@ -676,8 +683,16 @@ IDirect3D9* WINAPI Direct3DCreate9_hook(UINT SDKVersion) {
 	// are all D3D8 titles, so this normally does nothing
 	WindowMode::AskIfNeeded();
 
+	const bool request_d3d9ex = Config::D3D9Ex != FALSE;
+	const bool dgvoodoo2 = loaded_module_is_dgvoodoo2(L"d3d9.dll");
+	using_d3d9ex = request_d3d9ex && !dgvoodoo2;
+	if (request_d3d9ex && dgvoodoo2) {
+		printf("dgVoodoo2 detected - skipping the Direct3D9Ex upgrade to preserve "
+			"exclusive-fullscreen aspect ratio after Reset.\n");
+	}
+
 	IDirect3D9* result = nullptr;
-	if (Config::D3D9Ex) {
+	if (using_d3d9ex) {
 		auto create_ex = (decltype(&Direct3DCreate9Ex))get_d3d9_function("Direct3DCreate9Ex");
 		if (!create_ex)
 			panic_msgbox(UiMessage_Direct3DCreate9ExNotFound);
@@ -728,12 +743,12 @@ static bool contains_ci(const wchar_t* haystack, const wchar_t* needle) {
 	return false;
 }
 
-// True only if the loaded d3d8.dll really is dgVoodoo2.
-// We identify it by its version resource: dgVoodoo2's D3D8.dll reports
-// ProductName "dgVoodoo" and FileDescription "dgVoodoo <version> - Direct3D8".
+// True only if the named loaded module really is dgVoodoo2.
+// We identify it by its version resource: dgVoodoo2's D3D8/D3D9 DLLs report
+// ProductName "dgVoodoo" and a FileDescription that names the wrapped API.
 // This is a precise check on purpose - an unknown wrapper should still get the warning.
-static bool loaded_d3d8_is_dgvoodoo2() {
-	HMODULE mod = GetModuleHandleA("d3d8.dll");
+static bool loaded_module_is_dgvoodoo2(const wchar_t* module_name) {
+	HMODULE mod = GetModuleHandleW(module_name);
 	if (mod == NULL)
 		return false;
 
@@ -787,7 +802,7 @@ void hook_d3d9() {
 			// dgVoodoo2 translates D3D8 to D3D11 instead of D3D9, so there is no
 			// Direct3DCreate9 import to hook. It is a known-good wrapper though, so we only
 			// skip the D3D9Ex upgrade quietly instead of warning the user.
-			if (loaded_d3d8_is_dgvoodoo2()) {
+			if (loaded_module_is_dgvoodoo2(L"d3d8.dll")) {
 				printf("dgVoodoo2 detected - it doesn't go through d3d9.dll. Skipping D3D9Ex upgrade.\n");
 			} else {
 				// No D3D9 to hook at all. That only costs the D3D9Ex upgrade (the extra input

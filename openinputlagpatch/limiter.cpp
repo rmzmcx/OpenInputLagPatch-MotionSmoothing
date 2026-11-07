@@ -456,7 +456,7 @@ void Limiter::Tick() {
 		printf("Frame limiter fell behind or target FPS has changed. Resyncing...\n");
 		last_wait_amount.QuadPart = wait_amount.QuadPart;
 		IDirect3DDevice9* device9 = d3d9_hooked_device();
-		if (Config::D3D9Ex && device9 && !temp_fps_change)
+		if (d3d9ex_device_in_use() && device9 && !temp_fps_change)
 			((IDirect3DDevice9Ex*)device9)->WaitForVBlank(0);
 		QueryPerformanceCounter(&cur_time);
 		start_time.QuadPart = cur_time.QuadPart;
