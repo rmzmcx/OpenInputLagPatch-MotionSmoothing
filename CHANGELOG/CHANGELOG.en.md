@@ -11,6 +11,15 @@ is also the record of what has actually been verified rather than just what was 
 
 ### Added
 
+- **Player interpolation now uses input-speed prediction; the old measured path is removed** (`76dd4ab`)
+
+  Player-body interpolation in th06–th20 now reads the games' own controls and computes extra-frame
+  steps from each character's speed table and multipliers. Unchanged input no longer falls back to
+  the previous frame's measured displacement; replay, pause and invalid input stop player
+  projection. th19 keeps its two independent versus input mappings and restores all polling and
+  manager state after reading them. Options, player shots and straight lasers keep their existing
+  interpolation paths. The result has been confirmed in game for every supported game.
+
 - **Double Spoiler (th12.5) gets frame interpolation** (`a720f19`, `dafdcdd`)
 
   The patch now takes over th12.5's three scene draw and Present sites. Extra presentations replay
