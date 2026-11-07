@@ -49,3 +49,5 @@ drops, and from th15 when the logic frame drops, together with the display refre
 
 **临时办法 / Workaround:** 把补帧目标降到 240fps 左右（反馈者在这个值下没有复现）。 / Lower
 the interpolation target to about 240fps (the reporter does not see it at that value).
+## win10/win11独占全屏配置Dgvoodoo2在四比三比例下切屏后变成拉伸画面
+反馈者发现使用oilp补丁后使用dgvoodoo2独占全屏配置会导致原本四比三比例的游戏画面在切屏后变成没有黑边框的拉伸画面
