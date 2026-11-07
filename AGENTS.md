@@ -53,8 +53,8 @@ When you are writing, please
 - 主仓库（oilp = 上游 [OpenInputLagPatch](https://github.com/khang06/OpenInputLagPatch) 的 fork）：
   `E:\东方MotionSmoothing相关\Github\OpenInputLagPatch-MotionSmoothing\`
 - **只做本地 commit。** push、打 tag、发 GitHub release 都由用户本人完成，不要推送、不要动远端。
-- 需求原文：仓库根目录的 `interpolation.md`，**只读、禁止修改**；补帧的实现进展写进 commit 信息。
-- 逆向笔记：`E:\东方MotionSmoothing相关\_analysis\th15\th15_interp_notes.md`（不在 git 仓库里），
+- 需求原文： `docs/interpolation.md`，**只读、禁止修改**；补帧的实现进展写进 commit 信息。
+- 逆向笔记(以th15为例)：`E:\东方MotionSmoothing相关\_analysis\th15\th15_interp_notes.md`（不在 git 仓库里），
   逆向结论继续往这里追加。
 - thprac 参考仓库：`E:\东方MotionSmoothing相关\Github\rueee-thprac`，只用来参考 / 查常量，**不要修改**。
 
@@ -85,15 +85,15 @@ When you are writing, please
    `Release/RELEASE_NOTES_v1.6.md`、`Release/UPDATES&USAGES_v1.6.md` 抄。
 5. commit 用**长说明**，写清「为什么」，不是 changelog。
    **每次修改后先等用户确认，确认之后再提交本地 commit。**
-6. `CHANGELOG/CHANGELOG.en.md` / `CHANGELOG/CHANGELOG.zh-CN.md` / `CHANGELOG/CHANGELOG.ja.md`
+6. `docs/CHANGELOG/CHANGELOG.en.md` / `docs/CHANGELOG/CHANGELOG.zh-CN.md` / `docs/CHANGELOG/CHANGELOG.ja.md`
    （中英日三版）：一般等用户确认功能没问题之后才写。
    只记录已经在游戏里实测确认的改动，标题用 `- **一句话**（`commit`）`，正文分段讲「为什么」，
    结尾要写清还没做的部分。
-7. `CHANGELOG/Non-AI-CHANGELOG.zh-CN.md` 由人工书写。未经用户明确允许，AI 严禁改动。
-8. `CHANGELOG/Non-AI-CHANGELOG.en.md` 与 `CHANGELOG/Non-AI-CHANGELOG.ja.md` 由 AI 维护，只翻译
-   `CHANGELOG/Non-AI-CHANGELOG.zh-CN.md` 的内容。严禁增删、改写、纠正或补充原文；发现原文有疑问时先向用户确认。
+7. `docs/CHANGELOG/Non-AI-CHANGELOG.zh-CN.md` 由人工书写。未经用户明确允许，AI 严禁改动。
+8. `docs/CHANGELOG/Non-AI-CHANGELOG.en.md` 与 `docs/CHANGELOG/Non-AI-CHANGELOG.ja.md` 由 AI 维护，只翻译
+   `docs/CHANGELOG/Non-AI-CHANGELOG.zh-CN.md` 的内容。严禁增删、改写、纠正或补充原文；发现原文有疑问时先向用户确认。
 9. `RELEASE_NOTES_v<ver>.md` 与 `UPDATES&USAGES_v<ver>.md` 的「改动 / 更新」内容必须取自
-   `CHANGELOG/Non-AI-CHANGELOG.zh-CN.md` 的对应版本。AI 不自行补写更新内容；若人工版缺少该版本记录，
+   `docs/CHANGELOG/Non-AI-CHANGELOG.zh-CN.md` 的对应版本。AI 不自行补写更新内容；若人工版缺少该版本记录，
    先在对话中列出本次更新内容，等用户写入人工版后再继续生成发布文档。安装、配置、校验等其它发布信息可单独维护。
 
 ## 构建 / 部署 / 实测流程
@@ -111,7 +111,7 @@ When you are writing, please
 
 ## 逆向工具
 
-- 优先使用 IDA-MCP 工作流，并使用Ida-Sequential技能来操控IDA。
+- 优先使用 IDA-MCP 工作流，并使用Ida-Sequential和Idapython技能来操控IDA。
 - IDA目录：`D:\IDA_Pro_v8.3_Portable\ida.exe`
 - 如果 IDA-MCP 不可用，先说明阻塞点并询问我，不要静默改用别的数据库。
 - 逆向过程中请使用`math mcp`提高逆向精度
