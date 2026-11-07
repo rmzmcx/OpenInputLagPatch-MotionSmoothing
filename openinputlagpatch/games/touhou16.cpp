@@ -12,10 +12,21 @@
 #include "tool_state.h"
 #include "touhou16.h"
 #include "player_interpolation.h"
+#include "replay_practice_end.h"
 
 using namespace Touhou16;
 
 CReplayManager** CReplayManager::InstancePtr = (CReplayManager**)0x004A6F08;
+
+static const ReplayPracticeGuard th16_replay_practice_guard = {
+	(const void* const*)0x004A6F08,
+	0x0C,
+	(int*)0x004A5790,
+	0xC4,
+	0x28,
+	0x10,
+	ReplayPracticeStageLayout::FixedHeaderTable,
+};
 
 int __fastcall th16_window_update_hook(void* self) {
 	Limiter::Tick();
@@ -1154,6 +1165,7 @@ static HRESULT th16_present_hook() {
 		th16_diag_key_down = false;
 	}
 
+	replay_practice_present_tick();
 	return result;
 }
 
@@ -1173,6 +1185,20 @@ static void th16_skip_present_setup(DWORD address) {
 }
 
 void th16_install_patches() {
+	{
+		static const BYTE expected[] = {
+			0xC7, 0x05, 0xC4, 0x17, 0x4C, 0x00, 0x0C, 0x00, 0x00, 0x00,
+		};
+		if (!replay_practice_patch_late_stage_exit(&th16_replay_practice_guard,
+			0x0043F240,
+			0x0042E492, (int*)0x004C17C4, 12, 0x0042E49C, 0x0042E4B8,
+			expected, sizeof(expected))) {
+			printf("th16 replay end state at 0x42E492 doesn't look like the known one, skipping!\n");
+		}
+		if (!replay_practice_patch_finish_call(0x004481EB, 0x0043F240)) {
+			printf("th16 replay input end call at 0x4481EB doesn't look like the known one, skipping!\n");
+		}
+	}
 	{
 		// Skip the original frame limiter
 		BYTE patch[] = { 0xEB, 0x4B };

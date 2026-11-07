@@ -63,6 +63,9 @@
     <ClCompile Include="common.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="replay_practice_end.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="games\touhou6.cpp">
       <Filter>Source Files\games</Filter>
     </ClCompile>
@@ -183,6 +186,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="common.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="replay_practice_end.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="games\touhou6.h">

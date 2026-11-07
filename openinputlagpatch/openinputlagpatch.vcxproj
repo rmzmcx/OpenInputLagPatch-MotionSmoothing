@@ -124,6 +124,7 @@
     <ClCompile Include="oilp_api.cpp" />
     <ClCompile Include="patch_util.cpp" />
     <ClCompile Include="present_diag.cpp" />
+    <ClCompile Include="replay_practice_end.cpp" />
     <ClCompile Include="sha256.c" />
     <ClCompile Include="games\touhou10.cpp" />
     <ClCompile Include="games\touhou6.cpp" />
@@ -168,6 +169,7 @@
     <ClInclude Include="patch_util.h" />
     <ClInclude Include="player_interpolation.h" />
     <ClInclude Include="present_diag.h" />
+    <ClInclude Include="replay_practice_end.h" />
     <ClInclude Include="sha256.h" />
     <ClInclude Include="games\touhou10.h" />
     <ClInclude Include="games\touhou6.h" />

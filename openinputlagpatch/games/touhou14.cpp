@@ -12,10 +12,21 @@
 #include "tool_state.h"
 #include "touhou14.h"
 #include "player_interpolation.h"
+#include "replay_practice_end.h"
 
 using namespace Touhou14;
 
 CReplayManager** CReplayManager::InstancePtr = (CReplayManager**)0x004DB688;
+
+static const ReplayPracticeGuard th14_replay_practice_guard = {
+	(const void* const*)0x004DB688,
+	0x10,
+	(int*)0x004F58A4,
+	0xC8,
+	0x28,
+	0x10,
+	ReplayPracticeStageLayout::FixedHeaderTable,
+};
 
 int __fastcall th14_window_update_hook(void* self) {
 	Limiter::Tick();
@@ -1117,6 +1128,7 @@ static HRESULT th14_present_hook() {
 		th14_diag_key_down = false;
 	}
 
+	replay_practice_present_tick();
 	return result;
 }
 
@@ -1136,6 +1148,17 @@ static void th14_skip_present_setup(DWORD address) {
 }
 
 void th14_install_patches() {
+	{
+		static const BYTE expected[] = {
+			0xC7, 0x05, 0x4C, 0x96, 0x4D, 0x00, 0x0C, 0x00, 0x00, 0x00,
+		};
+		if (!replay_practice_patch_late_stage_exit(&th14_replay_practice_guard,
+			0x00448EF0,
+			0x0043726E, (int*)0x004D964C, 12, 0x00437278, 0x00437296,
+			expected, sizeof(expected))) {
+			printf("th14 replay end state at 0x43726E doesn't look like the known one, skipping!\n");
+		}
+	}
 	{
 		// Skip the original frame limiter
 		BYTE patch[] = { 0xEB, 0x4A };

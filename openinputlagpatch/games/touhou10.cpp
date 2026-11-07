@@ -12,10 +12,136 @@
 #include "tool_state.h"
 #include "touhou10.h"
 #include "player_interpolation.h"
+#include "replay_practice_end.h"
 
 using namespace Touhou10;
 
 CReplayManager** CReplayManager::InstancePtr = (CReplayManager**)0x00477838;
+
+static int th10_replay_end_reported_stage = -1;
+static bool th10_replay_exit_pending;
+static unsigned int th10_replay_exit_frames;
+
+enum Th10StageEndDestination {
+	Th10ContinueStage,
+	Th10StageSixPath,
+	Th10EndReplay,
+	Th10StartNextStagePrompt,
+};
+
+static void* const th10_replay_state_address = (void*)0x0040AC90;
+static void* const th10_advance_stage_address = (void*)0x004175E0;
+static auto th10_stage_load = (unsigned int(__stdcall*)(void*))0x00417870;
+
+static void __declspec(naked) th10_advance_stage_or_hold() {
+	__asm {
+		cmp byte ptr [th10_replay_exit_pending], 0
+		jne skip
+		jmp dword ptr [th10_advance_stage_address]
+	skip:
+		ret
+	}
+}
+
+static unsigned int __stdcall th10_stage_load_task_or_hold() {
+	if (th10_replay_exit_pending)
+		return 0;
+	return th10_stage_load(*(void**)0x00477810);
+}
+
+static bool th10_patch_call(DWORD call_site, DWORD expected_target, void* replacement) {
+	BYTE* call = (BYTE*)call_site;
+	if (call[0] != 0xE8 || call_site + 5 + *(int*)(call + 1) != expected_target)
+		return false;
+	patch_call(call_site, replacement);
+	return true;
+}
+
+static void __declspec(naked) th10_finish_replay() {
+	__asm {
+		push 4
+		mov eax, 00491C28h
+		call dword ptr [th10_replay_state_address]
+		ret
+	}
+}
+
+static void th10_replay_present_tick() {
+	if (!th10_replay_exit_pending)
+		return;
+	if (--th10_replay_exit_frames != 0)
+		return;
+
+	th10_replay_exit_pending = false;
+	th10_replay_exit_frames = 0;
+	printf("Replay next-stage prompt finished after 90 game frames; "
+		"returning to the replay menu.\n");
+	th10_finish_replay();
+}
+
+static int __cdecl th10_stage_end_destination() {
+	void* manager = *(void**)0x00477838;
+	int stage = *(int*)0x00474C7C;
+	bool replaying = manager != nullptr &&
+		*(int*)((char*)manager + 0x10) == 1;
+
+	if (stage == 6)
+		return replaying ? Th10EndReplay : Th10StageSixPath;
+	if (!replaying || stage < 1 || stage > 5)
+		return Th10ContinueStage;
+
+	int next_stage = stage + 1;
+	void* next_header = *(void**)((char*)manager + 0xA0 +
+		0x24 * next_stage + 0x10);
+	if (next_header != nullptr)
+		return Th10ContinueStage;
+
+	if (th10_replay_end_reported_stage != stage) {
+		th10_replay_end_reported_stage = stage;
+		printf("Replay playback reached its recorded end at stage %d; "
+			"holding the next-stage prompt for 90 game frames.\n", stage);
+	}
+	if (!th10_replay_exit_pending) {
+		th10_replay_exit_pending = true;
+		th10_replay_exit_frames = 90;
+	}
+	return Th10StartNextStagePrompt;
+}
+
+static void __declspec(naked) th10_stage_end_branch_hook() {
+	__asm {
+		pushfd
+		pushad
+		call th10_stage_end_destination
+		cmp eax, Th10StartNextStagePrompt
+		je next_stage_prompt_path
+		cmp eax, Th10EndReplay
+		je replay_end_path
+		cmp eax, Th10StageSixPath
+		je stage_six_path
+		jmp original_path
+	next_stage_prompt_path:
+		popad
+		popfd
+		mov eax, 00416E98h
+		jmp eax
+	replay_end_path:
+		popad
+		popfd
+		mov eax, 00416E8Ah
+		jmp eax
+	stage_six_path:
+		popad
+		popfd
+		mov eax, 00416C64h
+		jmp eax
+	original_path:
+		popad
+		popfd
+		mov eax, 00416DE8h
+		jmp eax
+	}
+}
 
 int __stdcall th10_window_update_hook(void* self) {
 	Limiter::Tick();
@@ -1420,6 +1546,7 @@ static HRESULT th10_present_hook() {
 		th10_diag_key_down = false;
 	}
 
+	th10_replay_present_tick();
 	return result;
 }
 
@@ -1454,6 +1581,31 @@ static void th10_skip_present_setup(DWORD address, size_t size) {
 }
 
 void th10_install_patches() {
+	{
+		static const BYTE expected[] = {
+			0x0F, 0x85, 0x84, 0x01, 0x00, 0x00,
+		};
+		if (!replay_practice_patch_function(0x00416C5E,
+			(void*)th10_stage_end_branch_hook, expected, sizeof(expected))) {
+			printf("th10 replay end branch at 0x416C5E doesn't look like the known one, skipping!\n");
+		}
+	}
+	if (!th10_patch_call(0x00416EE8, 0x004175E0, (void*)th10_advance_stage_or_hold)) {
+		printf("th10 stage advance call at 0x416EE8 doesn't look like the known one, skipping!\n");
+	}
+	{
+		static const BYTE expected[] = {
+			0xA1, 0x10, 0x78, 0x47, 0x00, 0x50, 0xE8,
+		};
+		BYTE* task = (BYTE*)0x00417C70;
+		if (memcmp(task, expected, sizeof(expected)) == 0) {
+			patch_jmp(task, (void*)th10_stage_load_task_or_hold);
+			BYTE nops[7] = { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 };
+			patch_bytes(task + 5, nops, sizeof(nops));
+		} else {
+			printf("th10 stage load task at 0x417C70 doesn't look like the known one, skipping!\n");
+		}
+	}
 	{
 		// Skip the original frame limiter
 		BYTE patch[] = { 0xEB };
