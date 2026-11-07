@@ -10,6 +10,7 @@
 #include "tool_state.h"
 #include "touhou6.h"
 #include "config.h"
+#include "player_interpolation.h"
 
 using namespace Touhou6;
 
@@ -679,19 +680,44 @@ static unsigned char* th6_moved_shots[th6_player_bullets_max];
 static float th6_saved_shot_pos[th6_player_bullets_max][2];
 static unsigned int th6_moved_shot_count;
 
+// Extra presentations use the current control state and the character's speed table. The measured
+// step is still recorded for diagnostics and attached sprites, but it is no longer the body
+// interpolation path.
+static PlayerInterpolation::Step th6_player_predicted_step() {
+    PlayerInterpolation::Step step = { 0.0f, 0.0f };
+    if (CEngine::Instance->state != 2 || CGame::Instance->is_replay)
+        return step;
+
+    const unsigned int fresh_input = get_input();
+    const PlayerInterpolation::Controls after =
+        PlayerInterpolation::StandardControls(fresh_input, InputState::Focus);
+
+    step = PlayerInterpolation::FromSpeeds(after.direction, after.focus,
+        *(const float*)(th6_player + 2548), *(const float*)(th6_player + 2552),
+        *(const float*)(th6_player + 2556), *(const float*)(th6_player + 2560));
+    step.x *= *(const float*)(th6_player + 2512) * *(const float*)0x006C6EC0;
+    step.y *= *(const float*)(th6_player + 2516) * *(const float*)0x006C6EC0;
+    const float* pos = (const float*)(th6_player + th6_player_position_offset);
+    PlayerInterpolation::ClampStep(pos[0], pos[1], 8.0f, 376.0f, 16.0f, 432.0f, &step);
+    return step;
+}
+
 static void th6_player_advance(float t) {
     float* pos = (float*)(th6_player + th6_player_position_offset);
+    const PlayerInterpolation::Step predicted = th6_player_predicted_step();
+    const float extra_x = (predicted.x - th6_player_step.step_x) * t;
+    const float extra_y = (predicted.y - th6_player_step.step_y) * t;
     th6_saved_player_pos[0] = pos[0];
     th6_saved_player_pos[1] = pos[1];
-    pos[0] = pos[0] + th6_player_step.step_x * t;
-    pos[1] = pos[1] + th6_player_step.step_y * t;
+    pos[0] = pos[0] + predicted.x * t;
+    pos[1] = pos[1] + predicted.y * t;
 
     for (unsigned int orb = 0; orb < th6_orbs; ++orb) {
         float* orb_pos = (float*)(th6_player + th6_player_orb_positions_offset + orb * 12);
         th6_saved_orb_pos[orb][0] = orb_pos[0];
         th6_saved_orb_pos[orb][1] = orb_pos[1];
-        orb_pos[0] = orb_pos[0] + th6_orb_steps[orb].step_x * t;
-        orb_pos[1] = orb_pos[1] + th6_orb_steps[orb].step_y * t;
+        orb_pos[0] = orb_pos[0] + th6_orb_steps[orb].step_x * t + extra_x;
+        orb_pos[1] = orb_pos[1] + th6_orb_steps[orb].step_y * t + extra_y;
     }
 }
 

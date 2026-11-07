@@ -13,6 +13,7 @@
 #include "window_mode.h"
 #include "config.h"
 #include "touhou95.h"
+#include "player_interpolation.h"
 
 using namespace Touhou95;
 
@@ -1087,6 +1088,42 @@ static void th95_player_measure() {
     th95_player_delta_y = th95_player_motion_step[0][1];
 }
 
+static unsigned int th95_fresh_input() {
+	using Poll = unsigned short(__fastcall*)(int);
+	return PlayerInterpolation::PollWithoutState<71 * sizeof(unsigned short)>(
+		(Poll)0x00419AE0, 0, (void*)0x004BE218);
+}
+
+static PlayerInterpolation::Step th95_player_predicted_step() {
+    PlayerInterpolation::Step step = { 0.0f, 0.0f };
+    unsigned char* player = *(unsigned char**)0x004C4E70;
+    if (player == nullptr ||
+        (*CReplayManager::InstancePtr && (*CReplayManager::InstancePtr)->mode == 1))
+        return step;
+
+    const unsigned int fresh_input = th95_fresh_input();
+    const PlayerInterpolation::Controls after =
+        PlayerInterpolation::StandardControls(fresh_input, 1);
+
+    const unsigned char* shot_data = *(unsigned char* const*)(player + 1040);
+    if (shot_data == nullptr)
+        return step;
+    step = PlayerInterpolation::FromSpeeds(after.direction, after.focus,
+        *(const float*)(shot_data + 0x14), *(const float*)(shot_data + 0x18),
+        *(const float*)(shot_data + 0x1C), *(const float*)(shot_data + 0x20));
+    if ((fresh_input & 2) != 0) {
+        step.x *= 0.22f;
+        step.y *= 0.22f;
+    }
+    const float scale = *(const float*)(player + 10776) * *(const float*)0x004BDED8;
+    step.x *= scale;
+    step.y *= scale;
+    const float* position = (const float*)(player + th95_player_motion_offsets[0]);
+    PlayerInterpolation::ClampStep(position[0], position[1], -184.0f, 184.0f, 32.0f, 436.0f,
+        &step);
+    return step;
+}
+
 struct Th95ProjectedPlayerPoint {
     float* position;
     float value[3];
@@ -1101,6 +1138,9 @@ static void th95_player_advance(float t) {
     th95_projected_player_count = 0;
     if (player == nullptr || !th95_player_motion_ready)
         return;
+    const PlayerInterpolation::Step predicted = th95_player_predicted_step();
+    const float extra_x = predicted.x - th95_player_motion_step[0][0];
+    const float extra_y = predicted.y - th95_player_motion_step[0][1];
 
     for (unsigned int point = 0; point < th95_player_motion_points; ++point) {
         float* position =
@@ -1109,8 +1149,21 @@ static void th95_player_advance(float t) {
             th95_projected_player[th95_projected_player_count++];
         projected.position = position;
         memcpy(projected.value, position, sizeof(projected.value));
-        for (unsigned int axis = 0; axis < 3; ++axis)
-            position[axis] += th95_player_motion_step[point][axis] * t;
+        for (unsigned int axis = 0; axis < 3; ++axis) {
+            float delta = th95_player_motion_step[point][axis];
+            if (axis == 0) {
+                if (point == 0)
+                    delta = predicted.x;
+                else
+                    delta += extra_x;
+            } else if (axis == 1) {
+                if (point == 0)
+                    delta = predicted.y;
+                else
+                    delta += extra_y;
+            }
+            position[axis] += delta * t;
+        }
     }
 }
 

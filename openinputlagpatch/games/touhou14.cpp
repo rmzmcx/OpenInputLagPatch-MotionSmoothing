@@ -11,6 +11,7 @@
 #include "overlay.h"
 #include "tool_state.h"
 #include "touhou14.h"
+#include "player_interpolation.h"
 
 using namespace Touhou14;
 
@@ -476,9 +477,36 @@ static void th14_player_measure() {
 	}
 }
 
+static PlayerInterpolation::Step th14_player_predicted_step() {
+	PlayerInterpolation::Step step = { 0.0f, 0.0f };
+	void* player = *th14_player;
+	if (player == nullptr || th14_bullets_held() ||
+		(*CReplayManager::InstancePtr && (*CReplayManager::InstancePtr)->mode == 1))
+		return step;
+
+	const unsigned int fresh_input = ((unsigned short(__cdecl*)())0x00402490)();
+	const PlayerInterpolation::Controls after =
+		PlayerInterpolation::StandardControls(fresh_input, InputState::Focus);
+
+	step = PlayerInterpolation::FromSpeeds(after.direction, after.focus,
+		*(const int*)((const char*)player + 1524), *(const int*)((const char*)player + 1528),
+		*(const int*)((const char*)player + 1532), *(const int*)((const char*)player + 1536));
+	const float scale = *(const float*)((const char*)player + 55004) *
+		*(const float*)0x004D8F58 / 128.0f;
+	step.x *= scale;
+	step.y *= scale;
+	const float* position = (const float*)((const char*)player + th14_player_position);
+	PlayerInterpolation::ClampStep(position[0], position[1], -184.0f, 184.0f, 32.0f, 432.0f,
+		&step);
+	return step;
+}
+
 // Moves the player, its options and its shots t frames ahead of the state the game is in, and
 // remembers what it changed
 static void th14_player_advance(float t) {
+	const PlayerInterpolation::Step predicted = th14_player_predicted_step();
+	const float extra_x = predicted.x - (th14_tracked_count == 0 ? 0.0f : th14_tracked[0].motion->delta_x);
+	const float extra_y = predicted.y - (th14_tracked_count == 0 ? 0.0f : th14_tracked[0].motion->delta_y);
 	for (size_t i = 0; i < th14_tracked_count; ++i) {
 		const Th14Tracked& tracked = th14_tracked[i];
 		float* position = tracked.shift;
@@ -489,8 +517,19 @@ static void th14_player_advance(float t) {
 		                      ? Config::InterpolatePlayerShots
 		                      : Config::InterpolatePlayerBody;
 		if (move) {
-			position[0] += tracked.motion->delta_x * t;
-			position[1] += tracked.motion->delta_y * t;
+			float delta_x = tracked.motion->delta_x;
+			float delta_y = tracked.motion->delta_y;
+			if (tracked.kind != th14_kind_shot) {
+				if (i == 0) {
+					delta_x = predicted.x;
+					delta_y = predicted.y;
+				} else {
+					delta_x += extra_x;
+					delta_y += extra_y;
+				}
+			}
+			position[0] += delta_x * t;
+			position[1] += delta_y * t;
 		}
 	}
 }

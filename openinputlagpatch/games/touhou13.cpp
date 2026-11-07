@@ -11,6 +11,7 @@
 #include "overlay.h"
 #include "tool_state.h"
 #include "touhou13.h"
+#include "player_interpolation.h"
 
 using namespace Touhou13;
 
@@ -684,11 +685,42 @@ static void th13_player_measure() {
 	}
 }
 
+static PlayerInterpolation::Step th13_player_predicted_step() {
+	PlayerInterpolation::Step step = { 0.0f, 0.0f };
+	void* player = *th13_player;
+	if (player == nullptr || th13_bullets_held() ||
+		(*CReplayManager::InstancePtr && (*CReplayManager::InstancePtr)->mode == 1))
+		return step;
+
+	const unsigned int fresh_input = ((unsigned short(__cdecl*)())0x00471E20)();
+	const PlayerInterpolation::Controls after =
+		PlayerInterpolation::StandardControls(fresh_input, InputState::Focus);
+
+	step = PlayerInterpolation::FromSpeeds(after.direction, after.focus,
+		*(const int*)((const char*)player + 1484), *(const int*)((const char*)player + 1488),
+		*(const int*)((const char*)player + 1492), *(const int*)((const char*)player + 1496));
+	if (*(const int*)0x004BE7B8 == 1 && (fresh_input & 0x100) != 0) {
+		step.x *= 1.5f;
+		step.y *= 1.5f;
+	}
+	const float scale = *(const float*)((const char*)player + 41652) *
+		*(const float*)0x004C0A28 / 128.0f;
+	step.x *= scale;
+	step.y *= scale;
+	const float* position = (const float*)((const char*)player + th13_player_position);
+	PlayerInterpolation::ClampStep(position[0], position[1], -184.0f, 184.0f, 32.0f, 432.0f,
+		&step);
+	return step;
+}
+
 static void th13_player_advance(float t) {
 	th13_body_sprites = 0;
 	th13_option_sprites = 0;
 	th13_shot_sprites = 0;
 
+	const PlayerInterpolation::Step predicted = th13_player_predicted_step();
+	const float extra_x = predicted.x - (th13_tracked_count == 0 ? 0.0f : th13_tracked[0].motion->delta_x);
+	const float extra_y = predicted.y - (th13_tracked_count == 0 ? 0.0f : th13_tracked[0].motion->delta_y);
 	for (size_t i = 0; i < th13_tracked_count; ++i) {
 		const Th13Tracked& tracked = th13_tracked[i];
 		float* position = tracked.shift;
@@ -698,8 +730,17 @@ static void th13_player_advance(float t) {
 		                      ? Config::InterpolatePlayerShots
 		                      : Config::InterpolatePlayerBody;
 		if (move) {
-			position[0] += tracked.motion->delta_x * t;
-			position[1] += tracked.motion->delta_y * t;
+			float delta_x = tracked.motion->delta_x;
+			float delta_y = tracked.motion->delta_y;
+			if (tracked.kind == th13_kind_body) {
+				delta_x = predicted.x;
+				delta_y = predicted.y;
+			} else if (tracked.kind == th13_kind_option) {
+				delta_x += extra_x;
+				delta_y += extra_y;
+			}
+			position[0] += delta_x * t;
+			position[1] += delta_y * t;
 
 			switch (tracked.kind) {
 			case th13_kind_body:

@@ -10,6 +10,7 @@
 #include "tool_state.h"
 #include "touhou8.h"
 #include "config.h"
+#include "player_interpolation.h"
 
 using namespace Touhou8;
 
@@ -406,6 +407,29 @@ static bool th8_player_pos_known;
 // What the player moved by over the last frame, for the diagnostics
 static float th8_player_step_length;
 
+static PlayerInterpolation::Step th8_player_predicted_step() {
+    PlayerInterpolation::Step step = { 0.0f, 0.0f };
+    if (CEngine::Instance->state != 2 || ((CGame::Instance->flags >> 3) & 1) != 0)
+        return step;
+
+    const unsigned int fresh_input = get_input();
+    const PlayerInterpolation::Controls after =
+        PlayerInterpolation::StandardControls(fresh_input, InputState::Focus);
+
+    const unsigned char* normal = *(unsigned char* const*)(th8_player + 928372);
+    const unsigned char* focused = *(unsigned char* const*)(th8_player + 928376);
+    if (normal == nullptr || focused == nullptr)
+        return step;
+    step = PlayerInterpolation::FromSpeeds(after.direction, after.focus,
+        *(const float*)(normal + 36), *(const float*)(focused + 40),
+        *(const float*)(normal + 44), *(const float*)(focused + 48));
+    step.x *= *(const float*)(th8_player + 1028) * *(const float*)0x017CE8E0;
+    step.y *= *(const float*)(th8_player + 1032) * *(const float*)0x017CE8E0;
+    const float* pos = (const float*)(th8_player + th8_player_pos_offset);
+    PlayerInterpolation::ClampStep(pos[0], pos[1], 8.0f, 376.0f, 16.0f, 432.0f, &step);
+    return step;
+}
+
 // Called once a frame, from the frame's first draw pass (see th8_render_hook)
 static void th8_player_measure() {
     const float* pos = (const float*)(th8_player + th8_player_pos_offset);
@@ -442,8 +466,9 @@ static void th8_player_sprite_nudge(void* vm) {
     th8_player_sprite_pos[1] = pos[1];
 
     if (th8_extra_t != 0.0f) {
-        pos[0] = th8_player_sprite_pos[0] + th8_player_step[0] * th8_extra_t;
-        pos[1] = th8_player_sprite_pos[1] + th8_player_step[1] * th8_extra_t;
+        const PlayerInterpolation::Step predicted = th8_player_predicted_step();
+        pos[0] = th8_player_sprite_pos[0] + predicted.x * th8_extra_t;
+        pos[1] = th8_player_sprite_pos[1] + predicted.y * th8_extra_t;
     }
 }
 
@@ -723,6 +748,9 @@ static unsigned int th8_familiars_moved_count;
 
 static void th8_familiars_advance(float t) {
     th8_familiars_moved_count = 0;
+    const PlayerInterpolation::Step predicted = th8_player_predicted_step();
+    const float extra_x = predicted.x - th8_player_step[0];
+    const float extra_y = predicted.y - th8_player_step[1];
 
     for (unsigned int i = 0; i < th8_familiars_max; ++i) {
         if (*th8_familiar_draw_callback(i) == nullptr)
@@ -731,7 +759,8 @@ static void th8_familiars_advance(float t) {
         float* pos = (float*)(th8_familiar_slot(i) + th8_familiar_pos_offset);
         for (int c = 0; c < 3; ++c) {
             th8_familiars_saved_pos[th8_familiars_moved_count][c] = pos[c];
-            pos[c] = pos[c] + th8_familiars_step[i][c] * t;
+            const float extra = c == 0 ? extra_x : c == 1 ? extra_y : 0.0f;
+            pos[c] = pos[c] + (th8_familiars_step[i][c] + extra) * t;
         }
         th8_familiars_moved[th8_familiars_moved_count] = i;
         ++th8_familiars_moved_count;

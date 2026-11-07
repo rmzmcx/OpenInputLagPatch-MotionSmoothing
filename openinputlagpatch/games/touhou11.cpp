@@ -11,6 +11,7 @@
 #include "overlay.h"
 #include "tool_state.h"
 #include "touhou11.h"
+#include "player_interpolation.h"
 
 using namespace Touhou11;
 
@@ -424,6 +425,29 @@ static void th11_player_measure() {
 	}
 }
 
+static PlayerInterpolation::Step th11_player_predicted_step() {
+	PlayerInterpolation::Step step = { 0.0f, 0.0f };
+	void* player = *th11_player;
+	if (player == nullptr || th11_bullets_held() ||
+		(*CReplayManager::InstancePtr && (*CReplayManager::InstancePtr)->mode == 1))
+		return step;
+
+	const unsigned int fresh_input = ((unsigned short(__cdecl*)())0x00457DC0)();
+	const PlayerInterpolation::Controls after =
+		PlayerInterpolation::StandardControls(fresh_input, InputState::Focus);
+
+	step = PlayerInterpolation::FromSpeeds(after.direction, after.focus,
+		*(const int*)((const char*)player + 2192), *(const int*)((const char*)player + 2196),
+		*(const int*)((const char*)player + 2200), *(const int*)((const char*)player + 2204));
+	const float scale = *(const float*)0x004A7948 / 128.0f;
+	step.x *= scale;
+	step.y *= scale;
+	const float* position = (const float*)((const char*)player + th11_player_position);
+	PlayerInterpolation::ClampStep(position[0], position[1], -184.0f, 184.0f, 32.0f, 432.0f,
+		&step);
+	return step;
+}
+
 // Moves the player and everything it put on screen t frames ahead of the state the game is in, and
 // remembers what it changed
 static void th11_player_advance(float t) {
@@ -440,10 +464,16 @@ static void th11_player_advance(float t) {
 		return;
 
 	if (Config::InterpolatePlayerBody) {
+		const PlayerInterpolation::Step predicted = th11_player_predicted_step();
+		const float extra_x = predicted.x - th11_body_motion.delta_x;
+		const float extra_y = predicted.y - th11_body_motion.delta_y;
+		Th11Motion predicted_body = th11_body_motion;
+		predicted_body.delta_x = predicted.x;
+		predicted_body.delta_y = predicted.y;
 		if (th11_motion_frame == th11_body_motion.frame) {
 			// The draw copies this into the body animation object, and it runs below, so the
 			// position the extra presentation draws is this one
-			th11_shift_position((float*)((char*)player + th11_player_position), th11_body_motion, t);
+			th11_shift_position((float*)((char*)player + th11_player_position), predicted_body, t);
 			++th11_body_sprites;
 		}
 
@@ -453,7 +483,10 @@ static void th11_player_advance(float t) {
 			for (int sprite = 0; sprite < 2; ++sprite) {
 				if (th11_option_sprites[i][sprite] == nullptr)
 					continue;
-				th11_shift_sprite(th11_option_sprites[i][sprite], th11_option_motions[i], t);
+				Th11Motion option_motion = th11_option_motions[i];
+				option_motion.delta_x += extra_x;
+				option_motion.delta_y += extra_y;
+				th11_shift_sprite(th11_option_sprites[i][sprite], option_motion, t);
 				++th11_option_sprites_moved;
 			}
 		}

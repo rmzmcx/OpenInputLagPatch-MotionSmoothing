@@ -10,6 +10,7 @@
 #include "config.h"
 #include "overlay.h"
 #include "tool_state.h"
+#include "player_interpolation.h"
 #include "touhou19.h"
 
 using namespace Touhou19;
@@ -467,6 +468,8 @@ static void th19_bullets_undo() {
 // same position moved t of that step further along - extrapolation, so the picture is ahead of
 // the game's own frame rather than behind it. A step larger than 48px isn't a step: the player
 // died, respawned or the stage changed, and 0 is used for the frame the measurement starts on.
+// When the controls have changed, each side is polled again and the integer speed table in
+// 0x546ED0 supplies the step for the presentation.
 //
 // The position the game draws the player from is read by its own drawing code, which runs in the
 // render walk the extra presentations replay, so writing the position is all an extra
@@ -474,7 +477,11 @@ static void th19_bullets_undo() {
 // the projected one.
 
 // Every object the game draws keeps its own position at +0x68C - that is where the drawing
-// helpers all over 0x41xxxx read it from - and the player's own position is one of those
+// helpers all over 0x41xxxx read it from - and the player's own position is one of those.
+// PlayerInf's draw task (0x546080) copies +0x68C to the embedded animation object's +0x614
+// (PlayerInf+0x664) at 0x546118 immediately before queueing it. The copy is therefore an output
+// of the draw task, not the source projection has to move: move only +0x68C and let the draw task
+// reproduce that value in +0x664.
 static const size_t th19_player_position = 0x68C;
 
 // Whether a pointer looks like something that can be read, so a read that has gone stale can't
@@ -489,8 +496,22 @@ struct Th19PlayerMotion {
 	bool tracked;
 	float position[3]; // where the game's own presentation showed it
 	float delta[3];    // how far it moved to get there (the last game frame's step)
+	PlayerInterpolation::Step predicted;
 };
 static Th19PlayerMotion th19_player_motion[2];
+
+using Th19InputPoll = unsigned int(__fastcall*)(void*);
+static char** const th19_input_manager = (char**)rebase(0x005D19B0);
+static void* const* const th19_input_states = (void* const*)rebase(0x005D19A0);
+static Th19InputPoll const th19_input_poll = (Th19InputPoll)rebase(0x004B7E60);
+using Th19InputUpdate = int(__cdecl*)();
+static Th19InputUpdate const th19_input_update = (Th19InputUpdate)rebase(0x004B8760);
+static float* const th19_time_scale = (float*)rebase(0x005C6418);
+static const size_t th19_input_manager_size = 0x2FA0; // input manager allocated by 0x4B8D70
+static const size_t th19_input_state_size = 0x2C0;
+static const size_t th19_input_state_count = 4;
+static const size_t th19_input_mapped_input = 0x29C;
+static unsigned int th19_mapped_input[th19_input_state_count];
 
 // What the presentation being drawn moved, so it can be put back (one per side: a presentation
 // draws both players). The position is the player's own (PlayerInf+0x68C), which is what the
@@ -507,6 +528,24 @@ static unsigned int th19_players_moved;
 static float th19_player_movement; // the largest step seen since the last dump, in pixels
 static float th19_player_step_sum; // the steps added up, over the frames that had one
 static unsigned int th19_player_step_frames;
+static unsigned int th19_player_prediction_frames;
+static unsigned int th19_player_input_changes;
+static unsigned int th19_player_fresh_input_zero;
+static unsigned int th19_player_prediction_zero;
+static float th19_player_prediction_movement;
+static unsigned int th19_player_draw_cache_matches;
+struct Th19PredictionSample {
+	unsigned int current_input;
+	unsigned int raw_input;
+	unsigned int fresh_input;
+	unsigned int mapped_input;
+	int speeds[4];
+	float player_scale;
+	float global_scale;
+	float position[2];
+	PlayerInterpolation::Step step;
+};
+static Th19PredictionSample th19_prediction_sample[2];
 
 // Measures where the player is and how far it moved, once per game frame, where the game has
 // finished its own (in the present before the extra presentations run)
@@ -557,6 +596,169 @@ static void th19_player_measure() {
 	}
 }
 
+static int th19_input_index(size_t side) {
+	char* manager = *th19_input_manager;
+	if (manager == nullptr)
+		return -1;
+	const int count = *(const int*)(manager + 0x14);
+	const int index = *(const int*)(manager + sizeof(int) * (2956 + side));
+	return index >= 0 && index < count && index < 4 ? index : -1;
+}
+
+static unsigned int th19_current_input(int index) {
+	if (index < 0)
+		return 0;
+	void* state = th19_input_states[index];
+	return state == nullptr ? 0 : *(const unsigned int*)((char*)state + 0x29C);
+}
+
+static unsigned int th19_fresh_input(int index) {
+	char* manager = *th19_input_manager;
+	if (manager == nullptr || index < 0)
+		return 0;
+
+	char* device = manager + 0x20 + (size_t)index * 980;
+	// The poller records the active device in manager[6] as well as updating its own history.
+	int* const selected = (int*)(manager + 0x18);
+	const int saved_selected = *selected;
+	const unsigned int input = PlayerInterpolation::PollWithoutState<980>(
+		th19_input_poll, device, device);
+	*selected = saved_selected;
+	return input;
+}
+
+// 0x4B8760 is the game's complete per-frame input pass: it polls every device slot and builds
+// the logical per-side states. Call it only between snapshots, then restore every input block so
+// the extra presentation cannot consume a poll or alter the next logic frame.
+static void th19_poll_mapped_inputs() {
+	char* manager = *th19_input_manager;
+	if (manager == nullptr)
+		return;
+
+	unsigned char manager_saved[th19_input_manager_size];
+	memcpy(manager_saved, manager, th19_input_manager_size);
+
+	void* states[th19_input_state_count];
+	bool state_valid[th19_input_state_count];
+	unsigned char state_saved[th19_input_state_count][th19_input_state_size];
+	for (size_t index = 0; index < th19_input_state_count; ++index) {
+		states[index] = th19_input_states[index];
+		state_valid[index] = th19_readable(states[index], th19_input_state_size);
+		if (state_valid[index])
+			memcpy(state_saved[index], states[index], th19_input_state_size);
+	}
+
+	static char* const input_blocks[] = {
+		(char*)rebase(0x00623E40),
+		(char*)rebase(0x00624100),
+		(char*)rebase(0x006243C0),
+		(char*)rebase(0x00624680),
+		(char*)rebase(0x00624940),
+		(char*)rebase(0x00624C00),
+		(char*)rebase(0x00624EC0),
+		(char*)rebase(0x00625180),
+	};
+	const size_t block_count = sizeof(input_blocks) / sizeof(input_blocks[0]);
+	unsigned char block_saved[8][th19_input_state_size];
+	for (size_t index = 0; index < block_count; ++index)
+		memcpy(block_saved[index], input_blocks[index], th19_input_state_size);
+
+	th19_input_update();
+
+	for (size_t index = 0; index < th19_input_state_count; ++index) {
+		void* state = th19_input_states[index];
+		th19_mapped_input[index] = th19_readable((char*)state + th19_input_mapped_input, 4) ?
+			*(const unsigned int*)((char*)state + th19_input_mapped_input) : 0;
+	}
+
+	for (size_t index = 0; index < block_count; ++index)
+		memcpy(input_blocks[index], block_saved[index], th19_input_state_size);
+	for (size_t index = 0; index < th19_input_state_count; ++index) {
+		if (state_valid[index])
+			memcpy(states[index], state_saved[index], th19_input_state_size);
+	}
+	memcpy(manager, manager_saved, th19_input_manager_size);
+}
+
+static PlayerInterpolation::Step th19_player_predicted_step(
+	size_t side, const Th19PlayerMotion& motion) {
+	PlayerInterpolation::Step step = { 0.0f, 0.0f };
+	if (motion.player == nullptr || th19_bullets_held())
+		return step;
+
+	const int index = th19_input_index(side);
+	if (index < 0)
+		return step;
+	const unsigned int current_input = th19_current_input(index);
+	const unsigned int raw_input = th19_fresh_input(index);
+	const unsigned int mapped_input =
+		index < th19_input_state_count ? th19_mapped_input[index] : 0;
+	const unsigned int fresh_input = (mapped_input & 0xF0) != 0 ? mapped_input : raw_input;
+	Th19PredictionSample& sample = th19_prediction_sample[side];
+	sample.current_input = current_input;
+	sample.raw_input = raw_input;
+	sample.fresh_input = fresh_input;
+	sample.mapped_input = mapped_input;
+	const char* player = (const char*)motion.player;
+	for (size_t i = 0; i < 4; ++i)
+		sample.speeds[i] = *(const int*)(player + 0x20E4 + i * 4);
+	sample.player_scale = *(const float*)(player + 0x211C);
+	sample.global_scale = *th19_time_scale;
+	sample.position[0] = *(const float*)(player + th19_player_position);
+	sample.position[1] = *(const float*)(player + th19_player_position + 4);
+	const PlayerInterpolation::Controls before =
+		PlayerInterpolation::StandardControls(current_input, 0x08);
+	const PlayerInterpolation::Controls after =
+		PlayerInterpolation::StandardControls(fresh_input, 0x08);
+	++th19_player_prediction_frames;
+	if (current_input != 0 && fresh_input == 0)
+		++th19_player_fresh_input_zero;
+	++th19_player_input_changes;
+	// Temporary new-algorithm-only test for th19: do not fall back to the old measured delta.
+	// Prefer the freshly mapped side input; if the poll did not expose a direction, the current
+	// logical side is still a valid direction and its speed can be projected.
+	const PlayerInterpolation::Controls input =
+		after.direction != PlayerInterpolation::DirectionNone ? after : before;
+	if (input.direction == PlayerInterpolation::DirectionNone) {
+		sample.step = step;
+		return step;
+	}
+
+	step = PlayerInterpolation::FromSpeeds(input.direction, input.focus,
+		*(const int*)(player + 0x20E4), *(const int*)(player + 0x20E8),
+		*(const int*)(player + 0x20EC), *(const int*)(player + 0x20F0));
+	const float scale = *(const float*)(player + 0x211C) *
+		*th19_time_scale / 128.0f;
+	step.x *= scale;
+	step.y *= scale;
+	const float* position = (const float*)(player + th19_player_position);
+	// 0x42FCE0 clamps the fixed-point x accumulator to +/-17920 before dividing by 128.
+	PlayerInterpolation::ClampStep(position[0], position[1], -140.0f, 140.0f, 32.0f, 432.0f,
+		&step);
+	const float move = sqrtf(step.x * step.x + step.y * step.y);
+	if (move > th19_player_prediction_movement)
+		th19_player_prediction_movement = move;
+	if (move == 0.0f)
+		++th19_player_prediction_zero;
+	sample.step = step;
+	return step;
+}
+
+// Poll once per game frame, where the input state the game processed for this frame is still
+// valid. Calling the poller again for every extra presentation is risky in th19 because its input
+// manager is shared by both sides.
+static void th19_player_predict() {
+	th19_poll_mapped_inputs();
+	for (size_t side = 0; side < 2; ++side) {
+		Th19PlayerMotion& motion = th19_player_motion[side];
+		motion.predicted.x = 0.0f;
+		motion.predicted.y = 0.0f;
+		if (!motion.tracked || motion.player == nullptr || th19_bullets_held())
+			continue;
+		motion.predicted = th19_player_predicted_step(side, motion);
+	}
+}
+
 // Moves both players t of the last frame's step ahead of where the game's presentation left them
 static void th19_player_advance(float t) {
 	for (size_t side = 0; side < 2; ++side) {
@@ -573,23 +775,44 @@ static void th19_player_advance(float t) {
 			!th19_readable((char*)motion.player + th19_player_position, 12))
 			continue;
 
+		const PlayerInterpolation::Step predicted = motion.predicted;
 		float* position = (float*)((char*)motion.player + th19_player_position);
 		for (int axis = 0; axis < 3; ++axis) {
 			th19_player_written_value[side][axis] = position[axis];
-			position[axis] += motion.delta[axis] * t;
+			const float delta =
+				axis == 0 ? predicted.x : axis == 1 ? predicted.y : motion.delta[axis];
+			position[axis] += delta * t;
 		}
 		th19_player_written[side] = position;
 		++th19_players_moved;
 	}
 }
 
+// The draw task copies +0x68C to +0x664 immediately before queueing the player. Reading it back
+// after the replay distinguishes a bad projection from the task not having run at all.
+static void th19_player_check_draw_cache() {
+	th19_player_draw_cache_matches = 0;
+	for (size_t side = 0; side < 2; ++side) {
+		const Th19PlayerMotion& motion = th19_player_motion[side];
+		if (!motion.tracked || motion.player == nullptr)
+			continue;
+		const float* position = (const float*)((char*)motion.player + th19_player_position);
+		const float* drawn = (const float*)((char*)motion.player + 0x664);
+		if (!th19_readable(position, 8) || !th19_readable(drawn, 8))
+			continue;
+		if (position[0] == drawn[0] && position[1] == drawn[1])
+			++th19_player_draw_cache_matches;
+	}
+}
+
 static void th19_player_undo() {
 	for (size_t side = 0; side < 2; ++side) {
-		if (th19_player_written[side] != nullptr) {
-			for (int axis = 0; axis < 3; ++axis)
-				th19_player_written[side][axis] = th19_player_written_value[side][axis];
-			th19_player_written[side] = nullptr;
-		}
+		float* position = th19_player_written[side];
+		if (position == nullptr)
+			continue;
+		for (int axis = 0; axis < 3; ++axis)
+			position[axis] = th19_player_written_value[side][axis];
+		th19_player_written[side] = nullptr;
 	}
 }
 
@@ -1243,9 +1466,33 @@ static void th19_diag_dump() {
 		th19_players_moved, (unsigned int)th19_players_saved_max,
 		th19_player_step_frames != 0 ? th19_player_step_sum / (float)th19_player_step_frames : 0.0f,
 		th19_player_step_frames);
+	fprintf(file,
+		"player prediction: %u frame(s), %u input change(s), %u fresh input zero, "
+		"%u zero step(s), up to %.2f px\n",
+		th19_player_prediction_frames, th19_player_input_changes,
+		th19_player_fresh_input_zero, th19_player_prediction_zero,
+		th19_player_prediction_movement);
+	for (size_t side = 0; side < 2; ++side) {
+		const Th19PredictionSample& sample = th19_prediction_sample[side];
+		fprintf(file,
+			"player prediction raw side %u: logical/raw/mapped 0x%08x/0x%08x/0x%08x, "
+			"speeds %d/%d/%d/%d, scale %.6f*%.6f, position %.3f/%.3f, step %.4f/%.4f\n",
+			(unsigned int)side, sample.current_input, sample.raw_input, sample.mapped_input,
+			sample.speeds[0], sample.speeds[1], sample.speeds[2], sample.speeds[3],
+			sample.player_scale, sample.global_scale, sample.position[0], sample.position[1],
+			sample.step.x, sample.step.y);
+	}
+	fprintf(file, "player draw cache: %u of %u copy the projected position after the replay\n",
+		th19_player_draw_cache_matches, (unsigned int)th19_players_saved_max);
 	th19_player_movement = 0.0f;
 	th19_player_step_sum = 0.0f;
 	th19_player_step_frames = 0;
+	th19_player_prediction_frames = 0;
+	th19_player_input_changes = 0;
+	th19_player_fresh_input_zero = 0;
+	th19_player_prediction_zero = 0;
+	th19_player_prediction_movement = 0.0f;
+	th19_player_draw_cache_matches = 0;
 	// If this isn't 0 the game's own logic saw a projected position, which would make the player
 	// move further per frame than it should
 	fprintf(file, "player: %u restore(s) wrong (should stay 0)\n", th19_player_restore_mismatch);
@@ -1348,6 +1595,7 @@ static void th19_extra_presentation(float t) {
 	th19_stage_save();
 	th19_in_extra = true;
 	th19_render_objects();
+	th19_player_check_draw_cache();
 	th19_in_extra = false;
 	th19_stage_restore();
 	th19_lasers_undo();
@@ -1412,6 +1660,7 @@ static HRESULT th19_present_hook() {
 	// per game frame, where the game's own work for it has finished (see th19_player_measure,
 	// th19_shots_measure and th19_lasers_measure)
 	th19_player_measure();
+	th19_player_predict();
 	th19_shots_measure();
 	th19_lasers_measure();
 

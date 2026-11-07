@@ -10,6 +10,7 @@
 #include "d3d9_hook.h"
 #include "config.h"
 #include "overlay.h"
+#include "player_interpolation.h"
 #include "touhou143.h"
 
 using namespace Touhou143;
@@ -447,6 +448,8 @@ static void th143_bullets_undo() {
 // options and shots have their own motion. Their actual draw positions are
 // therefore measured once per game frame, next to the game's own Present, and
 // each extra presentation applies that measured delta without running updates.
+// If the controls changed since that frame, 0x44CB40's integer speed table is
+// used to rebuild the body step; option sprites receive the same correction.
 static void** const th143_player = (void**)0x004E6B88;
 static const size_t th143_player_position = 0x5E0;
 static const size_t th143_player_state = 0x684;
@@ -643,7 +646,48 @@ static void th143_player_measure() {
 	}
 }
 
+static unsigned int th143_fresh_input() {
+	using Poll = unsigned int(__cdecl*)();
+	return PlayerInterpolation::PollWithoutState<0x2C0>(
+		(Poll)0x00401FA0, (void*)0x004E19D0);
+}
+
+static const Th143SpriteMotion* th143_body_motion() {
+	void* player = *th143_player;
+	if (player == nullptr || !th143_body_tracked)
+		return nullptr;
+	return th143_sprite_motion((float*)((char*)player + th143_player_position));
+}
+
+static PlayerInterpolation::Step th143_player_predicted_step() {
+	PlayerInterpolation::Step step = { 0.0f, 0.0f };
+	void* player = *th143_player;
+	if (player == nullptr || th143_bullets_held() ||
+		(*CReplayManager::InstancePtr && (*CReplayManager::InstancePtr)->mode == 1))
+		return step;
+
+	const unsigned int fresh_input = th143_fresh_input();
+	const PlayerInterpolation::Controls after =
+		PlayerInterpolation::StandardControls(fresh_input, InputState::Focus);
+
+	step = PlayerInterpolation::FromSpeeds(after.direction, after.focus,
+		*(const int*)((const char*)player + 0x5F4), *(const int*)((const char*)player + 0x5F8),
+		*(const int*)((const char*)player + 0x5FC), *(const int*)((const char*)player + 0x600));
+	const float scale = *(const float*)((const char*)player + 0xD6DC) *
+		*(const float*)0x004E40B0 / 128.0f;
+	step.x *= scale;
+	step.y *= scale;
+	const float* position = (const float*)((const char*)player + th143_player_position);
+	PlayerInterpolation::ClampStep(position[0], position[1], -184.0f, 184.0f, 32.0f, 432.0f,
+		&step);
+	return step;
+}
+
 static void th143_player_advance(float t) {
+	const PlayerInterpolation::Step predicted = th143_player_predicted_step();
+	const Th143SpriteMotion* body = th143_body_motion();
+	const float extra_x = predicted.x - (body == nullptr ? 0.0f : body->delta_x);
+	const float extra_y = predicted.y - (body == nullptr ? 0.0f : body->delta_y);
 	for (size_t i = 0; i < th143_tracked_count; ++i) {
 		float* position = th143_tracked[i];
 		for (int axis = 0; axis < 3; ++axis)
@@ -653,8 +697,19 @@ static void th143_player_advance(float t) {
 		                      ? Config::InterpolatePlayerShots
 		                      : Config::InterpolatePlayerBody;
 		if (move && motion != nullptr) {
-			position[0] += motion->delta_x * t;
-			position[1] += motion->delta_y * t;
+			float delta_x = motion->delta_x;
+			float delta_y = motion->delta_y;
+			if (th143_tracked_kind[i] != th143_kind_shot) {
+				if (i == 0) {
+					delta_x = predicted.x;
+					delta_y = predicted.y;
+				} else {
+					delta_x += extra_x;
+					delta_y += extra_y;
+				}
+			}
+			position[0] += delta_x * t;
+			position[1] += delta_y * t;
 		}
 	}
 }

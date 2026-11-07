@@ -10,6 +10,7 @@
 #include "tool_state.h"
 #include "touhou7.h"
 #include "config.h"
+#include "player_interpolation.h"
 
 using namespace Touhou7;
 
@@ -827,18 +828,45 @@ static unsigned char* th7_moved_shots[th7_player_bullets_max];
 static float th7_saved_shot_pos[th7_player_bullets_max][3];
 static unsigned int th7_moved_shot_count;
 
+static PlayerInterpolation::Step th7_player_predicted_step() {
+    PlayerInterpolation::Step step = { 0.0f, 0.0f };
+    if (CEngine::Instance->state != 2 || ((CGame::Instance->flags >> 3) & 1) != 0)
+        return step;
+
+    const unsigned int fresh_input = get_input();
+    const PlayerInterpolation::Controls after =
+        PlayerInterpolation::StandardControls(fresh_input, InputState::Focus);
+
+    const unsigned char* shooter_data = *(unsigned char* const*)(th7_player + 0xB7E70);
+    if (shooter_data == nullptr)
+        return step;
+    step = PlayerInterpolation::FromSpeeds(after.direction, after.focus,
+        *(const float*)(shooter_data + 0x24), *(const float*)(shooter_data + 0x28),
+        *(const float*)(shooter_data + 0x2C), *(const float*)(shooter_data + 0x30));
+    step.x *= *(const float*)(th7_player + 0x23F0) * *(const float*)0x00575AC8;
+    step.y *= *(const float*)(th7_player + 0x23F4) * *(const float*)0x00575AC8;
+    const float* pos = (const float*)(th7_player + th7_player_pos_offset);
+    PlayerInterpolation::ClampStep(pos[0], pos[1], 8.0f, 376.0f, 16.0f, 432.0f, &step);
+    return step;
+}
+
 static void th7_player_advance(float t) {
     float* pos = (float*)(th7_player + th7_player_pos_offset);
+    const PlayerInterpolation::Step predicted = th7_player_predicted_step();
+    const float extra_x = (predicted.x - th7_player_step.step[0]) * t;
+    const float extra_y = (predicted.y - th7_player_step.step[1]) * t;
     for (int c = 0; c < 3; ++c) {
         th7_saved_player_pos[c] = pos[c];
-        pos[c] = pos[c] + th7_player_step.step[c] * t;
+        pos[c] = pos[c] + (c == 0 ? predicted.x : c == 1 ? predicted.y
+                                                        : th7_player_step.step[c]) * t;
     }
 
     for (unsigned int option = 0; option < 2; ++option) {
         float* option_pos = (float*)(th7_player + th7_player_options_offset + option * 12);
         for (int c = 0; c < 3; ++c) {
             th7_saved_option_pos[option][c] = option_pos[c];
-            option_pos[c] = option_pos[c] + th7_option_steps[option].step[c] * t;
+            option_pos[c] = option_pos[c] + th7_option_steps[option].step[c] * t +
+                            (c == 0 ? extra_x : c == 1 ? extra_y : 0.0f);
         }
     }
 }

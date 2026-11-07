@@ -11,6 +11,7 @@
 #include "overlay.h"
 #include "tool_state.h"
 #include "touhou12.h"
+#include "player_interpolation.h"
 
 using namespace Touhou12;
 
@@ -723,6 +724,29 @@ static void th12_player_measure() {
 	}
 }
 
+static PlayerInterpolation::Step th12_player_predicted_step() {
+	PlayerInterpolation::Step step = { 0.0f, 0.0f };
+	void* player = *th12_player;
+	if (player == nullptr || th12_bullets_held() ||
+		(*CReplayManager::InstancePtr && (*CReplayManager::InstancePtr)->mode == 1))
+		return step;
+
+	const unsigned int fresh_input = ((unsigned short(__cdecl*)())0x004635D0)();
+	const PlayerInterpolation::Controls after =
+		PlayerInterpolation::StandardControls(fresh_input, InputState::Focus);
+
+	step = PlayerInterpolation::FromSpeeds(after.direction, after.focus,
+		*(const int*)((const char*)player + 2448), *(const int*)((const char*)player + 2452),
+		*(const int*)((const char*)player + 2456), *(const int*)((const char*)player + 2460));
+	const float scale = *(const float*)0x004B2ED0 / 128.0f;
+	step.x *= scale;
+	step.y *= scale;
+	const float* position = (const float*)((const char*)player + th12_player_position);
+	PlayerInterpolation::ClampStep(position[0], position[1], -184.0f, 184.0f, 32.0f, 432.0f,
+		&step);
+	return step;
+}
+
 // Moves the player and everything it put on screen t frames ahead of the state the game is in, and
 // remembers what it changed
 static void th12_player_advance(float t) {
@@ -739,8 +763,14 @@ static void th12_player_advance(float t) {
 		return;
 
 	if (Config::InterpolatePlayerBody) {
+		const PlayerInterpolation::Step predicted = th12_player_predicted_step();
+		const float extra_x = predicted.x - th12_body_motion.delta_x;
+		const float extra_y = predicted.y - th12_body_motion.delta_y;
+		Th12Motion predicted_body = th12_body_motion;
+		predicted_body.delta_x = predicted.x;
+		predicted_body.delta_y = predicted.y;
 		if (th12_motion_frame == th12_body_motion.frame) {
-			th12_shift((float*)((char*)player + th12_player_position), th12_body_motion, t);
+			th12_shift((float*)((char*)player + th12_player_position), predicted_body, t);
 			++th12_body_sprites;
 		}
 
@@ -750,7 +780,10 @@ static void th12_player_advance(float t) {
 			for (int sprite = 0; sprite < 2; ++sprite) {
 				if (th12_option_sprite_pos[i][sprite] == nullptr)
 					continue;
-				th12_shift(th12_option_sprite_pos[i][sprite], th12_option_motions[i], t);
+				Th12Motion option_motion = th12_option_motions[i];
+				option_motion.delta_x += extra_x;
+				option_motion.delta_y += extra_y;
+				th12_shift(th12_option_sprite_pos[i][sprite], option_motion, t);
 				++th12_option_sprites;
 			}
 		}

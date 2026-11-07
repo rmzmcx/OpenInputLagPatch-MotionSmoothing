@@ -166,6 +166,7 @@
     <ClInclude Include="limiter.h" />
     <ClInclude Include="overlay_font.h" />
     <ClInclude Include="patch_util.h" />
+    <ClInclude Include="player_interpolation.h" />
     <ClInclude Include="present_diag.h" />
     <ClInclude Include="sha256.h" />
     <ClInclude Include="games\touhou10.h" />

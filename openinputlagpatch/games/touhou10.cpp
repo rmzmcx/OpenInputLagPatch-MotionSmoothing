@@ -11,6 +11,7 @@
 #include "overlay.h"
 #include "tool_state.h"
 #include "touhou10.h"
+#include "player_interpolation.h"
 
 using namespace Touhou10;
 
@@ -832,6 +833,32 @@ static void th10_player_measure() {
 	}
 }
 
+// Read the controller without advancing its press/release history, then rebuild the body move from
+// the live controls and speed fields. The speed fields are the integers
+// the player's own update adds to its fixed-point position; the output position is in 1/100 px.
+static PlayerInterpolation::Step th10_player_predicted_step() {
+	PlayerInterpolation::Step step = { 0.0f, 0.0f };
+	void* player = *th10_player;
+	if (player == nullptr || th10_held() ||
+		(*CReplayManager::InstancePtr && (*CReplayManager::InstancePtr)->mode == 1))
+		return step;
+
+	const unsigned int fresh_input = ((unsigned short(__cdecl*)())0x0044AD30)();
+	const PlayerInterpolation::Controls after =
+		PlayerInterpolation::StandardControls(fresh_input, InputState::Focus);
+
+	step = PlayerInterpolation::FromSpeeds(after.direction, after.focus,
+		*(const int*)((const char*)player + 980), *(const int*)((const char*)player + 984),
+		*(const int*)((const char*)player + 988), *(const int*)((const char*)player + 992));
+	const float scale = *(const float*)0x00476F78 / 100.0f;
+	step.x *= scale;
+	step.y *= scale;
+	const float* position = (const float*)((const char*)player + th10_player_position);
+	PlayerInterpolation::ClampStep(position[0], position[1], -184.0f, 184.0f, 32.0f, 432.0f,
+		&step);
+	return step;
+}
+
 // Moves the player and everything it put on screen t frames ahead of the state the game is in, and
 // remembers what it changed
 static void th10_player_advance(float t) {
@@ -848,18 +875,24 @@ static void th10_player_advance(float t) {
 		return;
 
 	if (Config::InterpolatePlayerBody) {
+		const PlayerInterpolation::Step predicted = th10_player_predicted_step();
+		const float extra_x = predicted.x - th10_body_motion.delta_x;
+		const float extra_y = predicted.y - th10_body_motion.delta_y;
+		Th10Motion predicted_body = th10_body_motion;
+		predicted_body.delta_x = predicted.x;
+		predicted_body.delta_y = predicted.y;
 		if (th10_motion_frame == th10_body_motion.frame) {
 			// The render walk copies this position into the animation the player object itself
 			// carries (drawn at +0x354/+0x358), so moving it here covers the body; the sprite the
 			// player wears as a handle is placed by the update instead (FUN_004492F0), so it moves
 			// with it, the way th13's notes ended up covering both.
-			th10_shift_position((float*)((char*)player + th10_player_position), th10_body_motion, t);
-			th10_shift_position((float*)((char*)player + th10_player_drawn), th10_body_motion, t);
+			th10_shift_position((float*)((char*)player + th10_player_position), predicted_body, t);
+			th10_shift_position((float*)((char*)player + th10_player_drawn), predicted_body, t);
 			++th10_body_sprites;
 			const unsigned int handle = *(const unsigned int*)((char*)player + th10_player_sprite);
 			void* sprite = th10_sprite_by_handle(handle);
 			if (sprite != nullptr) {
-				th10_shift_sprite(sprite, th10_body_motion, t);
+				th10_shift_sprite(sprite, predicted_body, t);
 			} else if (handle != 0) {
 				++th10_sprites_untracked;
 			}
@@ -871,7 +904,10 @@ static void th10_player_advance(float t) {
 			for (int sprite = 0; sprite < 2; ++sprite) {
 				if (th10_option_sprites[i][sprite] == nullptr)
 					continue;
-				th10_shift_sprite(th10_option_sprites[i][sprite], th10_option_motions[i], t);
+				Th10Motion option_motion = th10_option_motions[i];
+				option_motion.delta_x += extra_x;
+				option_motion.delta_y += extra_y;
+				th10_shift_sprite(th10_option_sprites[i][sprite], option_motion, t);
 				++th10_option_sprites_moved;
 			}
 		}

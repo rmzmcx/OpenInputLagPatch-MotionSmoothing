@@ -10,6 +10,7 @@
 #include "overlay.h"
 #include "tool_state.h"
 #include "touhou185.h"
+#include "player_interpolation.h"
 
 using namespace Touhou185;
 
@@ -594,7 +595,47 @@ static void th185_player_measure() {
 	th185_track_scanned_sprites();
 }
 
+static const Th185SpriteMotion* th185_body_motion() {
+	if (th185_tracked_count == 0)
+		return nullptr;
+	return th185_sprite_motion(th185_tracked[0].position);
+}
+
+static unsigned int th185_fresh_input() {
+	using Poll = unsigned int(__cdecl*)();
+	return PlayerInterpolation::PollWithoutState<0x2C0>(
+		(Poll)0x00401CA0, (void*)0x004CE3F0);
+}
+
+static PlayerInterpolation::Step th185_player_predicted_step() {
+	PlayerInterpolation::Step step = { 0.0f, 0.0f };
+	void* player = *th185_player;
+	if (player == nullptr)
+		return step;
+
+	const unsigned int fresh_input = th185_fresh_input();
+	const PlayerInterpolation::Controls after =
+		PlayerInterpolation::StandardControls(fresh_input, 0x08);
+
+	step = PlayerInterpolation::FromSpeeds(after.direction, after.focus,
+		*(const int*)((const char*)player + 295092), *(const int*)((const char*)player + 295096),
+		*(const int*)((const char*)player + 295100), *(const int*)((const char*)player + 295104));
+	const int processing_scale = *(const int*)0x004D10AC;
+	const float scale = *(const float*)((const char*)player + 295148) *
+		*(const float*)0x004D0FE0 * (processing_scale > 0 ? processing_scale : 0) / 12800.0f;
+	step.x *= scale;
+	step.y *= scale;
+	const float* position = (const float*)((const char*)player + th185_player_position);
+	PlayerInterpolation::ClampStep(position[0], position[1], -184.0f, 184.0f, 32.0f, 432.0f,
+		&step);
+	return step;
+}
+
 static void th185_player_advance(float t) {
+	const PlayerInterpolation::Step predicted = th185_player_predicted_step();
+	const Th185SpriteMotion* body = th185_body_motion();
+	const float extra_x = predicted.x - (body == nullptr ? 0.0f : body->delta_x);
+	const float extra_y = predicted.y - (body == nullptr ? 0.0f : body->delta_y);
 	for (size_t i = 0; i < th185_tracked_count; ++i) {
 		Th185TrackedSprite& tracked = th185_tracked[i];
 		for (int axis = 0; axis < 3; ++axis)
@@ -606,8 +647,19 @@ static void th185_player_advance(float t) {
 				? Config::InterpolatePlayerBody
 				: Config::InterpolatePlayerShots || Config::InterpolateBulletsAndLasers;
 		if (move && motion != nullptr) {
-			tracked.position[0] += motion->delta_x * t;
-			tracked.position[1] += motion->delta_y * t;
+			float delta_x = motion->delta_x;
+			float delta_y = motion->delta_y;
+			if (tracked.kind == th185_kind_body) {
+				if (i == 0) {
+					delta_x = predicted.x;
+					delta_y = predicted.y;
+				} else {
+					delta_x += extra_x;
+					delta_y += extra_y;
+				}
+			}
+			tracked.position[0] += delta_x * t;
+			tracked.position[1] += delta_y * t;
 		}
 	}
 }

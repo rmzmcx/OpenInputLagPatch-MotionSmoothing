@@ -11,6 +11,7 @@
 #include "overlay.h"
 #include "tool_state.h"
 #include "touhou17.h"
+#include "player_interpolation.h"
 
 using namespace Touhou17;
 
@@ -703,9 +704,49 @@ static void th17_player_measure() {
 	}
 }
 
+static const Th17SpriteMotion* th17_body_motion() {
+	if (th17_tracked_count == 0)
+		return nullptr;
+	return th17_sprite_motion(th17_tracked[0]);
+}
+
+static unsigned int th17_fresh_input() {
+	using Poll = unsigned short(__cdecl*)();
+	return PlayerInterpolation::PollWithoutState<0x2C0>(
+		(Poll)0x00401AB0, (void*)0x004B3230);
+}
+
+static PlayerInterpolation::Step th17_player_predicted_step() {
+	PlayerInterpolation::Step step = { 0.0f, 0.0f };
+	void* player = *th17_player;
+	if (player == nullptr || th17_bullets_held() ||
+		(*CReplayManager::InstancePtr && (*CReplayManager::InstancePtr)->mode == 1))
+		return step;
+
+	const unsigned int fresh_input = th17_fresh_input();
+	const PlayerInterpolation::Controls after =
+		PlayerInterpolation::StandardControls(fresh_input, InputState::Focus);
+
+	step = PlayerInterpolation::FromSpeeds(after.direction, after.focus,
+		*(const int*)((const char*)player + 102032), *(const int*)((const char*)player + 102036),
+		*(const int*)((const char*)player + 102040), *(const int*)((const char*)player + 102044));
+	const float scale = *(const float*)((const char*)player + 102088) *
+		*(const float*)0x004B5918 / 128.0f;
+	step.x *= scale;
+	step.y *= scale;
+	const float* position = (const float*)((const char*)player + th17_player_position);
+	PlayerInterpolation::ClampStep(position[0], position[1], -184.0f, 184.0f, 32.0f, 432.0f,
+		&step);
+	return step;
+}
+
 // Moves the player, its beast spirits and its shots t frames ahead of the state the game is in, and
 // remembers what it changed
 static void th17_player_advance(float t) {
+	const PlayerInterpolation::Step predicted = th17_player_predicted_step();
+	const Th17SpriteMotion* body = th17_body_motion();
+	const float extra_x = predicted.x - (body == nullptr ? 0.0f : body->delta_x);
+	const float extra_y = predicted.y - (body == nullptr ? 0.0f : body->delta_y);
 	for (size_t i = 0; i < th17_tracked_count; ++i) {
 		float* position = th17_tracked[i];
 		for (int axis = 0; axis < 3; ++axis)
@@ -715,8 +756,19 @@ static void th17_player_advance(float t) {
 		                      ? Config::InterpolatePlayerShots
 		                      : Config::InterpolatePlayerBody;
 		if (move && motion != nullptr) {
-			position[0] += motion->delta_x * t;
-			position[1] += motion->delta_y * t;
+			float delta_x = motion->delta_x;
+			float delta_y = motion->delta_y;
+			if (th17_tracked_kind[i] != th17_kind_shot) {
+				if (i == 0) {
+					delta_x = predicted.x;
+					delta_y = predicted.y;
+				} else {
+					delta_x += extra_x;
+					delta_y += extra_y;
+				}
+			}
+			position[0] += delta_x * t;
+			position[1] += delta_y * t;
 		}
 	}
 }

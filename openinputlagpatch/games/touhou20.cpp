@@ -11,6 +11,7 @@
 #include "config.h"
 #include "overlay.h"
 #include "tool_state.h"
+#include "player_interpolation.h"
 #include "touhou20.h"
 
 using namespace Touhou20;
@@ -617,6 +618,7 @@ static void th20_bullet_find_managers();
 // position moved t of that step further along - extrapolation, so the picture is ahead of the
 // game's own frame rather than behind it. A step larger than 48px isn't a step: the player died,
 // respawned or the stage changed, and 0 is used for the frame the measurement starts on.
+// When the controls have changed, 0x4F9C30's integer speed table supplies the step.
 //
 // All three copies of the position are moved - a presentation that moved only one of them would
 // leave whichever one the drawing reads behind - and all three are put back right after the render
@@ -637,6 +639,12 @@ static float* th20_player_written[th20_player_copies_count];
 static float th20_player_written_value[th20_player_copies_count][3];
 static unsigned int th20_players_moved;
 static float th20_player_movement; // the largest step seen since the last dump, in pixels
+
+using Th20InputPoll = unsigned int(__fastcall*)(void*);
+static char** const th20_input_manager = (char**)rebase(0x005B8898);
+static void* const* const th20_input_states = (void* const*)rebase(0x005B889C);
+static Th20InputPoll const th20_input_poll = (Th20InputPoll)rebase(0x00421B00);
+static float* const th20_time_scale = (float*)rebase(0x005AEFE4);
 
 // The player object, or null while there is none
 static void* th20_player() {
@@ -679,6 +687,66 @@ static void th20_player_measure() {
 	motion.tracked = true;
 }
 
+static int th20_input_index(const void* player) {
+	char* manager = *th20_input_manager;
+	if (manager == nullptr)
+		return -1;
+	const int selector = *(const int*)((const char*)player + 0x14854);
+	const int count = *(const int*)(manager + 0x14);
+	const int index = *(const int*)(manager + sizeof(int) * (2956 + selector));
+	return index >= 0 && index < count && index < 4 ? index : -1;
+}
+
+static unsigned int th20_current_input(int index) {
+	if (index < 0)
+		return 0;
+	void* state = th20_input_states[index];
+	return state == nullptr ? 0 : *(const unsigned int*)((char*)state + 0x29C);
+}
+
+static unsigned int th20_fresh_input(int index) {
+	char* manager = *th20_input_manager;
+	if (manager == nullptr || index < 0)
+		return 0;
+
+	char* device = manager + 0x20 + (size_t)index * 0x3D4;
+	// The poller records the active device in manager[6] as well as updating its own history.
+	int* const selected = (int*)(manager + 0x18);
+	const int saved_selected = *selected;
+	const unsigned int input = PlayerInterpolation::PollWithoutState<0x3D4>(
+		th20_input_poll, device, device);
+	*selected = saved_selected;
+	return input;
+}
+
+static PlayerInterpolation::Step th20_player_predicted_step(const Th20PlayerMotion& motion) {
+	PlayerInterpolation::Step step = { 0.0f, 0.0f };
+	const bool replay = *(const int*)rebase(0x005C6128) == replay_state &&
+		*(const DWORD*)rebase(0x005C60FC) != 0;
+	if (motion.player == nullptr || th20_bullets_held() || replay)
+		return step;
+
+	const int index = th20_input_index(motion.player);
+	if (index < 0)
+		return step;
+	const unsigned int fresh_input = th20_fresh_input(index);
+	const PlayerInterpolation::Controls after =
+		PlayerInterpolation::StandardControls(fresh_input, InputState::Focus);
+
+	const char* player = (const char*)motion.player;
+	step = PlayerInterpolation::FromSpeeds(after.direction, after.focus,
+		*(const int*)(player + 0x20B4), *(const int*)(player + 0x20B8),
+		*(const int*)(player + 0x20BC), *(const int*)(player + 0x20C0));
+	const float scale = *(const float*)(player + 0x20EC) *
+		*th20_time_scale / 128.0f;
+	step.x *= scale;
+	step.y *= scale;
+	const float* position = (const float*)(player + th20_player_position);
+	PlayerInterpolation::ClampStep(position[0], position[1], -184.0f, 184.0f, 32.0f, 432.0f,
+		&step);
+	return step;
+}
+
 // Moves the player t of the last frame's step ahead of where the game's presentation left it
 static void th20_player_advance(float t) {
 	for (size_t i = 0; i < th20_player_copies_count; ++i)
@@ -689,13 +757,15 @@ static void th20_player_advance(float t) {
 	if (!motion.tracked || motion.player == nullptr || th20_bullets_held())
 		return;
 
+	const PlayerInterpolation::Step predicted = th20_player_predicted_step(motion);
 	for (size_t i = 0; i < th20_player_copies_count; ++i) {
 		float* position = (float*)((char*)motion.player + th20_player_copies[i]);
 		if (!th20_readable(position, 12))
 			continue;
 		for (int axis = 0; axis < 3; ++axis) {
 			th20_player_written_value[i][axis] = position[axis];
-			position[axis] += motion.delta[axis] * t;
+			const float delta = axis == 0 ? predicted.x : axis == 1 ? predicted.y : motion.delta[axis];
+			position[axis] += delta * t;
 		}
 		th20_player_written[i] = position;
 	}
@@ -732,17 +802,17 @@ static void th20_player_undo() {
 // extra presentation has to do - there is no second copy to chase.
 //
 // There is no velocity to read and no list to walk from here: the pool's entries are all in one
-// array, and which of them are in play is worked out by measuring, the way the player itself is.
-// An entry that is not in use doesn't move, so it has no step to project and is left alone; one
-// that was just handed a new shot jumps, so its step is thrown away for that frame (anything past
-// 48px is a respawn rather than a step). That also means no state has to be kept about which
-// entries the game considers live.
+// array, and the state at slot+0x9C says whether a slot is in use. A slot that was free in the
+// previous measurement has no step to project on its first active frame; otherwise a shot spawned
+// while the player strafes would inherit the spawn offset as if it were its own motion. Anything
+// past 48px is likewise treated as a replacement rather than a step.
 
 static const size_t th20_shot_pool = 0x22B4;   // in the player: the first of 256 slots of 0x124
 static const size_t th20_shot_slots = 0x100;
 static const size_t th20_shot_stride = 0x124;
 static const size_t th20_shot_position = 0x50; // in a slot: its position, 3 floats
 static const size_t th20_shot_sprite_id = 0x18; // ...and the id of the sprite that draws it
+static const size_t th20_shot_state = 0x9C;    // 1 is moving; 0 and 2 are not
 
 // In the sprite (animation) manager: how to find a sprite by id, and where its drawn position is.
 // The game looks a sprite up in FUN_0044CD00, whose array branch is reproduced here:
@@ -769,6 +839,8 @@ static char* th20_sprite_for_id(unsigned int id) {
 struct Th20ShotMotion {
 	void* player;
 	bool tracked;
+	bool live;
+	unsigned int sprite_id;
 	float position[3];
 	float delta[3];
 };
@@ -793,29 +865,35 @@ static void th20_shots_measure() {
 	char* player = (char*)th20_player();
 	for (size_t slot = 0; slot < th20_shot_slots; ++slot) {
 		Th20ShotMotion& motion = th20_shot_motion[slot];
-		const float* position = player != nullptr ? th20_shot_position_at(player, slot) : nullptr;
-		if (position == nullptr) {
+		char* object = player != nullptr
+			? player + th20_shot_pool + th20_shot_stride * slot
+			: nullptr;
+		const float* position = object != nullptr ? th20_shot_position_at(player, slot) : nullptr;
+		const int state = object != nullptr ? *(const int*)(object + th20_shot_state) : 0;
+		const unsigned int sprite_id =
+			object != nullptr ? *(const unsigned int*)(object + th20_shot_sprite_id) : 0;
+		if (position == nullptr || state != 1) {
 			motion.tracked = false;
+			motion.live = false;
 			continue;
 		}
 
-		float move_squared = 0.0f;
 		for (int axis = 0; axis < 3; ++axis) {
 			float delta = 0.0f;
-			if (motion.tracked && motion.player == player) {
+			if (motion.tracked && motion.live && motion.player == player &&
+				motion.sprite_id == sprite_id) {
 				delta = position[axis] - motion.position[axis];
 				if (!(fabsf(delta) <= 48.0f))
 					delta = 0.0f;
 			}
 			motion.delta[axis] = delta;
 			motion.position[axis] = position[axis];
-			move_squared += delta * delta;
 		}
 		motion.player = player;
 		motion.tracked = true;
-		// An entry the game isn't using stayed where it was, which is what tells the two apart
-		if (move_squared > 0.0f)
-			++th20_shots_in_play;
+		motion.live = true;
+		motion.sprite_id = sprite_id;
+		++th20_shots_in_play;
 	}
 }
 
@@ -833,9 +911,8 @@ static void th20_shots_advance(float t) {
 
 	for (size_t slot = 0; slot < th20_shot_slots; ++slot) {
 		const Th20ShotMotion& motion = th20_shot_motion[slot];
-		if (!motion.tracked || motion.player == nullptr)
+		if (!motion.tracked || !motion.live || motion.player == nullptr)
 			continue;
-		// An entry the game isn't using is one that didn't move; there is nothing to project for it
 		if (motion.delta[0] == 0.0f && motion.delta[1] == 0.0f && motion.delta[2] == 0.0f)
 			continue;
 		float* position = th20_shot_position_at((char*)motion.player, slot);

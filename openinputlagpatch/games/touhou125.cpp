@@ -11,6 +11,7 @@
 #include "overlay.h"
 #include "tool_state.h"
 #include "touhou125.h"
+#include "player_interpolation.h"
 
 using namespace Touhou125;
 
@@ -838,6 +839,35 @@ static void th125_player_measure() {
 	th125_player_motion_ready = true;
 }
 
+static PlayerInterpolation::Step th125_player_predicted_step() {
+	PlayerInterpolation::Step step = { 0.0f, 0.0f };
+	unsigned char* player = (unsigned char*)*th125_player_manager;
+	if (player == nullptr || th125_objects_held() ||
+		(*CReplayManager::InstancePtr && (*CReplayManager::InstancePtr)->mode == 1))
+		return step;
+
+	const unsigned int fresh_input = ((unsigned short(__cdecl*)())0x004629E0)();
+	const PlayerInterpolation::Controls after = {
+		PlayerInterpolation::StandardDirection(fresh_input, 8, 0x10, 0x20, 0x40),
+		(fresh_input & 4) != 0,
+	};
+
+	step = PlayerInterpolation::FromSpeeds(after.direction, after.focus,
+		*(const int*)(player + 1548), *(const int*)(player + 1552),
+		*(const int*)(player + 1556), *(const int*)(player + 1560));
+	if (after.focus && (fresh_input & 1) != 0) {
+		step.x *= 0.22f;
+		step.y *= 0.22f;
+	}
+	const float scale = *(const float*)(player + 14456) * *(const float*)0x004B5308 / 128.0f;
+	step.x *= scale;
+	step.y *= scale;
+	const float* position = (const float*)(player + th125_player_body_position);
+	PlayerInterpolation::ClampStep(position[0], position[1], -184.0f, 184.0f, 32.0f, 432.0f,
+		&step);
+	return step;
+}
+
 struct Th125ProjectedPlayerPoint {
 	float* position;
 	float saved[3];
@@ -855,6 +885,9 @@ static void th125_player_advance(float t) {
 		th125_objects_held()) {
 		return;
 	}
+	const PlayerInterpolation::Step predicted = th125_player_predicted_step();
+	const float extra_x = predicted.x - th125_player_motion[0].step[0];
+	const float extra_y = predicted.y - th125_player_motion[0].step[1];
 
 	for (size_t point = 0; point < th125_player_motion_points; ++point) {
 		const Th125PlayerMotion& motion = th125_player_motion[point];
@@ -865,7 +898,19 @@ static void th125_player_advance(float t) {
 		projected.position = th125_player_motion_source(player, point);
 		for (int axis = 0; axis < 3; ++axis) {
 			projected.saved[axis] = projected.position[axis];
-			projected.position[axis] += motion.step[axis] * t;
+			float delta = motion.step[axis];
+			if (axis == 0) {
+				if (point == 0)
+					delta = predicted.x;
+				else
+					delta += extra_x;
+			} else if (axis == 1) {
+				if (point == 0)
+					delta = predicted.y;
+				else
+					delta += extra_y;
+			}
+			projected.position[axis] += delta * t;
 		}
 	}
 	th125_player_points_projected_last = th125_player_points_projected;
