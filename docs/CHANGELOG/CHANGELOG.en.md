@@ -7,6 +7,31 @@ Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/O
 Only changes that have been tested in-game and confirmed working are listed here, so this file
 is also the record of what has actually been verified rather than just what was attempted.
 
+## 2026-11-08
+
+### Fixed
+
+- **Single-stage practice replays no longer load a nonexistent next stage and crash** (`b211b97`)
+
+  Single-stage practice replays in th10 and th13–th17 contain only the current stage header. The
+  original StageEnd logic still increments the stage after the boss dialogue and then reads the
+  missing next-stage header, ending in a null-pointer crash.
+
+  th10 now intercepts this only while replaying stages 1–5 with no next-stage header. It keeps the
+  native `Challenge Next Stage!` transition for 90 game frames while suppressing the stage-number
+  increment and the actual stage load, then returns through the replay menu state. Non-replay
+  stage 6 keeps its original scoring and clear path.
+
+  th13–th17 keep the already-applied stage score on screen for 120 game frames before calling each
+  game's native replay cleanup. th15–th17 also hold the replay input-end cleanup during that
+  interval, preventing the game from entering one ending menu early and then opening a second one.
+  This path never enters the stage 6 clear sequence and does not update clear counters or the
+  all-clear bonus. Multi-stage replays continue normally when the next header exists.
+
+  The original StageEnd logic in th11, th12, th18 and th20 already avoids the failure. th12.8 has no
+  practice mode, so none of these games installs the patch. The th10 and th13–th17 fixes have been
+  checked in game.
+
 ## 2026-11-07
 
 ### Added
