@@ -10,6 +10,21 @@
 
 ### 修复
 
+- **dgVoodoo2 提供 D3D9 时自动跳过 D3D9Ex，切屏后保持独占全屏纵横比**（`430ee54`）
+
+  th15 使用 dgVoodoo2 2.86.2 的 `d3d9.dll` 并开启 `D3D9Ex = 1` 时，切出再切回会让
+  dgVoodoo2 的独占全屏从四比三变成全屏拉伸。补丁的 D3D9Ex 升级路径会在设备丢失后通过
+  `ResetEx` 和显式 `D3DDISPLAYMODEEX` 恢复设备，而游戏原来的非 Ex `Reset` 不会触发该问题。
+
+  补丁现在复用 dgVoodoo2 的版本资源识别，把判断范围从 `d3d8.dll` 扩展到 `d3d9.dll`。
+  当检测到当前 D3D9 包装层来自 dgVoodoo2 时，即使配置仍为 `D3D9Ex = 1`，也会自动走非 Ex
+  路径。运行时的有效状态会统一控制设备创建、`Reset`、纹理和顶点缓冲兼容钩子、D3DX 池转换、
+  Present 诊断以及 limiter 的 `WaitForVBlank`，避免把普通 D3D9 设备错误转换成
+  `IDirect3DDevice9Ex`。INI 中英注释也已说明该自动覆盖行为。
+
+  已在 th15 + dgVoodoo2 2.86.2 实测：控制台显示跳过 D3D9Ex 升级，切出再切回后四比三黑边
+  正常保留。
+
 - **th20 恢复与新版 thprac 的 GameFPS 和 replay 变速协作**（`b54fe66`）
 
   更新后的 thprac（`284f8a2`）检测到 oilp 后，会通过 `oilp_set_game_fps`、

@@ -11,6 +11,23 @@ is also the record of what has actually been verified rather than just what was 
 
 ### Fixed
 
+- **Skip Direct3D9Ex when dgVoodoo2 supplies D3D9, preserving the exclusive-fullscreen aspect ratio across alt-tab** (`430ee54`)
+
+  In th15 with dgVoodoo2 2.86.2's `d3d9.dll` and `D3D9Ex = 1`, switching away from the game and
+  back changed the exclusive-fullscreen picture from 4:3 to a stretched full-screen image. The
+  patch's Direct3D9Ex path restores a lost device through `ResetEx` with an explicit
+  `D3DDISPLAYMODEEX`; the game's original non-Ex `Reset` does not trigger the problem.
+
+  The patch now reuses its dgVoodoo2 version-resource check and applies it to `d3d9.dll` as well
+  as `d3d8.dll`. When the D3D9 wrapper is dgVoodoo2, the effective path stays non-Ex even if the
+  configuration still says `D3D9Ex = 1`. That effective state now controls device creation,
+  `Reset`, texture and vertex-buffer compatibility hooks, D3DX pool conversion, Present
+  diagnostics and the limiter's `WaitForVBlank`, so a normal D3D9 device is never cast to
+  `IDirect3DDevice9Ex`. The bilingual INI comments document this automatic override.
+
+  Verified in th15 with dgVoodoo2 2.86.2: the console reports the skipped Direct3D9Ex upgrade,
+  and the 4:3 side bars remain after switching away and back.
+
 - **th20 restores GameFPS and replay-speed cooperation with current thprac** (`b54fe66`)
 
   Current thprac (`284f8a2`) detects oilp and passes normal, replay-fast and replay-slow frame
