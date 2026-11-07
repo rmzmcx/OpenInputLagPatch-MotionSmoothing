@@ -1634,8 +1634,8 @@ static HRESULT th19_present_hook() {
 	// frame is still ahead of it, so a game that has been pushed to a frame rate it can't keep up
 	// with would never look at thprac's value again - bringing the frame rate back down would do
 	// nothing, and the game would stay at the rate it could not keep up with (see
-	// Limiter::PollExternalGameFPS)
-	Limiter::PollExternalGameFPS();
+	// Limiter::PollTargetFPS)
+	Limiter::PollTargetFPS();
 
 	// The frame rate this game runs at, and the pacing that goes with it, are the game's own: it
 	// presents with vsync off (and paces itself through the limiter) only while its input latency

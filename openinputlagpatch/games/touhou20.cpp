@@ -31,9 +31,9 @@ static DWORD rebase(DWORD address) {
 // game running at its original speed no matter what GameFPS is set to.
 //
 // The addresses below are the 4 byte displacements of the MOVSD/DIVSD instructions that read
-// 0x0056C470, so patching them only changes which double the instruction reads. thprac does the
-// same thing for th20 (it patches 0x00419EAF, the one in the update path the game actually
-// uses).
+// 0x0056C470, so patching them only changes which double the instruction reads. Current thprac
+// detects oilp and sends its frame rate and replay speeds through oilp's exported API instead of
+// patching 0x00419EAF itself, so every clock read can keep pointing at Limiter::game_fps.
 //
 // The game's own frame limiter (0x004193E0) reads the constant as well, but it's disabled
 // below, so it doesn't have to be patched.
@@ -110,41 +110,6 @@ static void patch_frame_wait(DWORD address) {
 	patch_bytes(sequence, patch, sizeof(patch));
 }
 
-// thprac changes the frame rate of games like this one by pointing the engine's clock at a
-// variable of its own. If that happens, the game and the limiter would disagree about how long
-// a frame is - and the replay speed control would lose the clock it drives. So the operand is
-// taken back, but the value the other tool put there is followed: tools like thprac are what
-// the player configures in game, so their frame rate wins over the configured GameFPS.
-static double* external_fps = nullptr;
-
-static UINT th20_external_game_fps() {
-	DWORD* operand = (DWORD*)rebase(0x00419EAF);
-
-	if (*operand != (DWORD)&Limiter::game_fps) {
-		double* candidate = (double*)*operand;
-		if (*candidate > 1.0 && *candidate < 10000.0)
-			external_fps = candidate;
-
-		DWORD value = (DWORD)&Limiter::game_fps;
-		patch_bytes(operand, &value, sizeof(value));
-	}
-
-	if (external_fps == nullptr)
-		return 0;
-
-	// thprac writes this whenever its framerate option is applied, so it has to be read back
-	// every time instead of being copied once
-	double rate = *external_fps;
-	if (rate < 1.0 || rate > 10000.0)
-		return 0;
-	return (UINT)(rate + 0.5);
-}
-
-// The frame rate the external tool (thprac) currently has its option set to, for the diagnostics
-static double th20_external_rate() {
-	return external_fps != nullptr ? *external_fps : 0.0;
-}
-
 // Takes over the game's render block and its presents (defined below, after the comment that
 // explains what they are)
 static void th20_install_interpolation();
@@ -161,9 +126,6 @@ void th20_install_patches() {
 		// The engine starts reading its frame rate long before the limiter is ticked for the
 		// first time, so start it off with the configured value
 		Limiter::game_fps = (double)Config::GameFPS;
-
-		// Follow thprac (or any other tool) if it takes the engine's frame rate over
-		Limiter::external_game_fps = th20_external_game_fps;
 	}
 	{
 		// Run the engine's clock at GameFPS instead of its hardcoded 60
@@ -1419,8 +1381,8 @@ static void th20_diag_dump() {
 	// and picks D3DPRESENT_INTERVAL_IMMEDIATE (0x80000000) only for the fastest setting, 3.
 	fprintf(file, "input latency setting: %u (the fastest is 3), limiter ticked: %s\n",
 		*(unsigned char*)rebase(0x005C4F89), th20_limiter_ticked ? "yes" : "no");
-	fprintf(file, "configured game frame rate: %u, thprac's frame rate: %.2f\n",
-		Config::GameFPS, th20_external_rate());
+	fprintf(file, "configured game frame rate: %u, current limiter target: %.2f\n",
+		Config::GameFPS, Limiter::game_fps);
 	fprintf(file, "taken over: %u of %u render call(s), %u of %u present call(s)\n",
 		th20_render_patched, th20_render_sites, th20_present_patched, th20_present_sites);
 	fprintf(file, "frames recorded: %u\n", count);
@@ -1583,13 +1545,10 @@ static HRESULT th20_present_hook() {
 		QueryPerformanceFrequency(&th20_perf_freq);
 	}
 
-	// Follow whatever frame rate thprac's option is asking for, from here rather than from the
-	// limiter: th20's own frame function only ticks the limiter while its clock says the next
-	// frame is still ahead of it, so a game that has been pushed to a frame rate it can't keep up
-	// with would never look at thprac's value again - bringing the frame rate back down would do
-	// nothing, and the game would stay at the rate it could not keep up with (see
-	// Limiter::PollExternalGameFPS)
-	Limiter::PollExternalGameFPS();
+	// A high replay fast-forward rate can leave the game's clock far enough behind that its own
+	// wait never reaches TickUntil(), so refresh the target here as well. This also notices when
+	// the replay fast-forward or slow-down key is released without requiring another FPS change.
+	Limiter::PollTargetFPS();
 
 	// The frame rate this game runs at, and the pacing that goes with it, are the game's own: it
 	// presents with vsync off (and paces itself through the limiter) only while its input latency

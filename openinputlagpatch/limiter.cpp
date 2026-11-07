@@ -227,8 +227,8 @@ inline void half_spin_wait(__int64 target) {
 	}
 }
 
-// Re-reads the frame rate an external tool is asking for (see limiter.h)
-void Limiter::PollExternalGameFPS() {
+// Re-reads the current frame-rate target (see limiter.h)
+void Limiter::PollTargetFPS() {
 	if (initialized)
 		UpdateTargetFPS();
 }
