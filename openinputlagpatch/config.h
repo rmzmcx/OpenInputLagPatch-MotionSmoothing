@@ -83,6 +83,10 @@ public:
 	static BOOL AlwaysBlt;
 	static TouhouGame GameOverride;
 
+	// Work around NVIDIA's broken Detours stub over dgVoodoo2's Direct3DCreate8 entry on some
+	// Optimus systems. The workaround only matches the verified NVIDIA + dgVoodoo2 combination.
+	static BOOL BypassNvidiaD3D8Detour;
+
 	// [Window] section - same idea as vpatch's window mode support
 	// Ask whether the game should run in fullscreen mode on boot, so the game's own
 	// fullscreen setting doesn't have to be edited

@@ -1117,23 +1117,26 @@ static void th8_extra_presentation(float t) {
 
     // Where the bullets are a fraction of a frame on from here; put back right after the pass drew
     // them (see the stage 1 comment above)
-    if (Config::InterpolateBulletsAndLasers) {
+    const bool interpolateBulletsAndLasers = Config::InterpolateBulletsAndLasers != FALSE;
+    const bool interpolatePlayerBody = Config::InterpolatePlayerBody != FALSE;
+    const bool interpolatePlayerShots = Config::InterpolatePlayerShots != FALSE;
+    if (interpolateBulletsAndLasers) {
         th8_bullets_advance(t);
     }
-    if (Config::InterpolatePlayerShots) {
+    if (interpolatePlayerShots) {
         th8_shots_advance(t);
     }
-    if (Config::InterpolatePlayerBody) {
+    if (interpolatePlayerBody) {
         th8_familiars_advance(t);
     }
-    if (Config::InterpolateBulletsAndLasers) {
+    if (interpolateBulletsAndLasers) {
         th8_lasers_advance(t);
     }
 
     // The player's sprite, the familiars and the player's own shots are drawn from positions the
     // game's own code writes while drawing, so those are nudged where they are drawn instead - this
     // is what tells them how far along this presentation sits (see th8_player_sprite_hook)
-    th8_extra_t = Config::InterpolatePlayerBody ? t : 0.0f;
+    th8_extra_t = interpolatePlayerBody ? t : 0.0f;
 
     // The game counts its own frame rate off this pass (see the comment above), so its state is put
     // back around it: the extras draw the same frame rate text the game's own pass drew, and the
@@ -1154,10 +1157,14 @@ static void th8_extra_presentation(float t) {
 
     th8_extra_t = 0.0f;
 
-    th8_bullets_undo();
-    th8_shots_undo();
-    th8_familiars_undo();
-    th8_lasers_undo();
+    if (interpolateBulletsAndLasers)
+        th8_bullets_undo();
+    if (interpolatePlayerShots)
+        th8_shots_undo();
+    if (interpolatePlayerBody)
+        th8_familiars_undo();
+    if (interpolateBulletsAndLasers)
+        th8_lasers_undo();
 
     th8_flush_vertex_buffer(*th8_anm_manager);
     device->SetTexture(0, nullptr);

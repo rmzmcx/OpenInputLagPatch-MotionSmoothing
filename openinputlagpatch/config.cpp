@@ -28,6 +28,7 @@ BOOL Config::InterpolateBulletsAndLasers = TRUE;
 void (*Config::THPGuiUpdateFunc)() = nullptr;
 BOOL Config::AlwaysBlt = TRUE;
 TouhouGame Config::GameOverride = TouhouGame::Unknown;
+BOOL Config::BypassNvidiaD3D8Detour = FALSE;
 BOOL Config::AskWindowMode = FALSE;
 BOOL Config::WindowEnabled = FALSE;
 UINT Config::WindowX = CW_USEDEFAULT;
@@ -80,7 +81,10 @@ static const char default_global_ini[] =
     "Height = 480\r\n"
     "TitleBar = 1\r\n"
     "AlwaysOnTop = 0\r\n"
-    "CoverTaskbar = 0\r\n";
+    "CoverTaskbar = 0\r\n"
+    "\r\n"
+    "[Experimental]\r\n"
+    "BypassNvidiaD3D8Detour = 0\r\n";
 
 // Builds the global path and creates the file with the defaults if this is the first run.
 static bool ensure_global_config(wchar_t* path, size_t path_count) {
@@ -140,6 +144,8 @@ static bool ensure_global_config(wchar_t* path, size_t path_count) {
 #define LOAD_WINDOW_SETTING(x, key) Config::x = (decltype(Config::x))GetPrivateProfileInt(TEXT("Window"), TEXT(key), (int)Config::x, config_path)
 // Same as LOAD_SETTING, but for the [Interpolation] section (the keys don't match the field names)
 #define LOAD_INTERPOLATION_SETTING(x, key) Config::x = (decltype(Config::x))GetPrivateProfileInt(TEXT("Interpolation"), TEXT(key), (int)Config::x, config_path)
+// Same as LOAD_SETTING, but for the [Experimental] section.
+#define LOAD_EXPERIMENTAL_SETTING(x, key) Config::x = (decltype(Config::x))GetPrivateProfileInt(TEXT("Experimental"), TEXT(key), (int)Config::x, config_path)
 
 // Loads one ini file over the current values. Missing keys keep the value the previous file (or the
 // defaults) left, so the global file can be loaded first and the game folder's file overrides only
@@ -204,6 +210,75 @@ static void load_config_file(const wchar_t* config_path) {
 	LOAD_INTERPOLATION_SETTING(InterpolatePlayerBody, "PlayerBody");
 	LOAD_INTERPOLATION_SETTING(InterpolatePlayerShots, "PlayerShots");
 	LOAD_INTERPOLATION_SETTING(InterpolateBulletsAndLasers, "BulletsAndLasers");
+
+	LOAD_EXPERIMENTAL_SETTING(BypassNvidiaD3D8Detour, "BypassNvidiaD3D8Detour");
+}
+
+static void write_profile_value(FILE* file, const wchar_t* path, const wchar_t* section,
+                                const wchar_t* key) {
+	wchar_t value[64] = {};
+	GetPrivateProfileStringW(section, key, L"<absent>", value, _countof(value), path);
+	fprintf(file, "  %ls = %ls\n", key, value);
+}
+
+static void write_config_trace(const wchar_t* game_dir, const wchar_t* global_config,
+                               bool global_loaded, const wchar_t* game_config,
+                               bool game_loaded) {
+	wchar_t path[1024] = {};
+	wcscpy_s(path, game_dir);
+	PathAppendW(path, L"oilp_config_trace.txt");
+
+	FILE* file = nullptr;
+	if (_wfopen_s(&file, path, L"w") != 0 || file == nullptr)
+		return;
+
+	fprintf(file, "OpenInputLagPatch config trace\n");
+	wchar_t executable_path[1024] = {};
+	GetModuleFileNameW(nullptr, executable_path, _countof(executable_path));
+	fprintf(file, "game executable: %ls\n", executable_path);
+	HMODULE patch_module = nullptr;
+	if (GetModuleHandleExW(
+			GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+				GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+			(LPCWSTR)&write_config_trace, &patch_module)) {
+		wchar_t patch_path[1024] = {};
+		GetModuleFileNameW(patch_module, patch_path, _countof(patch_path));
+		fprintf(file, "oilp module: %ls\n", patch_path);
+	}
+	fprintf(file, "global path: %ls\n", global_config[0] ? global_config : L"<unavailable>");
+	fprintf(file, "global loaded: %d\n", global_loaded ? 1 : 0);
+	if (global_loaded && PathFileExistsW(global_config)) {
+		write_profile_value(file, global_config, L"Option", L"FixInputGlitching");
+		write_profile_value(file, global_config, L"Option", L"AlwaysBlt");
+		write_profile_value(file, global_config, L"Option", L"ShowOverlay");
+		write_profile_value(file, global_config, L"Interpolation", L"Interpolation");
+		write_profile_value(file, global_config, L"Experimental", L"BypassNvidiaD3D8Detour");
+	}
+
+	fprintf(file, "game path: %ls\n", game_config);
+	fprintf(file, "game loaded: %d\n", game_loaded ? 1 : 0);
+	if (game_loaded) {
+		write_profile_value(file, game_config, L"Option", L"FixInputGlitching");
+		write_profile_value(file, game_config, L"Option", L"AlwaysBlt");
+		write_profile_value(file, game_config, L"Option", L"ShowOverlay");
+		write_profile_value(file, game_config, L"Interpolation", L"Interpolation");
+		write_profile_value(file, game_config, L"Experimental", L"BypassNvidiaD3D8Detour");
+	}
+
+	fprintf(file, "effective values:\n");
+	fprintf(file, "  FixInputGlitching = %d\n", Config::FixInputGlitching);
+	fprintf(file, "  AlwaysBlt = %d\n", Config::AlwaysBlt);
+	fprintf(file, "  ShowOverlay = %d\n", Config::ShowOverlay);
+	fprintf(file, "  Interpolation = %d\n", Config::Interpolation);
+	fprintf(file, "  InterpolationFPS = %u\n", Config::InterpolationFPS);
+	fprintf(file, "  GameFPS = %u\n", Config::GameFPS);
+	fprintf(file, "  CalcFPS = %d\n", Config::CalcFPS);
+	fprintf(file, "  PlayerBody = %d\n", Config::InterpolatePlayerBody);
+	fprintf(file, "  PlayerShots = %d\n", Config::InterpolatePlayerShots);
+	fprintf(file, "  BulletsAndLasers = %d\n", Config::InterpolateBulletsAndLasers);
+	fprintf(file, "  DebugConsole = %d\n", Config::DebugConsole);
+	fprintf(file, "  BypassNvidiaD3D8Detour = %d\n", Config::BypassNvidiaD3D8Detour);
+	fclose(file);
 }
 
 bool Config::Load() {
@@ -219,9 +294,12 @@ bool Config::Load() {
 
 	// Global settings first, then the game folder's file overrides the keys it contains.
 	wchar_t global_config[1024] = {};
-	if (ensure_global_config(global_config, _countof(global_config)))
+	const bool global_loaded =
+		ensure_global_config(global_config, _countof(global_config));
+	if (global_loaded)
 		load_config_file(global_config);
-	if (PathFileExistsW(game_config))
+	const bool game_loaded = PathFileExistsW(game_config) != FALSE;
+	if (game_loaded)
 		load_config_file(game_config);
 
 	// Ju.N.Owen (th19's netplay tool) is loaded from modules\th19_junowen.dll by its d3d9.dll. Netplay
@@ -254,9 +332,11 @@ bool Config::Load() {
 	else if (Config::ShowOverlay > 3)
 		Config::ShowOverlay = 3;
 
+	write_config_trace(game_dir, global_config, global_loaded, game_config, game_loaded);
 	return true;
 }
 
 #undef LOAD_SETTING
 #undef LOAD_WINDOW_SETTING
 #undef LOAD_INTERPOLATION_SETTING
+#undef LOAD_EXPERIMENTAL_SETTING

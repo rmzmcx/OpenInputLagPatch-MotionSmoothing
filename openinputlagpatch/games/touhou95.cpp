@@ -635,18 +635,24 @@ static bool th95_extra_draw_pass(float t) {
 
     ToolState::ReadyToDraw();
 
-    if (Config::InterpolatePlayerBody)
+    const bool interpolatePlayerBody = Config::InterpolatePlayerBody != FALSE;
+    const bool interpolateBulletsAndLasers =
+        Config::InterpolateBulletsAndLasers != FALSE;
+    if (interpolatePlayerBody)
         th95_player_advance(t);
-    if (Config::InterpolateBulletsAndLasers) {
+    if (interpolateBulletsAndLasers) {
         th95_bullets_advance(t);
         th95_lasers_advance(t);
     }
 
     th95_run_draw_chain(th95_chain);
 
-    th95_player_undo();
-    th95_bullets_undo();
-    th95_lasers_undo();
+    if (interpolatePlayerBody)
+        th95_player_undo();
+    if (interpolateBulletsAndLasers) {
+        th95_bullets_undo();
+        th95_lasers_undo();
+    }
 
     th95_flush_vertex_buffer(anm);
     device->SetTexture(0, nullptr);
