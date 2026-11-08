@@ -1,12 +1,98 @@
 #include <Windows.h>
-#include <conio.h>
 #include <winternl.h>
+#include <stdio.h>
+#include <string.h>
+#include <string>
+#include <vector>
 
 #include "sha256.h"
 #include "games.h"
 #include "games_def.h"
 #include "games_name.h"
 #include "common.h"
+
+namespace {
+enum class ConsoleLanguage {
+	English,
+	Chinese,
+	Japanese,
+};
+
+ConsoleLanguage console_language() {
+	switch (PRIMARYLANGID(GetUserDefaultUILanguage())) {
+	case LANG_CHINESE:
+		return ConsoleLanguage::Chinese;
+	case LANG_JAPANESE:
+		return ConsoleLanguage::Japanese;
+	default:
+		return ConsoleLanguage::English;
+	}
+}
+
+const wchar_t* select_game_prompt() {
+	// CJK prompts use full-width parentheses and colons; English uses half-width punctuation.
+	switch (console_language()) {
+	case ConsoleLanguage::Chinese:
+		return L"选择你的游戏（输入左边对应的序号）：";
+	case ConsoleLanguage::Japanese:
+		return L"ゲームを選択してください（左側の番号を入力）：";
+	default:
+		return L"Select your game (enter the number on the left): ";
+	}
+}
+
+const wchar_t* no_games_message() {
+	switch (console_language()) {
+	case ConsoleLanguage::Chinese:
+		return L"未找到受支持的游戏。\n";
+	case ConsoleLanguage::Japanese:
+		return L"対応しているゲームが見つかりません。\n";
+	default:
+		return L"No supported games were found.\n";
+	}
+}
+
+const wchar_t* entrypoint_fallback_message() {
+	switch (console_language()) {
+	case ConsoleLanguage::Chinese:
+		return L"未能让游戏运行到程序入口点；将改为在尚未初始化的进程中注入。\n";
+	case ConsoleLanguage::Japanese:
+		return L"ゲームをエントリーポイントまで実行できませんでした。未初期化のプロセスへ直接注入します。\n";
+	default:
+		return L"Couldn't run the game to its entrypoint; injecting into the uninitialized process instead.\n";
+	}
+}
+
+void write_console(const wchar_t* text) {
+	const int length = (int)wcslen(text);
+	if (length == 0)
+		return;
+
+	const HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
+	DWORD mode = 0;
+	if (output != INVALID_HANDLE_VALUE && output != nullptr &&
+		GetConsoleMode(output, &mode)) {
+		DWORD written = 0;
+		if (WriteConsoleW(output, text, (DWORD)length, &written, nullptr))
+			return;
+	}
+
+	const int size = WideCharToMultiByte(CP_UTF8, 0, text, length, nullptr, 0, nullptr, nullptr);
+	if (size <= 0)
+		return;
+	std::string utf8((size_t)size, '\0');
+	if (WideCharToMultiByte(CP_UTF8, 0, text, length, &utf8[0], size, nullptr, nullptr) != size)
+		return;
+
+	fflush(stdout);
+	DWORD written = 0;
+	WriteFile(output, utf8.data(), (DWORD)utf8.size(), &written, nullptr);
+}
+
+std::wstring widen_ascii(const char* text) {
+	return std::wstring(text, text + strlen(text));
+}
+}
 
 TouhouGame detect_game(wchar_t* game_path) {
 	// Hash the game
@@ -113,7 +199,7 @@ int run_game_and_inject(const wchar_t* path, TouhouGame game) {
 	DWORD entry = 0;
 	WORD orig_bytes = 0;
 	if (!run_to_entrypoint(pi, entry, orig_bytes))
-		puts("Couldn't run the game to its entrypoint, injecting into the uninitialized process instead");
+		write_console(entrypoint_fallback_message());
 	LPVOID remoteStr = VirtualAllocEx(pi.hProcess, NULL, 44, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 	if (!remoteStr)
 		return -2;
@@ -137,11 +223,12 @@ int run_game_and_inject(const wchar_t* path, TouhouGame game) {
 
 std::string cmd_inp() {
 	std::string ret;
-	char a;
 	for (;;) {
-		a = getchar();
-		if (a == '\n') break;
-		ret.push_back(a);
+		const int input = getchar();
+		if (input == EOF || input == '\n')
+			break;
+		if (input != '\r')
+			ret.push_back((char)input);
 	}
 	return ret;
 }
@@ -154,9 +241,8 @@ int wmain() {
 	WIN32_FIND_DATAW find;
 	HANDLE hFind = FindFirstFileW(L"*.exe", &find);
 	std::vector<_TouhouGameFind> games;
-	std::wstring err;
 	if (hFind == INVALID_HANDLE_VALUE) {
-		puts("No valid games found");
+		write_console(no_games_message());
 		show_ui_message(UiMessage_UnsupportedGame, MB_ICONERROR);
 		return 1;
 	}
@@ -166,20 +252,25 @@ int wmain() {
 			games.push_back({ game, find.cFileName });
 		}
 	} while (FindNextFileW(hFind, &find));
+	FindClose(hFind);
 	if (games.size() == 1)
 		return run_game_and_inject(games[0].path.c_str(), games[0].game);
 	else if (games.size() == 0) {
-		puts("No valid games found");
+		write_console(no_games_message());
 		show_ui_message(UiMessage_UnsupportedGame, MB_ICONERROR);
 		return 1;
 	}
 	for (size_t i = 0; i < games.size(); i++) {
-		wprintf(L"[%d]: %S (%s)\n", i, game_to_string[(size_t)games[i].game], games[i].path.c_str());
+		const std::wstring line =
+			L"[" + std::to_wstring(i) + L"]: " +
+			widen_ascii(game_to_string[(size_t)games[i].game]) +
+			L" (" + games[i].path + L")\n";
+		write_console(line.c_str());
 	}
 	
 	size_t sel = 0;
 	do {
-		printf("Pick your game: ");
+		write_console(select_game_prompt());
 		try {
 			sel = std::stoul(cmd_inp());
 		} catch (...) {
