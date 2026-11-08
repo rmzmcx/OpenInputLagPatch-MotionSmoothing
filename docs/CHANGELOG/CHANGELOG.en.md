@@ -11,6 +11,44 @@ is also the record of what has actually been verified rather than just what was 
 
 ### Fixed
 
+- **The oilp_loader multi-game chooser preserves Chinese and Japanese executable names and localizes its prompt** (`dc37adb`)
+
+  The list already received wide executable names from the Unicode directory API, but printed them
+  through the CRT's `wprintf`. When the active console code page could not represent Chinese or
+  Japanese characters, they were replaced with `?`. Console text now goes through
+  `WriteConsoleW`, with a UTF-8 fallback when stdout is redirected.
+
+  The selection prompt and loader status messages now follow the Windows user UI language:
+  Simplified Chinese, Japanese or English. Chinese and Japanese use full-width punctuation, while
+  English uses half-width punctuation. Console output has been checked with executable names
+  containing both `中文版` and `日本語版`.
+
+- **th06 and th07 no longer place the player in the upper-left corner when `PlayerBody = 0`** (`9345009`)
+
+  Their extra presentations decided whether to run each Advance from the configuration, but then
+  ran Undo unconditionally. With player-body interpolation off there was no saved state, so Undo
+  wrote the untouched saved value `(0,0)` back to the player; the next game frame then clamped it
+  to the upper-left movement boundary `(8,16)`, repeating every frame. Advance and Undo now use the
+  same configuration snapshots. The matching paths in th08 and th09.5 were made conditional too;
+  th09 has no interpolation path. The extrapolation algorithm, input, timing and replays are
+  unchanged.
+
+- **Optional NVIDIA D3D8 Detours compatibility, disabled by default** (`9345009`)
+
+  On some Windows 7 + NVIDIA Optimus systems, the NVIDIA wrapper installs a Detours trampoline over
+  an older dgVoodoo2 `Direct3DCreate8` entry after copying six zero bytes instead of the original
+  instructions. Calling the entry through the patch then follows that damaged trampoline and
+  crashes on a null pointer. The new `[Experimental] BypassNvidiaD3D8Detour` option defaults to
+  `0`; setting it to `1` enables a workaround only when dgVoodoo2 is 2.83 or 2.86.2, the entry is
+  redirected into `nvd3d9wrap.dll` or `nvdxgiwrap.dll`, and entry `+6` still matches the original
+  function. The workaround reproduces the six-byte prologue and enters the untouched function at
+  `+6`.
+
+  It does not disable a GPU or change the global GPU preference. Other systems keep their normal
+  call path. The reporter's Windows 7 environment has been checked successfully. The same commit
+  also adds automatic configuration, D3D8 initialization, input and fatal-exception logs for cases
+  where the game cannot export diagnostics by pressing `U`.
+
 - **Skip Direct3D9Ex when dgVoodoo2 supplies D3D9, preserving the exclusive-fullscreen aspect ratio across alt-tab** (`430ee54`)
 
   In th15 with dgVoodoo2 2.86.2's `d3d9.dll` and `D3D9Ex = 1`, switching away from the game and
