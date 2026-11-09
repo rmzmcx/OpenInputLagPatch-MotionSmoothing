@@ -7,6 +7,23 @@ Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/O
 Only changes that have been tested in-game and confirmed working are listed here, so this file
 is also the record of what has actually been verified rather than just what was attempted.
 
+## 2026-11-09
+
+### Fixed
+
+- **th12 replay fast-forward and slowdown work again** (`b47db78`)
+
+  The UFO replay callback read `0x004C22C8`, which is Ten Desires' replay manager pointer. That
+  value was accidentally copied into the th12 source by upstream commit `b8625c9` when th13
+  support was added. `th12.exe` contains no reference to that address, so the callback never saw
+  an active replay and always returned the normal game frame rate. The patch had also already
+  bypassed the game's native replay-speed branch, leaving neither path active.
+
+  Use UFO's actual replay manager pointer at `0x004B4518`, which is read and written throughout
+  `th12.exe`. The fixed replay-manager pointers in the other supported games were audited as well;
+  no other mismatches were found. th12 replay slowdown and fast-forward have been confirmed in
+  game.
+
 ## 2026-11-08
 
 ### Fixed
