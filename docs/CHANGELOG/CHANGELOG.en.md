@@ -7,6 +7,30 @@ Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/O
 Only changes that have been tested in-game and confirmed working are listed here, so this file
 is also the record of what has actually been verified rather than just what was attempted.
 
+## 2026-11-10
+
+### Fixed
+
+- **The practice-replay ending crash fix can now be switched independently** (`9fa5990`)
+
+  `b211b97` added protection for th10 and th13-th17 so a practice replay no longer tries to load
+  a nonexistent next stage after the boss is defeated and all post-boss dialogue has finished.
+  `[Option]` now has `FixPracModeReplayCrash = 1` between `FixTH12ScoreDisplay` and
+  `FixInputGlitching`, enabled by default. Setting it to `0` does not install that protection and
+  leaves the original replay exit path in place.
+
+### Changed
+
+- **The default `ReplaySkipFPS` is now 480** (`9fa5990`)
+
+  Newly generated global configs and the reference ini use `480`; the built-in fallback is also
+  `480` for existing configs that do not contain the key.
+
+- **Temporary configuration and D3D8 traces are no longer written** (`9fa5990`)
+
+  `oilp_config_trace.txt` and `oilp_d3d8_trace.txt` are no longer generated. The standard
+  `oilp_diag.txt` and `oilp_display_diag.txt` diagnostics remain available.
+
 ## 2026-11-09
 
 ### Fixed

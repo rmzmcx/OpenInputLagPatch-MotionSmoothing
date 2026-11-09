@@ -6,6 +6,28 @@
 
 只记录已经在游戏里实测确认可用的改动，因此本文件同时也是「哪些修改真正被验证过」的凭证。
 
+## 2026-11-10
+
+### 修复
+
+- **练习模式 replay 结束崩溃修复现在可以单独开关**（`9fa5990`）
+
+  `b211b97` 为 th10、th13–th17 加入了保护：练习 replay 击败关底 Boss 并结束全部对话后，
+  不再错误加载不存在的下一面。现在 `[Option]` 新增 `FixPracModeReplayCrash = 1`，放在
+  `FixTH12ScoreDisplay` 和 `FixInputGlitching` 之间，默认开启。设为 `0` 时不会安装上述保护，
+  游戏回到原版 replay 退出流程。
+
+### 变更
+
+- **`ReplaySkipFPS` 的默认值改为 480**（`9fa5990`）
+
+  新生成的全局配置和参考 ini 都使用 `480`；已有配置中没有这个值时，代码默认值也是 `480`。
+
+- **停止生成临时配置和 D3D8 trace**（`9fa5990`）
+
+  不再生成 `oilp_config_trace.txt` 和 `oilp_d3d8_trace.txt`；标准诊断仍保留
+  `oilp_diag.txt` 与 `oilp_display_diag.txt`。
+
 ## 2026-11-09
 
 ### 修复
