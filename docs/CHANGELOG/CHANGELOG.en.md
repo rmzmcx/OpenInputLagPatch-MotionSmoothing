@@ -11,6 +11,23 @@ is also the record of what has actually been verified rather than just what was 
 
 ### Fixed
 
+- **Perfect Cherry Blossom's current Cherry and Spell Card Bonus displays are fixed** (`3bce335`)
+
+  PCB splits the current Cherry value into a fixed six sprite digits. Above `999999`, the leading
+  quotient no longer maps to one of the ten digit sprites. The patch applies VsyncPatch's verified
+  seven-digit layout, including the spacing and starting-position adjustments for both Cherry
+  rows. CherryMax already has a seven-digit branch and is unchanged.
+
+  The in-game `Bonus +... history ...` line is original Anm sprite-digit HUD. Its loop always starts
+  at `10000000` and runs eight times, so once Bonus reaches 100 million the leading quotient is 10
+  or greater and indexes past the digit sprites. Cherry, border, and history artwork then appears
+  in the Bonus line. The patch chooses the divisor from the actual 1-10 digit value while preserving
+  the original right alignment up to eight digits and the original history position.
+
+  `[Option]` adds `FixTH07Cherry&BonusDisplay = 1` between `DebugWait` and
+  `FixTH12ScoreDisplay`. It defaults to enabled. Actual Cherry, Bonus, score, results, and replay
+  data are unchanged. Both fixes have been confirmed in game.
+
 - **th12 high scores no longer become negative or appear to count backwards** (`b4f6ea0`)
 
   UFO's displayed score is built from `base score + 10 * current score`. The original formatter
