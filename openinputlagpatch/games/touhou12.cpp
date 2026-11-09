@@ -15,7 +15,9 @@
 
 using namespace Touhou12;
 
-CReplayManager** CReplayManager::InstancePtr = (CReplayManager**)0x004C22C8;
+// This is UFO's replay manager. 0x004C22C8 belongs to Ten Desires and was
+// accidentally copied here when th13 support was added.
+CReplayManager** CReplayManager::InstancePtr = (CReplayManager**)0x004B4518;
 
 int __stdcall th12_window_update_hook(void* self) {
 	Limiter::Tick();
