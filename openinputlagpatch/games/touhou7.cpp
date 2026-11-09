@@ -270,6 +270,94 @@ static void th7_install_fps_measurement() {
     }
 }
 
+// Touhou 7's HUD draws the current Cherry value with a fixed six-digit loop, even though the game
+// can produce values up to 9,999,990. Cherry Max already has a seven-digit branch. VsyncPatch's
+// BugFixCherry widens the current-value loop and shifts the two rows so the extra digit fits.
+// The fourth change below uses the game's existing 6.0f constant instead of VsyncPatch's copy.
+static auto th7_draw_sprite = (int(__thiscall*)(void*, void*))0x0044F770;
+
+// Gui::DrawStageElements draws the live Spell Card Bonus with its own sprite digits. The original
+// loop always uses 10,000,000 as the first divisor and exactly eight iterations, so a quotient of
+// 10 or more indexes past the ten ASCII digit sprites. Draw 1-10 digits here, keep values <= 8
+// digits right-aligned exactly as before, and leave the following history counter at its original
+// position.
+static void th7_draw_spell_bonus_digits(void* gui, unsigned int value) {
+    if (gui == nullptr)
+        return;
+    void* impl = *(void**)((char*)gui + 8);
+    void* manager = *(void**)0x004B9E44;
+    if (impl == nullptr || manager == nullptr)
+        return;
+
+    unsigned int digits = 1;
+    unsigned int divisor = 1;
+    for (unsigned int remaining = value; remaining >= 10; remaining /= 10) {
+        ++digits;
+        divisor *= 10;
+    }
+
+    const float* indicator_pos = (const float*)((char*)impl + 0x793C);
+    float* capture_pos = (float*)((char*)impl + 0x76F0);
+    const float base_x = indicator_pos[0] - 40.0f;
+    capture_pos[0] = base_x + (float)(8 - (int)digits) * 7.0f;
+
+    for (unsigned int i = 0; i < digits; ++i) {
+        const unsigned int digit = value / divisor;
+        value %= divisor;
+        if (divisor > 1)
+            divisor /= 10;
+
+        *(void**)((char*)impl + 0x770C) =
+            (char*)manager + ((digit + 132) << 6) + 96;
+        th7_draw_sprite(manager, (char*)impl + 0x7528);
+        capture_pos[0] += 7.0f;
+    }
+
+    capture_pos[0] = base_x + 56.0f;
+}
+
+static __declspec(naked) void th7_spell_bonus_digits_hook() {
+    __asm { mov eax, [ebp - 14h] }
+    __asm { push eax }
+    __asm { mov eax, [ebp - 88h] }
+    __asm { push eax }
+    __asm { call th7_draw_spell_bonus_digits }
+    __asm { add esp, 8 }
+    // Continue at the original history counter rendering
+    __asm { mov eax, 0042C934h }
+    __asm { jmp eax }
+}
+
+static void th7_install_display_fixes() {
+    static const BYTE cherry_divisor[] = { 0xA0, 0x86, 0x01, 0x00 }; // 100000
+    static const BYTE cherry_loop_count[] = { 0x06 };
+    static const BYTE cherry_offset[] = { 0xD8, 0x05, 0x54, 0x8B, 0x49, 0x00 }; // fadd [498B54]
+    static const BYTE cherry_layout_offset[] = { 0x2C, 0x8C, 0x49, 0x00 }; // [498C2C]
+    static const BYTE bonus_sprite_loop[] = { 0x83, 0x65, 0xFC, 0x00, 0xEB };
+
+    if (memcmp((void*)0x004048E1, cherry_divisor, sizeof(cherry_divisor)) != 0 ||
+        memcmp((void*)0x00404A0E, cherry_loop_count, sizeof(cherry_loop_count)) != 0 ||
+        memcmp((void*)0x00404924, cherry_offset, sizeof(cherry_offset)) != 0 ||
+        memcmp((void*)0x00404AD3, cherry_layout_offset, sizeof(cherry_layout_offset)) != 0 ||
+        memcmp((void*)0x0042C87C, bonus_sprite_loop, sizeof(bonus_sprite_loop)) != 0) {
+        printf("th07 Cherry/Bonus display patches don't match the known executable, skipping!\n");
+        return;
+    }
+
+    DWORD divisor = 1000000;
+    BYTE digits = 7;
+    BYTE nops[sizeof(cherry_offset)] = {};
+    memset(nops, 0x90, sizeof(nops));
+    DWORD six = 0x00498B54;
+
+    patch_bytes(0x004048E1, &divisor, sizeof(divisor));
+    patch_bytes(0x00404A0E, &digits, sizeof(digits));
+    patch_bytes(0x00404924, nops, sizeof(nops));
+    patch_bytes(0x00404AD3, &six, sizeof(six));
+    patch_jmp(0x0042C87C, th7_spell_bonus_digits_hook);
+    printf("th07 Cherry and Spell Card Bonus display fixes installed\n");
+}
+
 // Takes over the two present calls of GameWindow::Render (defined below, after the comment that
 // explains what a frame is made of)
 static void th7_install_interpolation();
@@ -311,6 +399,8 @@ void th7_install_patches() {
         BYTE patch[] = { 0x00, 0x00, 0x00, 0x00, 0x74 };
         patch_bytes(0x00430F03, patch, sizeof(patch));
     }
+    if (Config::FixTH07CherryBonusDisplay)
+        th7_install_display_fixes();
     if (Config::AlwaysBlt) {
         // GameWindow::Render bails out when [this+8] is 0, freezing the picture once the
         // window loses focus. Turn that conditional jump into an unconditional one.

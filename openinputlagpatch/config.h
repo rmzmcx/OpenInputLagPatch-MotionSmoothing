@@ -40,6 +40,7 @@ public:
 	static int ShowOverlay;
 	static BOOL DebugConsole;
 	static BOOL DebugWait;
+	static BOOL FixTH07CherryBonusDisplay;
 	static BOOL FixTH12ScoreDisplay;
 	static BOOL FixInputGlitching;
 

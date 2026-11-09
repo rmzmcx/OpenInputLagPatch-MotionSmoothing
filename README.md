@@ -240,6 +240,19 @@ DebugConsole = 0
 ; 默认 / Default: 0
 DebugWait = 0
 
+; 修复东方妖妖梦（th07）左下角当前樱点超过 999999 后的显示和排版异常，
+; 以及 Boss 符卡 Bonus 达到 100000000 以上时精灵数字只按 8 位拆分、导致越界精灵混入的问题。
+; 只调整 HUD 显示，不改变实际樱点、Bonus、得分、结算或 replay 数据；仅对 th07 生效。
+;
+; Fix the current Cherry layout above 999,999 and the Spell Card Bonus readout at 100,000,000
+; and above in Perfect Cherry Blossom (th07). The original Bonus HUD only splits eight sprite
+; digits, so a ninth digit produces an out-of-range sprite index and mixes unrelated HUD artwork.
+; This only changes HUD display code; gameplay values, results and replay data are unchanged.
+; th07 only.
+;
+; 默认 / Default: 1
+FixTH07Cherry&BonusDisplay = 1
+
 ; 修掉红魔乡/妖妖梦里「窗口不在前台时 DirectInput 拒绝给状态，游戏却只把『设备丢失』当失败，
 ; 于是继续读一份从没被填过的缓冲区」造成的乱按键、按键卡住（相当于 vpatch 的 FixInputGlitching；
 ; vpatch 是在它的 AlwaysBlt 里一起做的）。
