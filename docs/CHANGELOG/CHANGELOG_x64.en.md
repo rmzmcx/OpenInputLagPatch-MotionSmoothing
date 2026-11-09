@@ -30,12 +30,34 @@ from the changelogs for the x86 games.
   `oilp_diag.txt` records the x64 version, configuration, hook state, swap-chain model, replay
   slowdown state, BGM realignment, player position and the last 300 game frames.
 
+- **Replay slowdown now reads the game's own low-speed movement action** (`2a41c58`)
+
+  The patch no longer polls physical Left Shift. It saves the frame's live synthesized input before
+  the game writes replay input into the logical state, then triggers slowdown from the low-speed
+  movement action bit. In-game remapping, alternate bindings and third-party key changes continue
+  to work.
+
+- **Added the configurable replay fast-forward multiplier `ReplayFastRate`** (`2a41c58`)
+
+  The default is `8`, matching the original game, and the accepted range is `1` through `128`.
+  Holding the game's configured shoot key runs the native replay acceleration loop at this
+  multiplier, and the native replay indicator shows the matching `xN` value.
+
 ### Changed
 
 - **Temporarily retained the overlay's former interpolation-rate row** (`3f2f217`)
 
   The current x64 build has no interpolation, so this row reports actual Present FPS instead of an
   interpolation target.
+
+### Fixed
+
+- **Fixed frequent startup crashes when `ReplayFastRate` was not 8** (`2a41c58`)
+
+  Older WER records confirm the same crash existed before the multiplier feature; it occurred while
+  the overlay released D3D11 COM objects. Overlay resource lifetime is now serialized with an
+  exclusive lock, pointers are cleared before release, and D3D objects are no longer released under
+  the loader lock from `DllMain(PROCESS_DETACH)`. Repeated non-8 startup tests complete normally.
 
 ### Removed
 
