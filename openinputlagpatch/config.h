@@ -26,6 +26,8 @@ public:
 	static UINT ReplaySlowFPS;
 	// x64 replay slowdown as a fraction of GameFPS (0.5 = half speed).
 	static float ReplaySlowRate;
+	// x64 replay fast-forward multiplier while the native shoot key is held.
+	static UINT ReplayFastRate;
 	static UINT BltPrepareTime;
 	static SleepType Sleep;
 	static BOOL D3D9Ex;

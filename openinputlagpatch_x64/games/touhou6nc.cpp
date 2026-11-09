@@ -33,6 +33,12 @@ constexpr size_t kReplayActiveOffset = 8;
 constexpr uintptr_t kReplayModeRva = 0x4F278C;
 constexpr uintptr_t kReplaySpeedBlockedRva = 0x4F27B0;
 constexpr uintptr_t kBulletUpdateBlockedRva = 0x4F27B9;
+constexpr uintptr_t kInputUpdateRva = 0x12BE0;
+constexpr uintptr_t kInputUpdateCallRva = 0x79D32;
+constexpr uintptr_t kReplayFastLoopCompareRva = 0x45DDF;
+constexpr uintptr_t kReplayFastLoopBranchRva = 0x45DBC;
+constexpr uint32_t kInputFocusMask = 0x4;
+constexpr uint32_t kInputShootMask = 0x8000;
 constexpr uintptr_t kAudioStreamRva = 0x50966C;
 constexpr uintptr_t kAudioLoopFlagRva = 0x50967C;
 constexpr uintptr_t kAudioLoopPointsFlagRva = 0x50967D;
@@ -51,9 +57,12 @@ bool installed;
 bool flip_discard_hook_installed;
 bool replay_indicator_hook_installed;
 bool update_chain_hook_installed;
+bool input_update_hook_installed;
+bool replay_fast_rate_hook_installed;
 bool practice_tool_loaded;
 char* replay_rate_text;
 bool logic_update_ran = true;
+uint32_t live_input_state;
 
 double replay_slow_credit;
 double replay_slow_debt;
@@ -182,7 +191,7 @@ bool install_replay_rate_text_patch() {
 	replay_rate_text = allocate_near_game(0x1000);
 	if (replay_rate_text == nullptr)
 		return false;
-	strcpy_s(replay_rate_text, 16, "x8");
+	sprintf_s(replay_rate_text, 16, "x%u", Config::ReplayFastRate);
 	const int32_t displacement = (int32_t)(
 		(intptr_t)replay_rate_text -
 		(intptr_t)(site + 7));
@@ -193,6 +202,37 @@ bool install_replay_rate_text_patch() {
 using ReplayIndicatorFunction = int64_t(__fastcall*)(void*, void*);
 ReplayIndicatorFunction replay_indicator_original;
 
+using InputUpdateFunction = uint32_t(__fastcall*)();
+InputUpdateFunction input_update_original;
+
+uint32_t __fastcall input_update_hook() {
+	live_input_state = input_update_original();
+	return live_input_state;
+}
+
+bool install_replay_fast_rate_patch() {
+	uint8_t* compare = game_address(kReplayFastLoopCompareRva);
+	uint8_t* branch = game_address(kReplayFastLoopBranchRva);
+	static const uint8_t expected_compare[] = {
+		0x83, 0xFF, 0x07, 0x7C, 0xB3,
+	};
+	static const uint8_t expected_branch[] = { 0x74, 0x3C };
+	if (memcmp(compare, expected_compare, sizeof(expected_compare)) != 0 ||
+		memcmp(branch, expected_branch, sizeof(expected_branch)) != 0) {
+		return false;
+	}
+	if (Config::ReplayFastRate == 1) {
+		const uint8_t skip_loop = 0xEB;
+		patch_bytes(branch, (void*)&skip_loop, sizeof(skip_loop));
+	} else {
+		const uint8_t extra_updates =
+			(uint8_t)(Config::ReplayFastRate - 1);
+		patch_bytes(compare + 2, (void*)&extra_updates,
+			sizeof(extra_updates));
+	}
+	return true;
+}
+
 int64_t __fastcall replay_indicator_hook(void* controller, void* render) {
 	if (replay_indicator_original == nullptr)
 		return 0;
@@ -201,7 +241,8 @@ int64_t __fastcall replay_indicator_hook(void* controller, void* render) {
 			sprintf_s(replay_rate_text, 16, "x%.3g",
 				Config::ReplaySlowRate);
 		else
-			strcpy_s(replay_rate_text, 16, "x8");
+			sprintf_s(replay_rate_text, 16, "x%u",
+				Config::ReplayFastRate);
 	}
 	uint32_t* input = (uint32_t*)game_address(kInputStateRva);
 	const uint32_t saved_input = *input;
@@ -262,13 +303,14 @@ bool replay_slow_requested() {
 	const uint32_t input =
 		*(uint32_t*)game_address(kInputStateRva);
 	return Config::ReplaySpeedControl &&
+		input_update_hook_installed &&
 		replay_is_active(replay_controller) &&
 		*(uint8_t*)game_address(kReplayModeRva) != 0 &&
 		*(uint8_t*)game_address(kReplaySpeedBlockedRva) == 0 &&
 		*(uint8_t*)game_address(kBulletUpdateBlockedRva) == 0 &&
 		*(uint32_t*)game_address(kGameModeRva) == kGameplayMode &&
-		(input & 0x8000) == 0 &&
-		(GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0;
+		(input & kInputShootMask) == 0 &&
+		(live_input_state & kInputFocusMask) != 0;
 }
 
 void begin_replay_slow() {
@@ -372,10 +414,12 @@ void write_diagnostic() {
 		Limiter::game_fps, Limiter::DisplayRefresh());
 	fprintf(file,
 		"config: GameFPS %u, ReplaySpeedControl %d, "
-		"ReplaySlowRate %.3f, ShowOverlay %d, DebugConsole %d, "
+		"ReplaySlowRate %.3f, ReplayFastRate %u, "
+		"ShowOverlay %d, DebugConsole %d, "
 		"ForceFlipDiscard %d\n",
 		Config::GameFPS, Config::ReplaySpeedControl ? 1 : 0,
-		Config::ReplaySlowRate, Config::ShowOverlay,
+		Config::ReplaySlowRate, Config::ReplayFastRate,
+		Config::ShowOverlay,
 		Config::DebugConsole ? 1 : 0,
 		Config::ForceFlipDiscard ? 1 : 0);
 	fprintf(file,
@@ -383,20 +427,26 @@ void write_diagnostic() {
 		flip_discard_hook_installed ? 1 : 0,
 		d3d11_swapchain_is_flip_discard() ? 1 : 0);
 	fprintf(file,
-		"hooks: replay indicator %d, update chain %d\n",
+		"hooks: replay indicator %d, update chain %d, "
+		"input update %d, replay fast rate %d\n",
 		replay_indicator_hook_installed ? 1 : 0,
-		update_chain_hook_installed ? 1 : 0);
+		update_chain_hook_installed ? 1 : 0,
+		input_update_hook_installed ? 1 : 0,
+		replay_fast_rate_hook_installed ? 1 : 0);
 	fprintf(file, "practice tool module: %d\n",
 		practice_tool_loaded ? 1 : 0);
 	fprintf(file,
 		"game state: mode %u (%s), input 0x%08lx, "
+		"live input 0x%08lX, focus %d, shoot %d, "
 		"replay controller 0x%p, replay active %d, slow active %d, "
-		"slow updates %lld, BGM debt %.2f frame(s), LSHIFT %d\n",
+		"slow updates %lld, BGM debt %.2f frame(s)\n",
 		game_mode, game_mode_name(game_mode), (unsigned long)input,
+		(unsigned long)live_input_state,
+		(live_input_state & kInputFocusMask) != 0 ? 1 : 0,
+		(live_input_state & kInputShootMask) != 0 ? 1 : 0,
 		replay_controller, replay_is_active(replay_controller) ? 1 : 0,
 		replay_slow_active ? 1 : 0,
-		(long long)replay_slow_frames, replay_slow_debt,
-		(GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0 ? 1 : 0);
+		(long long)replay_slow_frames, replay_slow_debt);
 	fprintf(file, "last slow BGM seek: %lld -> %lld\n",
 		(long long)replay_last_bgm_position,
 		(long long)replay_last_bgm_target);
@@ -477,6 +527,23 @@ void th06nc_install_patches() {
 	practice_tool_loaded =
 		GetModuleHandleW(L"th06nc_test.dll") != nullptr;
 	QueryPerformanceFrequency(&diag_frequency);
+
+	uint8_t* input_update_call = game_address(kInputUpdateCallRva);
+	if (call_targets(input_update_call, game_base + kInputUpdateRva)) {
+		input_update_original =
+			(InputUpdateFunction)game_address(kInputUpdateRva);
+		patch_call(input_update_call, (void*)&input_update_hook);
+		input_update_hook_installed = true;
+	} else {
+		printf("TH06NC: input update call at RVA %p does not match\n",
+			(void*)kInputUpdateCallRva);
+	}
+
+	replay_fast_rate_hook_installed = install_replay_fast_rate_patch();
+	if (!replay_fast_rate_hook_installed) {
+		printf("TH06NC: replay fast-forward rate patch at RVA %p does not match\n",
+			(void*)kReplayFastLoopCompareRva);
+	}
 
 	if (install_replay_rate_text_patch()) {
 		static const uint8_t expected_indicator_prologue[] = {

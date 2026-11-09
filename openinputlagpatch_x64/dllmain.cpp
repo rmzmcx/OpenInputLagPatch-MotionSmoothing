@@ -4,7 +4,6 @@
 #include "config.h"
 #include "limiter.h"
 #include "x64_games.h"
-#include "x64_overlay.h"
 
 namespace {
 void create_console() {
@@ -46,9 +45,6 @@ BOOL APIENTRY DllMain(HMODULE, DWORD reason, LPVOID) {
 	switch (reason) {
 	case DLL_PROCESS_ATTACH:
 		patcher_main();
-		break;
-	case DLL_PROCESS_DETACH:
-		x64_overlay_destroy();
 		break;
 	}
 	return TRUE;

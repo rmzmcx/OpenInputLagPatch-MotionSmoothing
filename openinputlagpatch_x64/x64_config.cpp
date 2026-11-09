@@ -9,6 +9,7 @@ BOOL Config::ReplaySpeedControl = TRUE;
 UINT Config::ReplaySkipFPS = 240;
 UINT Config::ReplaySlowFPS = 30;
 float Config::ReplaySlowRate = 0.5f;
+UINT Config::ReplayFastRate = 8;
 UINT Config::BltPrepareTime = 2;
 SleepType Config::Sleep = SleepType::Vpatch;
 int Config::ShowOverlay = 1;
@@ -70,6 +71,8 @@ void load_config_file(const wchar_t* config_path) {
 	GetPrivateProfileStringW(L"Option", L"ReplaySlowRate", L"0.5",
 		replay_slow_rate, _countof(replay_slow_rate), config_path);
 	Config::ReplaySlowRate = (float)_wtof(replay_slow_rate);
+	Config::ReplayFastRate = GetPrivateProfileIntW(
+		L"Option", L"ReplayFastRate", Config::ReplayFastRate, config_path);
 	Config::ShowOverlay = GetPrivateProfileIntW(
 		L"Option", L"ShowOverlay", Config::ShowOverlay, config_path);
 	Config::DebugConsole = GetPrivateProfileIntW(
@@ -101,6 +104,10 @@ bool Config::Load() {
 		Config::GameFPS = 60;
 	if (Config::ReplaySlowRate <= 0.0f || Config::ReplaySlowRate >= 1.0f)
 		Config::ReplaySlowRate = 0.5f;
+	if (Config::ReplayFastRate < 1)
+		Config::ReplayFastRate = 1;
+	else if (Config::ReplayFastRate > 128)
+		Config::ReplayFastRate = 128;
 	Config::ReplaySlowFPS =
 		(UINT)((float)Config::GameFPS * Config::ReplaySlowRate + 0.5f);
 	if (Config::ReplaySlowFPS < 1)

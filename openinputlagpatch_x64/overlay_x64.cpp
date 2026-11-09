@@ -191,11 +191,30 @@ struct SavedD3D11State {
 
 Overlay overlay;
 OverlayRenderer renderer;
+SRWLOCK overlay_lock = SRWLOCK_INIT;
 bool present_rate_enabled;
 double present_rate;
 unsigned int present_count;
 LARGE_INTEGER present_rate_frequency;
 LARGE_INTEGER present_rate_since;
+
+class OverlayLock {
+public:
+	OverlayLock() {
+		AcquireSRWLockExclusive(&overlay_lock);
+	}
+	~OverlayLock() {
+		ReleaseSRWLockExclusive(&overlay_lock);
+	}
+};
+
+template <typename T>
+void release_com(T*& object) {
+	T* released = object;
+	object = nullptr;
+	if (released != nullptr)
+		released->Release();
+}
 
 const char shader_source[] = R"(
 struct VSInput {
@@ -224,30 +243,18 @@ float4 ps_main(VSOutput input) : SV_TARGET {
 )";
 
 void release_renderer() {
-	if (renderer.vertex_shader != nullptr)
-		renderer.vertex_shader->Release();
-	if (renderer.pixel_shader != nullptr)
-		renderer.pixel_shader->Release();
-	if (renderer.input_layout != nullptr)
-		renderer.input_layout->Release();
-	if (renderer.vertex_buffer != nullptr)
-		renderer.vertex_buffer->Release();
-	if (renderer.index_buffer != nullptr)
-		renderer.index_buffer->Release();
-	if (renderer.texture_view != nullptr)
-		renderer.texture_view->Release();
-	if (renderer.texture != nullptr)
-		renderer.texture->Release();
-	if (renderer.sampler != nullptr)
-		renderer.sampler->Release();
-	if (renderer.blend != nullptr)
-		renderer.blend->Release();
-	if (renderer.rasterizer != nullptr)
-		renderer.rasterizer->Release();
-	if (renderer.context != nullptr)
-		renderer.context->Release();
-	if (renderer.device != nullptr)
-		renderer.device->Release();
+	release_com(renderer.vertex_shader);
+	release_com(renderer.pixel_shader);
+	release_com(renderer.input_layout);
+	release_com(renderer.vertex_buffer);
+	release_com(renderer.index_buffer);
+	release_com(renderer.texture_view);
+	release_com(renderer.texture);
+	release_com(renderer.sampler);
+	release_com(renderer.blend);
+	release_com(renderer.rasterizer);
+	release_com(renderer.context);
+	release_com(renderer.device);
 	renderer = {};
 }
 
@@ -606,6 +613,7 @@ void draw_overlay(IDXGISwapChain* swapchain) {
 }
 
 void overlay_show_present_rate(bool show) {
+	OverlayLock lock;
 	present_rate_enabled = show;
 }
 
@@ -624,11 +632,13 @@ void overlay_set_present_rate_follow_text(bool) {
 }
 
 void overlay_set_render_time_text(const char* text, unsigned long) {
+	OverlayLock lock;
 	strncpy_s(overlay.frame_time, text != nullptr ? text : "", _TRUNCATE);
 	overlay.content_dirty = true;
 }
 
 void overlay_mark_presentation() {
+	OverlayLock lock;
 	if (present_rate_frequency.QuadPart == 0)
 		QueryPerformanceFrequency(&present_rate_frequency);
 	LARGE_INTEGER now;
@@ -650,6 +660,7 @@ void overlay_mark_presentation() {
 }
 
 void x64_overlay_attach(HWND game_window) {
+	OverlayLock lock;
 	if (overlay.game_window == game_window)
 		return;
 	overlay.game_window = game_window;
@@ -659,6 +670,7 @@ void x64_overlay_attach(HWND game_window) {
 void x64_overlay_draw(IDXGISwapChain* swapchain) {
 	if (swapchain == nullptr)
 		return;
+	OverlayLock lock;
 	update_content(false);
 	if (!overlay.visible || !ensure_renderer(swapchain) || !ensure_texture() ||
 		!upload_texture())
@@ -667,6 +679,7 @@ void x64_overlay_draw(IDXGISwapChain* swapchain) {
 }
 
 void x64_overlay_destroy() {
+	OverlayLock lock;
 	release_renderer();
 	if (overlay.old_bitmap != nullptr)
 		SelectObject(overlay.memory_dc, overlay.old_bitmap);
