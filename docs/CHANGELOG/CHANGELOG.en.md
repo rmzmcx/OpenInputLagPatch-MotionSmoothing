@@ -11,6 +11,23 @@ is also the record of what has actually been verified rather than just what was 
 
 ### Fixed
 
+- **th10-th15 no longer restore the whole stage object for extra frames, fixing crashes when loading after transitions and practice sessions** (`683151e`)
+
+  Extra presentations run the stage draw callbacks again, and th10-th15 advance their stage-clear
+  timer and fade creation from those callbacks. To keep one game frame from advancing the
+  transition two or three times, the patch saved and restored stage state; the old implementation
+  copied the entire stage object. Those objects also hold resource pointers and task handles that
+  the render walk can replace, so restoring the old bytes could expose stale state during the next
+  stage load. In th11, this was confirmed to crash while reading the next stage data header from
+  both normal transitions and practice mode.
+
+  The patch now saves only the fields each game's draw callbacks actually change: fade colour and
+  terminal state, render counters, stage flags, timer scalar fields and the stage shake values. A
+  shared helper checks every range against that game's real allocation size and skips the restore
+  if the stage slot now names another object. The interpolation algorithm, input, logic timing,
+  transition duration and replay data are unchanged. The transition and next-stage load paths
+  have been confirmed in game.
+
 - **Perfect Cherry Blossom's current Cherry and Spell Card Bonus displays are fixed** (`3bce335`)
 
   PCB splits the current Cherry value into a fixed six sprite digits. Above `999999`, the leading
