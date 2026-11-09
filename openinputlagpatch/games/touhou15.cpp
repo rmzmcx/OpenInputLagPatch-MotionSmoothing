@@ -804,36 +804,31 @@ static ExtraFloatState th15_shake = { (float*)0x004E7E90, 2 };
 //
 // As in th13/th14 the fade is built inline, so the allocation call at 0x40EA1A is guarded:
 // returning nullptr there makes the callback take its own failure path (0x40EB02) and skip the
-// fade, while the rest of the draw runs normally.
-static const size_t th15_stage_size = 0x6788;
-static void** const th15_stage_slots[2] = { (void**)0x004E9A5C, (void**)0x004E9A60 };
-static unsigned char* th15_stage_saved[2];
-static bool th15_stage_saved_valid[2];
+// fade, while the rest of the draw runs normally. The first range is the fade colour and terminal
+// flag at +0x339C. The second is the render counters, stage flags and stage timer scalars at
+// +0x6750, stopping before the timer's static speed pointer at +0x676C. The last range holds the
+// two stage shake values.
+static const ExtraByteRange th15_stage_ranges[] = {
+	{ 0x339C, 0x08 },
+	{ 0x6750, 0x1C },
+	{ 0x02E8, 0x08 },
+};
+static const size_t th15_stage_range_count =
+	sizeof(th15_stage_ranges) / sizeof(th15_stage_ranges[0]);
+static ExtraRangeState th15_stage_states[2] = {
+	{ (void**)0x004E9A5C, th15_stage_ranges, th15_stage_range_count, 0x6788 },
+	{ (void**)0x004E9A60, th15_stage_ranges, th15_stage_range_count, 0x6788 },
+};
 static bool th15_in_extra;
 
 static void th15_stage_save() {
-	for (int i = 0; i < 2; ++i) {
-		th15_stage_saved_valid[i] = false;
-		void* stage = *th15_stage_slots[i];
-		if (stage == nullptr)
-			continue;
-		if (th15_stage_saved[i] == nullptr)
-			th15_stage_saved[i] = (unsigned char*)malloc(th15_stage_size);
-		if (th15_stage_saved[i] == nullptr)
-			continue;
-		memcpy(th15_stage_saved[i], stage, th15_stage_size);
-		th15_stage_saved_valid[i] = true;
-	}
+	for (int i = 0; i < 2; ++i)
+		extra_range_state_save(&th15_stage_states[i]);
 }
 
 static void th15_stage_restore() {
-	for (int i = 0; i < 2; ++i) {
-		void* stage = *th15_stage_slots[i];
-		if (!th15_stage_saved_valid[i] || stage == nullptr)
-			continue;
-		memcpy(stage, th15_stage_saved[i], th15_stage_size);
-		th15_stage_saved_valid[i] = false;
-	}
+	for (int i = 0; i < 2; ++i)
+		extra_range_state_restore(&th15_stage_states[i]);
 }
 
 static void* (__cdecl* th15_operator_new)(size_t size) = (void*(__cdecl*)(size_t))0x0049039F;

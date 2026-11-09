@@ -203,35 +203,31 @@ static ExtraFloatState th13_shake = { (float*)0x004DCBE8, 2 };
 // Unlike th10-th12 the fade object is built inline instead of through a factory, so the allocation
 // call at 0x406FA8 is what is guarded: returning nullptr there makes the callback take its own
 // "allocation failed" path (0x407055) and skip the fade, while the rest of the draw runs normally.
-static const size_t th13_stage_size = 0x41C0;
-static void** const th13_stage_slots[2] = { (void**)0x004C2168, (void**)0x004C216C };
-static unsigned char* th13_stage_saved[2];
-static bool th13_stage_saved_valid[2];
+// Only the fields the callbacks change are copied. The first range is the fade counter, colour and
+// terminal flag at +0x2F34. The second is the render counters, stage flags and stage timer scalars
+// at +0x4040, stopping before the timer's static speed pointer at +0x405C. The last range holds the
+// two stage shake values.
+static const ExtraByteRange th13_stage_ranges[] = {
+	{ 0x2F34, 0x08 },
+	{ 0x4040, 0x1C },
+	{ 0x4190, 0x08 },
+};
+static const size_t th13_stage_range_count =
+	sizeof(th13_stage_ranges) / sizeof(th13_stage_ranges[0]);
+static ExtraRangeState th13_stage_states[2] = {
+	{ (void**)0x004C2168, th13_stage_ranges, th13_stage_range_count, 0x41C0 },
+	{ (void**)0x004C216C, th13_stage_ranges, th13_stage_range_count, 0x41C0 },
+};
 static bool th13_in_extra;
 
 static void th13_stage_save() {
-	for (int i = 0; i < 2; ++i) {
-		th13_stage_saved_valid[i] = false;
-		void* stage = *th13_stage_slots[i];
-		if (stage == nullptr)
-			continue;
-		if (th13_stage_saved[i] == nullptr)
-			th13_stage_saved[i] = (unsigned char*)malloc(th13_stage_size);
-		if (th13_stage_saved[i] == nullptr)
-			continue;
-		memcpy(th13_stage_saved[i], stage, th13_stage_size);
-		th13_stage_saved_valid[i] = true;
-	}
+	for (int i = 0; i < 2; ++i)
+		extra_range_state_save(&th13_stage_states[i]);
 }
 
 static void th13_stage_restore() {
-	for (int i = 0; i < 2; ++i) {
-		void* stage = *th13_stage_slots[i];
-		if (!th13_stage_saved_valid[i] || stage == nullptr)
-			continue;
-		memcpy(stage, th13_stage_saved[i], th13_stage_size);
-		th13_stage_saved_valid[i] = false;
-	}
+	for (int i = 0; i < 2; ++i)
+		extra_range_state_restore(&th13_stage_states[i]);
 }
 
 // The fade object is allocated inline by FUN_00406D90 (0x406FA8). While an extra is drawing, the
