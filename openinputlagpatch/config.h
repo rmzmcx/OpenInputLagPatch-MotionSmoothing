@@ -40,6 +40,7 @@ public:
 	static int ShowOverlay;
 	static BOOL DebugConsole;
 	static BOOL DebugWait;
+	static BOOL FixTH12ScoreDisplay;
 	static BOOL FixInputGlitching;
 
 	// Whether the patch should replace the frame rate the game measures for itself, the way vpatch's

@@ -18,6 +18,7 @@ BOOL Config::ForceRatio43 = FALSE;
 int Config::ShowOverlay = 1;
 BOOL Config::DebugConsole = FALSE;
 BOOL Config::DebugWait = FALSE;
+BOOL Config::FixTH12ScoreDisplay = TRUE;
 BOOL Config::FixInputGlitching = TRUE;
 BOOL Config::CalcFPS = TRUE;
 int Config::Interpolation = 1;
@@ -67,6 +68,7 @@ static const char default_global_ini[] =
     "ShowOverlay = 1\r\n"
     "DebugConsole = 0\r\n"
     "DebugWait = 0\r\n"
+    "FixTH12ScoreDisplay = 1\r\n"
     "FixInputGlitching = 1\r\n"
     "CalcFPS = 1\r\n"
     "AlwaysBlt = 1\r\n"
@@ -165,6 +167,7 @@ static void load_config_file(const wchar_t* config_path) {
 	LOAD_SETTING(ShowOverlay);
 	LOAD_SETTING(DebugConsole);
 	LOAD_SETTING(DebugWait);
+	LOAD_SETTING(FixTH12ScoreDisplay);
 	LOAD_SETTING(FixInputGlitching);
 	LOAD_SETTING(CalcFPS);
 	// Interpolation is read as text below, it has more than one form
@@ -251,6 +254,7 @@ static void write_config_trace(const wchar_t* game_dir, const wchar_t* global_co
 		write_profile_value(file, global_config, L"Option", L"FixInputGlitching");
 		write_profile_value(file, global_config, L"Option", L"AlwaysBlt");
 		write_profile_value(file, global_config, L"Option", L"ShowOverlay");
+		write_profile_value(file, global_config, L"Option", L"FixTH12ScoreDisplay");
 		write_profile_value(file, global_config, L"Interpolation", L"Interpolation");
 		write_profile_value(file, global_config, L"Experimental", L"BypassNvidiaD3D8Detour");
 	}
@@ -261,6 +265,7 @@ static void write_config_trace(const wchar_t* game_dir, const wchar_t* global_co
 		write_profile_value(file, game_config, L"Option", L"FixInputGlitching");
 		write_profile_value(file, game_config, L"Option", L"AlwaysBlt");
 		write_profile_value(file, game_config, L"Option", L"ShowOverlay");
+		write_profile_value(file, game_config, L"Option", L"FixTH12ScoreDisplay");
 		write_profile_value(file, game_config, L"Interpolation", L"Interpolation");
 		write_profile_value(file, game_config, L"Experimental", L"BypassNvidiaD3D8Detour");
 	}
@@ -269,6 +274,7 @@ static void write_config_trace(const wchar_t* game_dir, const wchar_t* global_co
 	fprintf(file, "  FixInputGlitching = %d\n", Config::FixInputGlitching);
 	fprintf(file, "  AlwaysBlt = %d\n", Config::AlwaysBlt);
 	fprintf(file, "  ShowOverlay = %d\n", Config::ShowOverlay);
+	fprintf(file, "  FixTH12ScoreDisplay = %d\n", Config::FixTH12ScoreDisplay);
 	fprintf(file, "  Interpolation = %d\n", Config::Interpolation);
 	fprintf(file, "  InterpolationFPS = %u\n", Config::InterpolationFPS);
 	fprintf(file, "  GameFPS = %u\n", Config::GameFPS);

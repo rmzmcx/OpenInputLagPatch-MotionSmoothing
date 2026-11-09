@@ -19,6 +19,54 @@ using namespace Touhou12;
 // accidentally copied here when th13 support was added.
 CReplayManager** CReplayManager::InstancePtr = (CReplayManager**)0x004B4518;
 
+// The game's score formatter at 0x401610 uses signed comparisons and "%d". UFO can construct a
+// displayed score above INT_MAX, at which point that formatter shows a negative value and the
+// readout appears to count backwards. VsyncPatch fixed the same bug by replacing the formatting
+// path with an unsigned decimal writer; this is the same conversion.
+static char* __fastcall th12_format_score(unsigned int score, char* output) {
+	char* cursor = output;
+	unsigned int digits = 0;
+	for (;;) {
+		*cursor++ = (char)('0' + score % 10);
+		score /= 10;
+		++digits;
+		if (score == 0)
+			break;
+		if (digits % 3 == 0)
+			*cursor++ = ',';
+	}
+	*cursor = '\0';
+	return _strrev(output);
+}
+
+static void th12_fix_score_display() {
+	BYTE* site = (BYTE*)0x00401631;
+	static const BYTE expected[] = {
+		0x7D, 0x18, 0x51, 0x8D, 0x44, 0x24, 0x08, 0x68, 0x84,
+		0xF4, 0x49, 0x00, 0x50, 0xE8, 0x78, 0xB5, 0x06, 0x00,
+	};
+	if (memcmp(site, expected, sizeof(expected)) != 0) {
+		printf("th12 score formatter at 0x401631 doesn't look like the known one, skipping!\n");
+		return;
+	}
+
+	// At this point the caller still has the score in ECX and its 256-byte text buffer starts at
+	// [ESP+4]. The original signed/formatting branch is replaced with a direct call to the unsigned
+	// formatter, then jumps to the common text enqueue at 0x4016F3.
+	BYTE patch[sizeof(expected)];
+	patch[0] = 0x8D;
+	patch[1] = 0x54;
+	patch[2] = 0x24;
+	patch[3] = 0x04;
+	patch[4] = 0xE8;
+	*(DWORD*)(patch + 5) = (DWORD)th12_format_score - (0x00401631 + 9);
+	patch[9] = 0xE9;
+	*(DWORD*)(patch + 10) = 0x004016F3 - (0x00401631 + 14);
+	memset(patch + 14, 0x90, 4);
+	patch_bytes(site, patch, sizeof(patch));
+	printf("th12 score display fix installed\n");
+}
+
 int __stdcall th12_window_update_hook(void* self) {
 	Limiter::Tick();
 	return CWindowManager__UpdateFast(self);
@@ -1182,6 +1230,8 @@ void th12_install_patches() {
 		BYTE patch[] = { 0xEB };
 		patch_bytes(0x0043C54F, patch, sizeof(patch));
 	}
+	if (Config::FixTH12ScoreDisplay)
+		th12_fix_score_display();
 	if (Config::Interpolation || Config::InterpolationFPS) {
 		// Take over the object render, only to remember the viewport the scene is drawn with (see
 		// th12_render_hook); the render itself runs exactly the way it always did
