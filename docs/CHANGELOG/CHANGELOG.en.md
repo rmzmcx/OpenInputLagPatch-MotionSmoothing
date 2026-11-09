@@ -11,6 +11,18 @@ is also the record of what has actually been verified rather than just what was 
 
 ### Fixed
 
+- **th12 high scores no longer become negative or appear to count backwards** (`b4f6ea0`)
+
+  UFO's displayed score is built from `base score + 10 * current score`. The original formatter
+  at `0x00401610` uses signed comparisons and `%d`, so a displayed value above `INT_MAX` becomes
+  negative and the readout appears to run backwards.
+
+  The patch applies the same display-only workaround as VsyncPatch. After validating the original
+  eighteen bytes at `0x00401631`, it replaces the signed formatting branch with an unsigned decimal
+  conversion that inserts thousands separators, then returns to the common text enqueue at
+  `0x004016F3`. The actual score, results and replay data are unchanged. The new
+  `[Option] FixTH12ScoreDisplay = 1` setting defaults to enabled and has been confirmed in game.
+
 - **th12 replay fast-forward and slowdown work again** (`b47db78`)
 
   The UFO replay callback read `0x004C22C8`, which is Ten Desires' replay manager pointer. That
