@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Shared">
+      <UniqueIdentifier>{8B49B215-2D63-4B38-AB9B-A2C05F28A9D1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Games">
+      <UniqueIdentifier>{A92054AA-75BC-4897-A430-B71F0BC66472}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\openinputlagpatch\common.cpp"><Filter>Shared</Filter></ClCompile>
+    <ClCompile Include="..\openinputlagpatch\limiter.cpp"><Filter>Shared</Filter></ClCompile>
+    <ClCompile Include="..\openinputlagpatch\patch_util.cpp"><Filter>Shared</Filter></ClCompile>
+    <ClCompile Include="..\openinputlagpatch\sha256.c"><Filter>Shared</Filter></ClCompile>
+    <ClCompile Include="d3d11_hook.cpp" />
+    <ClCompile Include="dllmain.cpp" />
+    <ClCompile Include="overlay_x64.cpp" />
+    <ClCompile Include="x64_config.cpp" />
+    <ClCompile Include="x64_games.cpp" />
+    <ClCompile Include="games\touhou6nc.cpp"><Filter>Games</Filter></ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\openinputlagpatch\common.h"><Filter>Shared</Filter></ClInclude>
+    <ClInclude Include="..\openinputlagpatch\config.h"><Filter>Shared</Filter></ClInclude>
+    <ClInclude Include="..\openinputlagpatch\default_ini.h"><Filter>Shared</Filter></ClInclude>
+    <ClInclude Include="..\openinputlagpatch\fps_target.h"><Filter>Shared</Filter></ClInclude>
+    <ClInclude Include="..\openinputlagpatch\limiter.h"><Filter>Shared</Filter></ClInclude>
+    <ClInclude Include="..\openinputlagpatch\overlay.h"><Filter>Shared</Filter></ClInclude>
+    <ClInclude Include="..\openinputlagpatch\patch_util.h"><Filter>Shared</Filter></ClInclude>
+    <ClInclude Include="..\openinputlagpatch\sha256.h"><Filter>Shared</Filter></ClInclude>
+    <ClInclude Include="d3d11_hook.h" />
+    <ClInclude Include="x64_games.h" />
+    <ClInclude Include="x64_overlay.h" />
+    <ClInclude Include="games\touhou6nc.h"><Filter>Games</Filter></ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="default_ini.rc" />
+  </ItemGroup>
+</Project>

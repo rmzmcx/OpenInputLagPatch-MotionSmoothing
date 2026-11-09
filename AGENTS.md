@@ -95,13 +95,14 @@ When you are writing, please
 9. `RELEASE_NOTES_v<ver>.md` 与 `UPDATES&USAGES_v<ver>.md` 的「改动 / 更新」内容必须取自
    `docs/CHANGELOG/Non-AI-CHANGELOG.zh-CN.md` 的对应版本。AI 不自行补写更新内容；若人工版缺少该版本记录，
    先在对话中列出本次更新内容，等用户写入人工版后再继续生成发布文档。安装、配置、校验等其它发布信息可单独维护。
-
 ## 构建 / 部署 / 实测流程
 
 - 构建（在仓库根目录）：
   `& 'E:\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe' openinputlagpatch.sln /m /p:Configuration=Release /v:minimal /nologo`
   这条命令在沙箱里会因 MSBuild 的 FileTracker 需要越权而失败，要用 `require_escalated` 跑。
 - 产物在 `build/`：`openinputlagpatch.dll`、`oilp_loader.exe`（以及 pdb / lib / exp）。
+- x64 构建加 `/p:Platform=x64`，产物在 `build/x64/`：`openinputlagpatch_x64.dll`、
+  `oilp_loader_x64.exe`。
 - 改完代码要**部署到游戏目录**再让用户实测。th15 的目录：
   `E:\东方MotionSmoothing相关\原版游戏\[th15] 东方绀珠传 (汉化版+日文版)\`
   （游戏正在运行时复制会失败，需先让用户关掉游戏。）

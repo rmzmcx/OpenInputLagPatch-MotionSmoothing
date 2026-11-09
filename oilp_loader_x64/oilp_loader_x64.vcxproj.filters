@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Shared">
+      <UniqueIdentifier>{C8D5938B-AEE7-4AE3-89BC-8D6F6BD47B54}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\openinputlagpatch\common.cpp"><Filter>Shared</Filter></ClCompile>
+    <ClCompile Include="..\openinputlagpatch\sha256.c"><Filter>Shared</Filter></ClCompile>
+    <ClCompile Include="..\openinputlagpatch_x64\x64_games.cpp"><Filter>Shared</Filter></ClCompile>
+    <ClCompile Include="main.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\openinputlagpatch\common.h"><Filter>Shared</Filter></ClInclude>
+    <ClInclude Include="..\openinputlagpatch\fps_target.h"><Filter>Shared</Filter></ClInclude>
+    <ClInclude Include="..\openinputlagpatch\sha256.h"><Filter>Shared</Filter></ClInclude>
+    <ClInclude Include="..\openinputlagpatch_x64\x64_games.h"><Filter>Shared</Filter></ClInclude>
+  </ItemGroup>
+</Project>

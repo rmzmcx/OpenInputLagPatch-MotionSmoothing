@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Windows.h>
-#include "games.h"
+#include "fps_target.h"
 
 // Frame limiter based on vpatch
 class Limiter {
@@ -31,9 +31,11 @@ public:
 	static void CountGameFrame();
 	static float MeasuredFps();
 
+#ifndef OILP_X64
 	// Waits until the given point in time, in performance counter units. The frame interpolation
 	// uses this to place the extra presentations inside a frame.
 	static void WaitUntil(LARGE_INTEGER target);
+#endif
 
 	// The games with frame interpolation present more than once per frame. The extra presentations
 	// are the patch's own work and shouldn't count towards the frame time the overlay reports, so
@@ -78,6 +80,7 @@ public:
 	// See touhou19.cpp for the games that use it.
 	static double game_fps;
 
+#ifndef OILP_X64
 	// The number of presentations per second the frame interpolation should be putting on the
 	// display, worked out from the two interpolation settings. 0 means there is nothing to
 	// interpolate:
@@ -98,12 +101,14 @@ public:
 	// a multiple of the game's frame rate has its remainder carried over from frame to frame, so
 	// the presentations still average out ("*144" with 60fps logic presents 2 and 3 alternately).
 	static unsigned int ExtraPresentations(double rate, LARGE_INTEGER& spacing);
+	static void ResetPresentationCarry();
 
 	// Whether the patch is presenting every Nth frame instead of every one, because the target
 	// frame rate is above what the display can show (see ShouldPresent). The frame interpolation
 	// must not add presentations while it is: the thinning is what keeps the presents from
 	// throttling the logic, and extra presentations would undo it.
 	static bool PresentingEveryNthFrame();
+#endif
 
 	// Those same games are the ones external tools hook to change the frame rate: thprac, for
 	// example, points the engine's clock at a variable of its own. The per game code reports

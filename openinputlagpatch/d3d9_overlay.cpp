@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "common.h"
+#include "overlay.h"
 #include "overlay_font.h"
 #include "d3d9_overlay.h"
 #include "present_diag.h"
@@ -46,6 +47,15 @@ void overlay_set_present_rate_anchor(int picture_right, int picture_width) {
 
 void overlay_set_present_rate_follow_text(bool follow) {
 	present_rate_follows_text = follow;
+}
+
+void overlay_set_render_time_text(const char* text, unsigned long color) {
+	if (D3D9Overlay::Instance != nullptr) {
+		D3D9Overlay::Instance->SetText("%s", text);
+		D3D9Overlay::Instance->text_color = (D3DCOLOR)color;
+	} else if (d3d8_overlay_active()) {
+		d3d8_overlay_set_text(text, color);
+	}
 }
 
 void overlay_mark_presentation() {

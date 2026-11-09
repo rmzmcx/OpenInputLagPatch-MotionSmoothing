@@ -50,6 +50,11 @@ inline GameNameMatch match_game_from_executable_name(const wchar_t* path) {
 		{ 185, TouhouGame::Th185, L"th18.5" },
 	};
 
+	// TH06NC is a separate x64 game. The x86 patch must not mistake its "th06" prefix for
+	// classic EoSD when its version hash is not in this binary's x86 game table.
+	if (_wcsnicmp(name, L"th06nc", 6) == 0)
+		return { TouhouGame::Unknown, nullptr };
+
 	for (const wchar_t* cursor = name; cursor[0] != L'\0' && cursor[1] != L'\0'; ++cursor) {
 		const bool is_th = (cursor[0] == L't' || cursor[0] == L'T') &&
 			(cursor[1] == L'h' || cursor[1] == L'H');

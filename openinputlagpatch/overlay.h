@@ -54,3 +54,7 @@ void overlay_set_present_rate_anchor(int picture_right, int picture_width);
 // the game's picture, so the two readouts sit next to each other. Takes priority over
 // overlay_set_present_rate_anchor.
 void overlay_set_present_rate_follow_text(bool follow);
+
+// Updates the one-line render timing readout at the bottom left. Each renderer implements this
+// through its own overlay object.
+void overlay_set_render_time_text(const char* text, unsigned long color);

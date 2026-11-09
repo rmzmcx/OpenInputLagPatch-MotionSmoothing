@@ -3,12 +3,13 @@
 
 #include <Windows.h>
 #include <stdio.h>
-#include "d3d9_hook.h"
 #include "config.h"
 #include "common.h"
-#include "d3d9_overlay.h"
 #include "limiter.h"
 #include "overlay.h"
+#ifndef OILP_X64
+#include "d3d9_hook.h"
+#endif
 
 bool Limiter::initialized = false;
 LARGE_INTEGER Limiter::start_time;
@@ -26,6 +27,9 @@ unsigned int Limiter::display_refresh = 0;
 bool Limiter::refresh_queried = false;
 double Limiter::game_fps = 60.0;
 UINT (*Limiter::external_game_fps)() = nullptr;
+#ifndef OILP_X64
+static double presentations_owed = 0.0;
+#endif
 
 bool Limiter::ShouldPresent() {
 	if (present_every <= 1)
@@ -33,6 +37,7 @@ bool Limiter::ShouldPresent() {
 	return (frame_num % present_every) == 0;
 }
 
+#ifndef OILP_X64
 bool Limiter::PresentingEveryNthFrame() {
 	return present_every > 1;
 }
@@ -76,7 +81,6 @@ unsigned int Limiter::ExtraPresentations(double rate, LARGE_INTEGER& spacing) {
 	// The game's own presentation is one of the frame's presentations, and the fraction is carried
 	// over to the next frame so a rate that isn't a multiple of the game's frame rate still
 	// averages out. One game runs per process, so the carry can live here rather than in each game.
-	static double presentations_owed = 0.0;
 	presentations_owed += rate / game_fps - 1.0;
 
 	unsigned int extras = 0;
@@ -95,6 +99,11 @@ unsigned int Limiter::ExtraPresentations(double rate, LARGE_INTEGER& spacing) {
 	return extras;
 }
 
+void Limiter::ResetPresentationCarry() {
+	presentations_owed = 0.0;
+}
+#endif
+
 // Initializes the limiter's timers, settings, etc
 void Limiter::Initialize(ReplayCallback callback) {
 	replay_callback = callback;
@@ -111,8 +120,12 @@ void Limiter::Initialize(ReplayCallback callback) {
 	// rate, so it stays off whatever the setting says. (The presentation counting itself lives in the
 	// D3D8 and D3D9 hooks, which see every present.) Set here because this is the one place every game
 	// goes through, and it happens before any overlay is created.
+#ifdef OILP_X64
+	overlay_show_present_rate((Config::ShowOverlay & 1) != 0);
+#else
 	overlay_show_present_rate((Config::ShowOverlay & 1) != 0 &&
 	                          (Config::Interpolation != 0 || Config::InterpolationFPS != 0));
+#endif
 
 	initialized = true;
 }
@@ -235,6 +248,7 @@ void Limiter::PollTargetFPS() {
 
 // TODO: Implement https://blat-blatnik.github.io/computerBear/making-accurate-sleep-function/
 
+#ifndef OILP_X64
 // Waits until the given point in time (see limiter.h)
 void Limiter::WaitUntil(LARGE_INTEGER target) {
 	switch (Config::Sleep) {
@@ -246,6 +260,7 @@ void Limiter::WaitUntil(LARGE_INTEGER target) {
 			break;
 	}
 }
+#endif
 
 // How long one of the limiter's frames is (see limiter.h)
 LARGE_INTEGER Limiter::FrameWait() {
@@ -363,12 +378,7 @@ void Limiter::TickUntil(double seconds) {
 			sprintf_s(overlay_text, "%.2f/%.2fms", frame_elapsed / (float)perf_freq.QuadPart * 1000.0, (float)Config::BltPrepareTime);
 			unsigned long overlay_color = frame_elapsed > blt_prepare_time.QuadPart ? 0xFFFF0000 : 0xFFFFFFFF;
 
-			if (D3D9Overlay::Instance) {
-				D3D9Overlay::Instance->SetText("%s", overlay_text);
-				D3D9Overlay::Instance->text_color = overlay_color;
-			} else if (d3d8_overlay_active()) {
-				d3d8_overlay_set_text(overlay_text, overlay_color);
-			}
+			overlay_set_render_time_text(overlay_text, overlay_color);
 		}
 	}
 
@@ -423,12 +433,7 @@ void Limiter::Tick() {
 			sprintf_s(overlay_text, "%.2f/%.2fms", frame_elapsed / (float)perf_freq.QuadPart * 1000.0, (float)Config::BltPrepareTime);
 			unsigned long overlay_color = frame_elapsed > blt_prepare_time.QuadPart ? 0xFFFF0000 : 0xFFFFFFFF;
 
-			if (D3D9Overlay::Instance) {
-				D3D9Overlay::Instance->SetText("%s", overlay_text);
-				D3D9Overlay::Instance->text_color = overlay_color;
-			} else if (d3d8_overlay_active()) {
-				d3d8_overlay_set_text(overlay_text, overlay_color);
-			}
+			overlay_set_render_time_text(overlay_text, overlay_color);
 		}
 	}
 
@@ -455,9 +460,13 @@ void Limiter::Tick() {
 	} else {
 		printf("Frame limiter fell behind or target FPS has changed. Resyncing...\n");
 		last_wait_amount.QuadPart = wait_amount.QuadPart;
+#ifndef OILP_X64
 		IDirect3DDevice9* device9 = d3d9_hooked_device();
 		if (d3d9ex_device_in_use() && device9 && !temp_fps_change)
 			((IDirect3DDevice9Ex*)device9)->WaitForVBlank(0);
+#else
+		(void)temp_fps_change;
+#endif
 		QueryPerformanceCounter(&cur_time);
 		start_time.QuadPart = cur_time.QuadPart;
 		frame_num = 0;

@@ -24,6 +24,8 @@ public:
 	static BOOL ReplaySpeedControl;
 	static UINT ReplaySkipFPS;
 	static UINT ReplaySlowFPS;
+	// x64 replay slowdown as a fraction of GameFPS (0.5 = half speed).
+	static float ReplaySlowRate;
 	static UINT BltPrepareTime;
 	static SleepType Sleep;
 	static BOOL D3D9Ex;
@@ -41,6 +43,8 @@ public:
 	static BOOL DebugConsole;
 	static BOOL DebugWait;
 	static BOOL FixInputGlitching;
+	// Request DXGI_FLIP_DISCARD when the x64 renderer creates its swap chain.
+	static BOOL ForceFlipDiscard;
 
 	// Whether the patch should replace the frame rate the game measures for itself, the way vpatch's
 	// CalcFPS=1 does. Touhou 6, 7 and 8 count their own draw passes and work their frame rate out of

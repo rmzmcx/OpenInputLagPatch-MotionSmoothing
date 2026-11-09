@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <string>
+#include "fps_target.h"
 
 // Games are added as support is implemented
 // Not ordered in chronological order of when they were released
@@ -33,17 +34,8 @@ enum class TouhouGame {
 	MaxValue, // Dummy value used for config validation
 };
 
-enum class FPSTarget {
-	Game,
-	ReplaySkip,
-	ReplaySlow,
-};
-
 // Function type for per-game patch functions
 typedef void(*GamePatchFunction)();
-
-// Per-game callback to check if we're currently in a replay and if the player wants to change speeds
-typedef FPSTarget(*ReplayCallback)();
 
 TouhouGame detect_game();
 
