@@ -142,8 +142,8 @@ ReplaySpeedControl = 1
 ;
 ; Target framerate for replay skipping (hold LCTRL or attack key during replay playback).
 ;
-; 默认 / Default: 240
-ReplaySkipFPS = 240
+; 默认 / Default: 480
+ReplaySkipFPS = 480
 
 ; 回放慢放时的目标帧率（回放中按住 LSHIFT）。
 ;

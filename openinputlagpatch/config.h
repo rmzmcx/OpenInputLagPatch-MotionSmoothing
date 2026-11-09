@@ -42,6 +42,7 @@ public:
 	static BOOL DebugWait;
 	static BOOL FixTH07CherryBonusDisplay;
 	static BOOL FixTH12ScoreDisplay;
+	static BOOL FixPracModeReplayCrash;
 	static BOOL FixInputGlitching;
 
 	// Whether the patch should replace the frame rate the game measures for itself, the way vpatch's

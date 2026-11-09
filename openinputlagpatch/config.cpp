@@ -1,6 +1,5 @@
 #include <Windows.h>
 #include <shlwapi.h>
-#include <stdio.h>
 #include <string.h>
 #include "config.h"
 #include "default_ini.h"
@@ -8,7 +7,7 @@
 // Default config values
 UINT Config::GameFPS = 60;
 BOOL Config::ReplaySpeedControl = TRUE;
-UINT Config::ReplaySkipFPS = 240;
+UINT Config::ReplaySkipFPS = 480;
 UINT Config::ReplaySlowFPS = 30;
 UINT Config::BltPrepareTime = 2;
 SleepType Config::Sleep = SleepType::Vpatch;
@@ -20,6 +19,7 @@ BOOL Config::DebugConsole = FALSE;
 BOOL Config::DebugWait = FALSE;
 BOOL Config::FixTH07CherryBonusDisplay = TRUE;
 BOOL Config::FixTH12ScoreDisplay = TRUE;
+BOOL Config::FixPracModeReplayCrash = TRUE;
 BOOL Config::FixInputGlitching = TRUE;
 BOOL Config::CalcFPS = TRUE;
 int Config::Interpolation = 1;
@@ -59,7 +59,7 @@ static const char default_global_ini[] =
     "[Option]\r\n"
     "GameFPS = 60\r\n"
     "ReplaySpeedControl = 1\r\n"
-    "ReplaySkipFPS = 240\r\n"
+    "ReplaySkipFPS = 480\r\n"
     "ReplaySlowFPS = 30\r\n"
     "BltPrepareTime = 2\r\n"
     "Sleep = 1\r\n"
@@ -71,6 +71,7 @@ static const char default_global_ini[] =
     "DebugWait = 0\r\n"
     "FixTH07Cherry&BonusDisplay = 1\r\n"
     "FixTH12ScoreDisplay = 1\r\n"
+    "FixPracModeReplayCrash = 1\r\n"
     "FixInputGlitching = 1\r\n"
     "CalcFPS = 1\r\n"
     "AlwaysBlt = 1\r\n"
@@ -173,6 +174,7 @@ static void load_config_file(const wchar_t* config_path) {
 		TEXT("Option"), TEXT("FixTH07Cherry&BonusDisplay"),
 		(int)Config::FixTH07CherryBonusDisplay, config_path);
 	LOAD_SETTING(FixTH12ScoreDisplay);
+	LOAD_SETTING(FixPracModeReplayCrash);
 	LOAD_SETTING(FixInputGlitching);
 	LOAD_SETTING(CalcFPS);
 	// Interpolation is read as text below, it has more than one form
@@ -222,79 +224,6 @@ static void load_config_file(const wchar_t* config_path) {
 	LOAD_EXPERIMENTAL_SETTING(BypassNvidiaD3D8Detour, "BypassNvidiaD3D8Detour");
 }
 
-static void write_profile_value(FILE* file, const wchar_t* path, const wchar_t* section,
-                                const wchar_t* key) {
-	wchar_t value[64] = {};
-	GetPrivateProfileStringW(section, key, L"<absent>", value, _countof(value), path);
-	fprintf(file, "  %ls = %ls\n", key, value);
-}
-
-static void write_config_trace(const wchar_t* game_dir, const wchar_t* global_config,
-                               bool global_loaded, const wchar_t* game_config,
-                               bool game_loaded) {
-	wchar_t path[1024] = {};
-	wcscpy_s(path, game_dir);
-	PathAppendW(path, L"oilp_config_trace.txt");
-
-	FILE* file = nullptr;
-	if (_wfopen_s(&file, path, L"w") != 0 || file == nullptr)
-		return;
-
-	fprintf(file, "OpenInputLagPatch config trace\n");
-	wchar_t executable_path[1024] = {};
-	GetModuleFileNameW(nullptr, executable_path, _countof(executable_path));
-	fprintf(file, "game executable: %ls\n", executable_path);
-	HMODULE patch_module = nullptr;
-	if (GetModuleHandleExW(
-			GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-				GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-			(LPCWSTR)&write_config_trace, &patch_module)) {
-		wchar_t patch_path[1024] = {};
-		GetModuleFileNameW(patch_module, patch_path, _countof(patch_path));
-		fprintf(file, "oilp module: %ls\n", patch_path);
-	}
-	fprintf(file, "global path: %ls\n", global_config[0] ? global_config : L"<unavailable>");
-	fprintf(file, "global loaded: %d\n", global_loaded ? 1 : 0);
-	if (global_loaded && PathFileExistsW(global_config)) {
-		write_profile_value(file, global_config, L"Option", L"FixInputGlitching");
-		write_profile_value(file, global_config, L"Option", L"AlwaysBlt");
-		write_profile_value(file, global_config, L"Option", L"ShowOverlay");
-		write_profile_value(file, global_config, L"Option", L"FixTH07Cherry&BonusDisplay");
-		write_profile_value(file, global_config, L"Option", L"FixTH12ScoreDisplay");
-		write_profile_value(file, global_config, L"Interpolation", L"Interpolation");
-		write_profile_value(file, global_config, L"Experimental", L"BypassNvidiaD3D8Detour");
-	}
-
-	fprintf(file, "game path: %ls\n", game_config);
-	fprintf(file, "game loaded: %d\n", game_loaded ? 1 : 0);
-	if (game_loaded) {
-		write_profile_value(file, game_config, L"Option", L"FixInputGlitching");
-		write_profile_value(file, game_config, L"Option", L"AlwaysBlt");
-		write_profile_value(file, game_config, L"Option", L"ShowOverlay");
-		write_profile_value(file, game_config, L"Option", L"FixTH07Cherry&BonusDisplay");
-		write_profile_value(file, game_config, L"Option", L"FixTH12ScoreDisplay");
-		write_profile_value(file, game_config, L"Interpolation", L"Interpolation");
-		write_profile_value(file, game_config, L"Experimental", L"BypassNvidiaD3D8Detour");
-	}
-
-	fprintf(file, "effective values:\n");
-	fprintf(file, "  FixInputGlitching = %d\n", Config::FixInputGlitching);
-	fprintf(file, "  AlwaysBlt = %d\n", Config::AlwaysBlt);
-	fprintf(file, "  ShowOverlay = %d\n", Config::ShowOverlay);
-	fprintf(file, "  FixTH07Cherry&BonusDisplay = %d\n", Config::FixTH07CherryBonusDisplay);
-	fprintf(file, "  FixTH12ScoreDisplay = %d\n", Config::FixTH12ScoreDisplay);
-	fprintf(file, "  Interpolation = %d\n", Config::Interpolation);
-	fprintf(file, "  InterpolationFPS = %u\n", Config::InterpolationFPS);
-	fprintf(file, "  GameFPS = %u\n", Config::GameFPS);
-	fprintf(file, "  CalcFPS = %d\n", Config::CalcFPS);
-	fprintf(file, "  PlayerBody = %d\n", Config::InterpolatePlayerBody);
-	fprintf(file, "  PlayerShots = %d\n", Config::InterpolatePlayerShots);
-	fprintf(file, "  BulletsAndLasers = %d\n", Config::InterpolateBulletsAndLasers);
-	fprintf(file, "  DebugConsole = %d\n", Config::DebugConsole);
-	fprintf(file, "  BypassNvidiaD3D8Detour = %d\n", Config::BypassNvidiaD3D8Detour);
-	fclose(file);
-}
-
 bool Config::Load() {
 	// The game's own folder is both where its optional ini lives and where Ju.N.Owen would be.
 	wchar_t game_dir[1024] = {};
@@ -331,7 +260,7 @@ bool Config::Load() {
 	if (Config::GameFPS < 60)
 		Config::GameFPS = 60;
 	if (Config::ReplaySkipFPS < 0)
-		Config::ReplaySkipFPS = 240;
+		Config::ReplaySkipFPS = 480;
 	if (Config::ReplaySlowFPS < 0)
 		Config::ReplaySlowFPS = 30;
 	Config::BltPrepareTime = max(0, min(Config::BltPrepareTime, 16));
@@ -346,7 +275,6 @@ bool Config::Load() {
 	else if (Config::ShowOverlay > 3)
 		Config::ShowOverlay = 3;
 
-	write_config_trace(game_dir, global_config, global_loaded, game_config, game_loaded);
 	return true;
 }
 
