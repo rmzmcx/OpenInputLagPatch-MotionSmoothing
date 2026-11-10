@@ -295,14 +295,8 @@ bool ensure_gdi_resources(int width, int height) {
 	return true;
 }
 
-bool overlay_is_foreground() {
-	return overlay.game_window != nullptr && IsWindow(overlay.game_window) &&
-		IsWindowVisible(overlay.game_window) &&
-		GetForegroundWindow() == GetAncestor(overlay.game_window, GA_ROOT);
-}
-
 void update_content(bool force) {
-	if (Config::ShowOverlay == 0 || !overlay_is_foreground()) {
+	if (Config::ShowOverlay == 0) {
 		overlay.visible = false;
 		return;
 	}
