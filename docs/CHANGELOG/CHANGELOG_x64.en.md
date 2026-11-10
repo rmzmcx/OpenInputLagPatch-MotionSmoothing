@@ -5,6 +5,23 @@
 This file records features and changes on the standalone x64 branch. It is maintained separately
 from the changelogs for the x86 games.
 
+## 2026-11-11
+
+### Added
+
+- **Synchronized GameFPS, replay speed and multiplier display with official thprac** (`e77dfcd`)
+
+  thprac takes over th06nc's update call and replay speed controls. When `thprac64.dll` is present,
+  GameFPS now follows thprac's limiter setting, while replay fast-forward and the native `xN`
+  display are left to thprac; the previous hard-coded `x8` display is gone. The patch still reads
+  the game's remapped low-speed action, uses it to invoke thprac's white `/N` slowdown indicator,
+  and counts updates that actually execute at the update-chain entry so the BGM can be realigned
+  when slowdown ends.
+
+  Verified with official thprac: non-default fast-forward values display correctly, remapped
+  slowdown and BGM realignment work, both overlays coexist, and the game remains at 60 FPS.
+  Without thprac, the existing `ReplaySlowRate`, `ReplayFastRate` and `GameFPS` paths are unchanged.
+
 ## 2026-11-10
 
 ### Fixed

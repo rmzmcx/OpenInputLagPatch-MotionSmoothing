@@ -4,6 +4,21 @@
 
 本文件记录独立 x64 分支的功能与变更，与 x86 作品的更新日志分开维护。
 
+## 2026-11-11
+
+### 新增
+
+- **与官方 thprac 同步 GameFPS、Replay 速度和倍率显示**（`e77dfcd`）
+
+  thprac 会接管 th06nc 的 Update 调用和 Replay 加减速。现在检测到 `thprac64.dll` 后，
+  GameFPS 跟随 thprac 的帧限制设置，Replay 快速倍率和原生 `xN` 显示交还 thprac；先前固定
+  显示 `x8` 的问题已消失。补丁仍读取改键后的低速移动动作，用该动作触发 thprac 的白色 `/N`
+  慢放显示，并在 Update Chain 入口统计实际执行的逻辑帧，以便松开低速键后重新定位 BGM。
+
+  已使用官方 thprac 实测：非默认快放倍率显示正确，改键减速和 BGM 回拨有效，两套 overlay
+  正常共存，游戏保持 60 FPS。未加载 thprac 时仍使用原有的 `ReplaySlowRate`、
+  `ReplayFastRate` 和 `GameFPS` 路径。
+
 ## 2026-11-10
 
 ### 修复
