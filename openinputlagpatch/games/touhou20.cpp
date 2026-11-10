@@ -113,6 +113,23 @@ static void patch_frame_wait(DWORD address) {
 // Takes over the game's render block and its presents (defined below, after the comment that
 // explains what they are)
 static void th20_install_interpolation();
+static void th20_install_present_polling();
+
+// The game has its own replay speed control in ReplayInf::Update: while a replay is playing it
+// reads the skip/shoot bits and, every eighth frame, returns 6 to speed playback up. OilP's
+// ReplaySkipFPS/ReplaySlowFPS target must be the only replay speed control when this option is on,
+// so force that test to take the normal branch. The caller still runs its normal input update.
+static void th20_disable_native_replay_speed() {
+	BYTE* site = (BYTE*)rebase(0x0050828E);
+	if (site[0] != 0x74 || site[1] != 0x2C) {
+		printf("th20 native replay speed branch at 0x50828E doesn't look like the known one, skipping!\n");
+		return;
+	}
+
+	BYTE patch[] = { 0xEB };
+	patch_bytes(site, patch, sizeof(patch));
+	printf("Replay speed control: disabled th20's native replay speed branch\n");
+}
 
 void th20_install_patches() {
 	{
@@ -141,8 +158,12 @@ void th20_install_patches() {
 		// so this makes sure our hook is the one that gets called
 		patch_call(rebase(0x0041C335), Direct3DCreate9_hook);
 	}
+	if (Config::ReplaySpeedControl)
+		th20_disable_native_replay_speed();
 	if (Config::Interpolation || Config::InterpolationFPS)
 		th20_install_interpolation();
+	else if (Config::ReplaySpeedControl)
+		th20_install_present_polling();
 }
 
 // The game runs replay playback as its own app state, which is what this checks before it lets
@@ -1671,15 +1692,33 @@ static HRESULT th20_present_hook() {
 	return result;
 }
 
+// The replay target has to be refreshed from a presentation even when frame interpolation is
+// off. At a high replay fast-forward rate the game's clock can stay behind its own update path,
+// so TickUntil() is not reached and the shoot key release would otherwise remain unnoticed.
+// This hook keeps the game's present path intact; it only adds the target poll before Present.
+static HRESULT th20_present_poll_hook() {
+	Limiter::PollTargetFPS();
+
+	IDirect3DDevice9* device = th20_device();
+	if (device == nullptr)
+		return E_FAIL;
+	return d3d9_present_frame(device);
+}
+
 // The present the game sets up at each present call site: the renderer load, the device it returns,
 // the arguments and the call itself, 39 bytes in all (see the comment above)
 static const size_t th20_present_setup_size = 39;
+static const DWORD th20_present_call_sites[] = {
+	0x00419666, // FUN_004193E0
+	0x004199B2, // FUN_004199A0
+	0x00419B2E, // FUN_00419A50
+};
 
 // Takes over one of the game's Present calls. The renderer load at its start is 5 bytes, which is
 // what the hook's call needs, so the hook goes over those 5 bytes, and the 34 bytes of setup that
 // follow are jumped over - all five arguments are pushed inside them, so skipping them leaves the
 // stack the way the game expects.
-static bool th20_hook_present(DWORD address) {
+static bool th20_hook_present(DWORD address, DWORD hook_address) {
 	BYTE* site = (BYTE*)rebase(address);
 	DWORD renderer = rebase(0x005C4D40);
 
@@ -1707,7 +1746,7 @@ static bool th20_hook_present(DWORD address) {
 	{
 		// The hook's call
 		BYTE patch[5] = { 0xE8, 0x00, 0x00, 0x00, 0x00 };
-		*(DWORD*)(patch + 1) = (DWORD)&th20_present_hook - ((DWORD)site + 5);
+		*(DWORD*)(patch + 1) = hook_address - ((DWORD)site + 5);
 		patch_bytes(site, patch, sizeof(patch));
 	}
 	{
@@ -1770,13 +1809,8 @@ static void th20_install_interpolation() {
 	}
 
 	// Take over the presents in the frame functions (see th20_hook_present)
-	static const DWORD present_sites[] = {
-		0x00419666, // FUN_004193E0
-		0x004199B2, // FUN_004199A0
-		0x00419B2E, // FUN_00419A50
-	};
-	for (DWORD address : present_sites) {
-		if (th20_hook_present(address))
+	for (DWORD address : th20_present_call_sites) {
+		if (th20_hook_present(address, (DWORD)&th20_present_hook))
 			++th20_present_patched;
 	}
 	printf("Frame interpolation: %u render call(s) and %u present call(s) taken over (setting %d)\n",
@@ -1791,4 +1825,17 @@ static void th20_install_interpolation() {
 	// than at the bottom right corner of the window where it would sit on top of the frame rate and
 	// slowdown readout thprac draws there (see overlay.h)
 	overlay_set_present_rate_follow_text(true);
+}
+
+// When interpolation is off, the game still presents once per frame. Taking those presents over
+// lets a release of the replay fast-forward key be noticed even when the game's own wait never
+// reaches TickUntil(). Nothing from the interpolation path is installed here.
+static void th20_install_present_polling() {
+	unsigned int present_patched = 0;
+	for (DWORD address : th20_present_call_sites) {
+		if (th20_hook_present(address, (DWORD)&th20_present_poll_hook))
+			++present_patched;
+	}
+	printf("Replay speed control: %u present call(s) taken over for target polling\n",
+		present_patched);
 }

@@ -47,8 +47,8 @@ public:
 	// through TickUntil only reaches it while its own clock still says the next frame is ahead of
 	// it: one that has been pushed to a frame rate it can't keep up with spends every frame behind
 	// its clock, so the limiter is never ticked and the target is never read again. The
-	// interpolation calls this once per rendered frame so normal, fast-forward and slow-down
-	// targets keep following the game's inputs even in that state.
+	// per-game present paths call this once per rendered frame so normal, fast-forward and
+	// slow-down targets keep following the game's inputs even in that state.
 	static void PollTargetFPS();
 
 	// How long one of the limiter's frames is, and what the display is running at
