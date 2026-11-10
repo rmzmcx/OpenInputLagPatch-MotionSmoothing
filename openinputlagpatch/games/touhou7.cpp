@@ -32,67 +32,13 @@ static void th7_player_measure();
 static void th7_shots_measure();
 static void th7_lasers_measure();
 
-static FILE* th7_input_trace;
-static unsigned int th7_input_trace_frame;
 static unsigned int th7_last_extra_presentations;
-
-static void th7_trace_player_phase(const char* phase) {
-    if (th7_input_trace == nullptr || th7_input_trace_frame >= 120)
-        return;
-    const float* player = (const float*)(0x004BDAD8 + 0x930);
-    fprintf(th7_input_trace, "  frame=%u phase=%s player=%.6f,%.6f,%.6f\n",
-            th7_input_trace_frame, phase, player[0], player[1], player[2]);
-    fflush(th7_input_trace);
-}
-
-static void th7_trace_input_state(int chain_result) {
-    if (CEngine::Instance->state != 2) {
-        th7_input_trace_frame = 0;
-        return;
-    }
-    ++th7_input_trace_frame;
-    if (th7_input_trace_frame > 600 || th7_input_trace_frame % 5 != 0)
-        return;
-
-    if (th7_input_trace == nullptr) {
-        wchar_t path[1024] = {};
-        if (GetModuleFileNameW(nullptr, path, _countof(path)) == 0)
-            return;
-        wchar_t* slash = wcsrchr(path, L'\\');
-        if (slash == nullptr)
-            return;
-        slash[1] = L'\0';
-        wcscat_s(path, L"oilp_input_trace.txt");
-        if (_wfopen_s(&th7_input_trace, path, L"w") != 0)
-            th7_input_trace = nullptr;
-        if (th7_input_trace == nullptr)
-            return;
-    }
-
-    const float* player = (const float*)(0x004BDAD8 + 0x930);
-    const HWND game_window = CWindowManager::Instance->hwnd;
-    const HWND foreground_window = GetForegroundWindow();
-    fprintf(th7_input_trace,
-            "frame=%u active=%d foreground=%d game_window=%p foreground_window=%p "
-            "raw=0x%04x copy=0x%04x controller=%p effective=%.4f flags=0x%08x "
-            "chain=%d refresh=%u target=%.2f extras=%u player=%.3f,%.3f\n",
-            th7_input_trace_frame, CWindowManager::Instance->activated != 0,
-            foreground_window == game_window, game_window, foreground_window,
-            *(const unsigned short*)0x004B9E4C, *(const unsigned short*)0x004B9E50,
-            *(void**)0x00575964, *(const float*)0x00575AC8,
-            *(const unsigned int*)0x0062F648, chain_result, Limiter::DisplayRefresh(),
-            Limiter::PresentRate(), th7_last_extra_presentations, player[0], player[1]);
-    fflush(th7_input_trace);
-}
 
 int __fastcall th7_update_calc_chain_hook() {
 	auto engine = CEngine::Instance;
 	Limiter::Tick();
 
-    th7_trace_player_phase("before_calc");
     auto ret = CChainManager__UpdateCalcChain(CChainManager::Instance);
-    th7_trace_player_phase("after_calc");
-    th7_trace_input_state(ret);
 
     // A screenshot the calculation chain just asked for is of the frame that is on screen now, which
     // is the one drawn last (see the comment on th7_take_pending_screenshot below): take it before
@@ -104,9 +50,7 @@ int __fastcall th7_update_calc_chain_hook() {
         // block lives now)
         if (th7_interpolating)
             th7_begin_game_draw();
-        th7_trace_player_phase("normal_draw_enter");
         th7_draw_pass();
-        th7_trace_player_phase("normal_draw_leave");
         th7_drew_frame = true;
     }
 
@@ -1285,9 +1229,7 @@ static void th7_extra_presentation(float t) {
         th7_bullets_advance(t);
     }
     if (interpolatePlayerBody) {
-        th7_trace_player_phase("extra_before_advance");
         th7_player_advance(t);
-        th7_trace_player_phase("extra_after_advance");
     }
     if (interpolatePlayerShots) {
         th7_shots_advance(t);
@@ -1303,13 +1245,11 @@ static void th7_extra_presentation(float t) {
     th7_fps_state_save(&fps);
     th7_draw_pass();
     th7_fps_state_restore(&fps);
-    th7_trace_player_phase("extra_after_draw");
 
     if (interpolateBulletsAndLasers)
         th7_bullets_undo();
     if (interpolatePlayerBody) {
         th7_player_undo();
-        th7_trace_player_phase("extra_after_undo");
     }
     if (interpolatePlayerShots)
         th7_shots_undo();
