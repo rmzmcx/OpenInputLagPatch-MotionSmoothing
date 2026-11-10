@@ -20,10 +20,10 @@ class Config {
 public:
 	static bool Load();
 
-	static UINT GameFPS;
+	static int GameFPS;
 	static BOOL ReplaySpeedControl;
-	static UINT ReplaySkipFPS;
-	static UINT ReplaySlowFPS;
+	static int ReplaySkipFPS;
+	static int ReplaySlowFPS;
 	static UINT BltPrepareTime;
 	static SleepType Sleep;
 	static BOOL D3D9Ex;

@@ -5,10 +5,10 @@
 #include "default_ini.h"
 
 // Default config values
-UINT Config::GameFPS = 60;
+int Config::GameFPS = 60;
 BOOL Config::ReplaySpeedControl = TRUE;
-UINT Config::ReplaySkipFPS = 480;
-UINT Config::ReplaySlowFPS = 30;
+int Config::ReplaySkipFPS = 480;
+int Config::ReplaySlowFPS = 30;
 UINT Config::BltPrepareTime = 2;
 SleepType Config::Sleep = SleepType::Vpatch;
 BOOL Config::D3D9Ex = TRUE;
@@ -259,9 +259,9 @@ bool Config::Load() {
 	// Validate options
 	if (Config::GameFPS < 60)
 		Config::GameFPS = 60;
-	if (Config::ReplaySkipFPS < 0)
+	if (Config::ReplaySkipFPS <= 0)
 		Config::ReplaySkipFPS = 480;
-	if (Config::ReplaySlowFPS < 0)
+	if (Config::ReplaySlowFPS <= 0)
 		Config::ReplaySlowFPS = 30;
 	Config::BltPrepareTime = max(0, min(Config::BltPrepareTime, 16));
 	if ((int)Config::Sleep > (int)SleepType::Vpatch)
