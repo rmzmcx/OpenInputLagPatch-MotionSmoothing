@@ -18,32 +18,32 @@ QQ Group Number:1128317778
 # Compatibility
 Not every game is supported, but support for more games is actively being worked on.
 
-| Game                                 | Supported | Replay speed control |
-|--------------------------------------|-----------|----------------------|
-| Embodiment of Scarlet Devil          |✅|✅|
-| Perfect Cherry Blossom               |✅|✅|
-| Imperishable Night                   |✅|✅|
-| Phantasmagoria of Flower View        |✅|✅|
-| Shoot the Bullet                     |✅|✅|
-| Mountain of Faith                    |✅|✅|
-| Uwabami Breakers                     |❌|❔|
-| Subterranean Animism                 |✅|✅|
-| Undefined Fantastic Object           |✅|✅|
-| Double Spoiler                       |✅|✅|
-| Great Fairy Wars                     |✅|✅|
-| Ten Desires                          |✅|✅|
-| Double Dealing Character             |✅|✅|
-| Impossible Spell Card                |✅|✅|
-| Legacy of Lunatic Kingdom            |✅|✅|
-| Hidden Star in Four Seasons          |✅|✅|
-| Violet Detector                      |✅|✅|
-| Wily Beast and Weakest Creature      |✅|✅|
-| Unconnected Marketeers               |✅|✅|
-| 100th Black Market                   |✅|N/A|
-| Unfinished Dream of All Living Ghost |✅|N/A|
-| Fossilized Wonders                   |✅|✅|
-| Danmakufu v0.12m                     |❌|❔|
-| Danmakufu ph3                        |❌|❔|
+| Game                                 | Basic functionality | Replay speed control | Interpolation |
+|--------------------------------------|-----------|----------------------|---------------|
+| Embodiment of Scarlet Devil          |✅|✅|✅|
+| Perfect Cherry Blossom               |✅|✅|✅|
+| Imperishable Night                   |✅|✅|✅|
+| Phantasmagoria of Flower View        |✅|✅|❌|
+| Shoot the Bullet                     |✅|✅|✅|
+| Mountain of Faith                    |✅|✅|✅|
+| Uwabami Breakers                     |❌|❔|❌|
+| Subterranean Animism                 |✅|✅|✅|
+| Undefined Fantastic Object           |✅|✅|✅|
+| Double Spoiler                       |✅|✅|✅|
+| Great Fairy Wars                     |✅|✅|❌|
+| Ten Desires                          |✅|✅|✅|
+| Double Dealing Character             |✅|✅|✅|
+| Impossible Spell Card                |✅|✅|✅|
+| Legacy of Lunatic Kingdom            |✅|✅|✅|
+| Hidden Star in Four Seasons          |✅|✅|✅|
+| Violet Detector                      |✅|✅|❌|
+| Wily Beast and Weakest Creature      |✅|✅|✅|
+| Unconnected Marketeers               |✅|✅|✅|
+| 100th Black Market                   |✅|N/A|✅|
+| Unfinished Dream of All Living Ghost |✅|N/A|✅|
+| Fossilized Wonders                   |✅|✅|✅|
+| Danmakufu v0.12m                     |❌|❔|❌|
+| Danmakufu ph3                        |❌|❔|❌|
 
 # Configuration
 OpenInputLagPatch is configured through ini files. On startup the patch loads the global config at `%APPDATA%\ShanghaiAlice\oilp_custom\openinputlagpatch.ini`; if it does not exist, the patch creates it with the default values. It then loads `openinputlagpatch.ini` from the game executable's directory, if present: any key in that file overrides the global one. Without that file only the global config is used. Here's an example config file:
