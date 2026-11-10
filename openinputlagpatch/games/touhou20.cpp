@@ -131,7 +131,106 @@ static void th20_disable_native_replay_speed() {
 	printf("Replay speed control: disabled th20's native replay speed branch\n");
 }
 
+struct Th20InputMethodPatch {
+	DWORD address;
+	const BYTE* expected;
+	const BYTE* replacement;
+	size_t size;
+};
+
+static auto th20_config_load_original =
+	(int(__fastcall*)(void* self, void* unused, const char* path))rebase(0x004DC1C0);
+static auto th20_config_write_original =
+	(int(__cdecl*)(const char* path, void* data, size_t size))rebase(0x00410E70);
+static const DWORD th20_config_base = 0x005C4F08;
+static const DWORD th20_input_method_offset = 0x81;
+
+static int __fastcall th20_config_load_hook(void* self, void* unused, const char* path) {
+	int result = th20_config_load_original(self, unused, path);
+	*((BYTE*)rebase(th20_config_base) + th20_input_method_offset) = 3;
+	return result;
+}
+
+static int __cdecl th20_config_write_hook(const char* path, void* data, size_t size) {
+	if (size == 0xB0 && data == (void*)rebase(th20_config_base))
+		*((BYTE*)data + th20_input_method_offset) = 3;
+	return th20_config_write_original(path, data, size);
+}
+
+static bool th20_is_call_to(DWORD site_address, DWORD target_address) {
+	const BYTE* site = (const BYTE*)rebase(site_address);
+	const DWORD site_runtime = rebase(site_address);
+	const DWORD target_runtime = rebase(target_address);
+	return site[0] == 0xE8 && *(const DWORD*)(site + 1) == target_runtime - site_runtime - 5;
+}
+
+static void th20_install_config_persistence() {
+	static const DWORD load_call = 0x0041E8EF;
+	static const DWORD write_calls[] = {
+		0x0041AAE6,
+		0x004DC467,
+		0x004DD987,
+	};
+
+	if (!th20_is_call_to(load_call, 0x004DC1C0)) {
+		printf("th20 config load call at 0x%x doesn't look like the known one, skipping Input Method persistence!\n",
+			load_call);
+		return;
+	}
+	for (DWORD call : write_calls) {
+		if (!th20_is_call_to(call, 0x00410E70)) {
+			printf("th20 config write call at 0x%x doesn't look like the known one, skipping Input Method persistence!\n",
+				call);
+			return;
+		}
+	}
+
+	patch_call(rebase(load_call), (void*)&th20_config_load_hook);
+	for (DWORD call : write_calls)
+		patch_call(rebase(call), (void*)&th20_config_write_hook);
+}
+
+// th20 chooses its input method in the automatic path, both windowed and fullscreen device
+// creation, the device-reset path, the setting 2 flag, and the setting 1 Sleep path. These
+// checks run again after the game loads its configuration, so redirect every one of them to
+// the result of setting 3 instead of relying on one write to the setting variable.
+static void th20_force_fast_input_method() {
+	static const BYTE sleep[] = { 0x0F, 0x85, 0x9A, 0x00, 0x00, 0x00 };
+	static const BYTE sleep_patch[] = { 0xE9, 0x9A, 0x00, 0x00, 0x00, 0x90 };
+	static const BYTE automatic[] = { 0x74, 0x09 };
+	static const BYTE automatic_patch[] = { 0xEB, 0x09 };
+	static const BYTE normal[] = { 0x75, 0x09 };
+	static const BYTE normal_patch[] = { 0x90, 0x90 };
+	static const BYTE fullscreen[] = { 0x74, 0x06 };
+	static const BYTE fullscreen_patch[] = { 0xEB, 0x06 };
+	static const BYTE reset[] = { 0x75, 0x18 };
+	static const BYTE reset_patch[] = { 0x90, 0x90 };
+	static const BYTE special[] = { 0x75, 0x17 };
+	static const BYTE special_patch[] = { 0xEB, 0x17 };
+	static const Th20InputMethodPatch patches[] = {
+		{ 0x00419A74, sleep, sleep_patch, sizeof(sleep) },
+		{ 0x0041C523, automatic, automatic_patch, sizeof(automatic) },
+		{ 0x0041C538, normal, normal_patch, sizeof(normal) },
+		{ 0x0041C58E, fullscreen, fullscreen_patch, sizeof(fullscreen) },
+		{ 0x0041C762, reset, reset_patch, sizeof(reset) },
+		{ 0x0041CDC2, special, special_patch, sizeof(special) },
+	};
+
+	for (const Th20InputMethodPatch& patch : patches) {
+		if (memcmp((void*)rebase(patch.address), patch.expected, patch.size) != 0) {
+			printf("th20 input latency branch at 0x%x doesn't look like the known one, skipping forced fast mode!\n",
+				patch.address);
+			return;
+		}
+	}
+
+	for (const Th20InputMethodPatch& patch : patches)
+		patch_bytes(rebase(patch.address), (void*)patch.replacement, patch.size);
+}
+
 void th20_install_patches() {
+	th20_force_fast_input_method();
+	th20_install_config_persistence();
 	{
 		// Make the game's frame limiter return immediately, exactly like on th19 - it's called
 		// from the update paths that render, and our limiter (ticked from the wait the game

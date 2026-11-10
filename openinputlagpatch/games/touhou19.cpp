@@ -115,6 +115,124 @@ static void patch_frame_wait(DWORD address) {
 	patch_bytes(sequence, patch, sizeof(patch));
 }
 
+struct Th19InputMethodPatch {
+	DWORD address;
+	const BYTE* expected;
+	const BYTE* replacement;
+	size_t size;
+};
+
+// The game checks its input-method setting in several places: the automatic path, the normal
+// and exclusive-fullscreen device creation paths, the device-reset path, the special setting 2
+// flag, and both frame functions' Sleep paths. Forcing the setting variable alone would not be
+// enough because the game reloads it, so each check is redirected to the setting 3 result.
+static void th19_force_fast_input_method(const Th19InputMethodPatch* patches, size_t count,
+	const char* version) {
+	for (size_t i = 0; i < count; ++i) {
+		const Th19InputMethodPatch& patch = patches[i];
+		if (memcmp((void*)rebase(patch.address), patch.expected, patch.size) != 0) {
+			printf("th19 %s input latency branch at 0x%x doesn't look like the known one, skipping forced fast mode!\n",
+				version, patch.address);
+			return;
+		}
+	}
+
+	for (size_t i = 0; i < count; ++i) {
+		const Th19InputMethodPatch& patch = patches[i];
+		patch_bytes(rebase(patch.address), (void*)patch.replacement, patch.size);
+	}
+}
+
+static void th19_force_fast_input_method_v110c() {
+	static const BYTE automatic[] = { 0x78, 0x10 };
+	static const BYTE automatic_patch[] = { 0x90, 0x90 };
+	static const BYTE normal[] = { 0x74, 0x07 };
+	static const BYTE normal_patch[] = { 0xEB, 0x07 };
+	static const BYTE fullscreen[] = { 0x75, 0x0D };
+	static const BYTE fullscreen_patch[] = { 0xEB, 0x0D };
+	static const BYTE reset[] = { 0x75, 0x13 };
+	static const BYTE reset_patch[] = { 0x90, 0x90 };
+	static const BYTE special[] = { 0x75, 0x0C };
+	static const BYTE special_patch[] = { 0xEB, 0x0C };
+	static const BYTE sleep[] = { 0x75, 0x6C };
+	static const BYTE sleep_patch[] = { 0xEB, 0x6C };
+	static const Th19InputMethodPatch patches[] = {
+		{ 0x004B4BF7, automatic, automatic_patch, sizeof(automatic) },
+		{ 0x004B4C07, normal, normal_patch, sizeof(normal) },
+		{ 0x004B4C4F, fullscreen, fullscreen_patch, sizeof(fullscreen) },
+		{ 0x004B4E09, reset, reset_patch, sizeof(reset) },
+		{ 0x004B51C8, special, special_patch, sizeof(special) },
+		{ 0x004B5C8A, sleep, sleep_patch, sizeof(sleep) },
+		{ 0x004B5E7D, sleep, sleep_patch, sizeof(sleep) },
+	};
+	th19_force_fast_input_method(patches, sizeof(patches) / sizeof(patches[0]), "v1.10c");
+}
+
+typedef int(__fastcall* Th19ConfigLoadFunction)(void* self, void* unused, int argument);
+typedef int(__fastcall* Th19ConfigWriteFunction)(const char* path, void* data);
+
+static Th19ConfigLoadFunction th19_config_load_original;
+static Th19ConfigWriteFunction th19_config_write_original;
+static DWORD th19_config_base;
+static const DWORD th19_input_method_offset = 0xCD;
+
+static bool th19_is_call_to(DWORD site_address, DWORD target_address) {
+	const BYTE* site = (const BYTE*)rebase(site_address);
+	const DWORD site_runtime = rebase(site_address);
+	const DWORD target_runtime = rebase(target_address);
+	return site[0] == 0xE8 && *(const DWORD*)(site + 1) == target_runtime - site_runtime - 5;
+}
+
+static int __fastcall th19_config_load_hook(void* self, void* unused, int argument) {
+	int result = th19_config_load_original(self, unused, argument);
+	*((BYTE*)th19_config_base + th19_input_method_offset) = 3;
+	return result;
+}
+
+static int __fastcall th19_config_write_hook(const char* path, void* data) {
+	if (data == (void*)th19_config_base)
+		*((BYTE*)data + th19_input_method_offset) = 3;
+	return th19_config_write_original(path, data);
+}
+
+static void th19_install_config_persistence(DWORD load_function, DWORD load_call,
+	DWORD write_function, DWORD config_base, const DWORD* write_calls, size_t write_call_count,
+	const char* version) {
+	if (!th19_is_call_to(load_call, load_function)) {
+		printf("th19 %s config load call at 0x%x doesn't look like the known one, skipping Input Method persistence!\n",
+			version, load_call);
+		return;
+	}
+	for (size_t i = 0; i < write_call_count; ++i) {
+		if (!th19_is_call_to(write_calls[i], write_function)) {
+			printf("th19 %s config write call at 0x%x doesn't look like the known one, skipping Input Method persistence!\n",
+				version, write_calls[i]);
+			return;
+		}
+	}
+
+	th19_config_load_original = (Th19ConfigLoadFunction)rebase(load_function);
+	th19_config_write_original = (Th19ConfigWriteFunction)rebase(write_function);
+	th19_config_base = rebase(config_base);
+
+	patch_call(rebase(load_call), (void*)&th19_config_load_hook);
+	for (size_t i = 0; i < write_call_count; ++i)
+		patch_call(rebase(write_calls[i]), (void*)&th19_config_write_hook);
+}
+
+static void th19_install_config_persistence_v110c() {
+	static const DWORD write_calls[] = {
+		0x00401BF1,
+		0x00413C5F,
+		0x004B7B75,
+		0x0051AA7F,
+		0x00534664,
+		0x00534F3C,
+	};
+	th19_install_config_persistence(0x00534D60, 0x004B7245, 0x004D6DF0, 0x0062BD14,
+		write_calls, sizeof(write_calls) / sizeof(write_calls[0]), "v1.10c");
+}
+
 // thprac changes the frame rate of games like this one by pointing the engine's clock at a
 // variable of its own (0x004B6090, the spot the update path the game uses reads). If that
 // happens the game and the limiter would disagree about how long a frame is, so the operand is
@@ -1823,6 +1941,8 @@ static bool th19_hook_present(DWORD address) {
 }
 
 void th19_install_patches() {
+	th19_force_fast_input_method_v110c();
+	th19_install_config_persistence_v110c();
 	{
 		// Make the game's frame limiter return immediately. It is called from more than one
 		// code path, and which one the game actually uses is hard to pin down, so disabling
@@ -1983,7 +2103,49 @@ static UINT th19_v100a_external_game_fps() {
 	return (UINT)(1.0 / period + 0.5);
 }
 
+static void th19_v100a_force_fast_input_method() {
+	static const BYTE automatic[] = { 0x78, 0x10 };
+	static const BYTE automatic_patch[] = { 0x90, 0x90 };
+	static const BYTE normal[] = { 0x74, 0x07 };
+	static const BYTE normal_patch[] = { 0xEB, 0x07 };
+	static const BYTE fullscreen[] = { 0x75, 0x0D };
+	static const BYTE fullscreen_patch[] = { 0xEB, 0x0D };
+	static const BYTE reset[] = { 0x75, 0x13 };
+	static const BYTE reset_patch[] = { 0x90, 0x90 };
+	static const BYTE special[] = { 0x75, 0x0C };
+	static const BYTE special_patch[] = { 0xEB, 0x0C };
+	static const BYTE sleep_dead[] = { 0x75, 0x4E };
+	static const BYTE sleep_dead_patch[] = { 0xEB, 0x4E };
+	static const BYTE sleep_live[] = { 0x75, 0x4B };
+	static const BYTE sleep_live_patch[] = { 0xEB, 0x4B };
+	static const Th19InputMethodPatch patches[] = {
+		{ 0x004A81BB, automatic, automatic_patch, sizeof(automatic) },
+		{ 0x004A81CB, normal, normal_patch, sizeof(normal) },
+		{ 0x004A8218, fullscreen, fullscreen_patch, sizeof(fullscreen) },
+		{ 0x004A83DC, reset, reset_patch, sizeof(reset) },
+		{ 0x004A87A5, special, special_patch, sizeof(special) },
+		{ 0x004A9237, sleep_dead, sleep_dead_patch, sizeof(sleep_dead) },
+		{ 0x004A93F9, sleep_live, sleep_live_patch, sizeof(sleep_live) },
+	};
+	th19_force_fast_input_method(patches, sizeof(patches) / sizeof(patches[0]), "v1.00a");
+}
+
+static void th19_v100a_install_config_persistence() {
+	static const DWORD write_calls[] = {
+		0x00402581,
+		0x00412C7A,
+		0x004AAF59,
+		0x005082EA,
+		0x00520E94,
+		0x0052187C,
+	};
+	th19_install_config_persistence(0x005216D0, 0x004AA68A, 0x004C8770, 0x00608554,
+		write_calls, sizeof(write_calls) / sizeof(write_calls[0]), "v1.00a");
+}
+
 void th19_v100a_install_patches() {
+	th19_v100a_force_fast_input_method();
+	th19_v100a_install_config_persistence();
 	{
 		// Make the game's frame limiter return immediately, like on v1.10c
 		BYTE patch[] = { 0xC3 };
