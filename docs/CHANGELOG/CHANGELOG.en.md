@@ -22,6 +22,20 @@ is also the record of what has actually been verified rather than just what was 
 
 ### Fixed
 
+- **Non-positive replay fast-forward and slowdown rates no longer cause unlimited speed or crashes** (`12364f2`)
+
+  `ReplaySlowFPS = 0` made the limiter convert its timing with a zero target frame rate, while a
+  negative value wrapped to nearly `UINT_MAX` in the old unsigned field so the existing `< 0`
+  check could never catch it. Both cases produced invalid limiter timing: some games ran without
+  pacing, while th19 and th20 could crash because they also use the limiter frame rate for their
+  own clocks.
+
+  All three frame-rate settings are now parsed as signed integers. A non-positive
+  `ReplaySlowFPS` falls back to `30`, and a non-positive `ReplaySkipFPS` falls back to `480`.
+  The same protection is applied during INI loading, through the thprac-facing API, and when the
+  limiter reads the target. `ReplaySlowFPS = 0` has been confirmed to no longer cause unlimited
+  speed or a crash; zero and negative fast-forward rates use the same safe default.
+
 - **th20 replay fast-forward and slowdown no longer stack with the game's native speed control** (`04495d0`)
 
   th20's `ReplayInf` still read the game's own `Skip`/`Shoot` inputs and returned a native
