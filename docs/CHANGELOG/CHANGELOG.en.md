@@ -21,6 +21,15 @@ is also the record of what has actually been verified rather than just what was 
 
 ### Changed
 
+- **`ReplaySkipFPS` now fully controls th10 replay fast-forward** (`c5c2dcd`)
+
+  th10's original replay task returns its own accelerated step from `0x0040BA45` while the
+  fast-forward key is held. The patch previously only raised the limiter target, so the original
+  acceleration could still affect the actual speed. With `ReplaySpeedControl = 1`, the verified
+  `74 11` conditional now takes the normal-step return unconditionally, leaving `ReplaySkipFPS`
+  as the only replay fast-forward rate. Disabling `ReplaySpeedControl` preserves the original
+  behavior. The configured fast-forward speed has been confirmed in game.
+
 - **The default `ReplaySkipFPS` is now 480** (`9fa5990`)
 
   Newly generated global configs and the reference ini use `480`; the built-in fallback is also
