@@ -9,7 +9,36 @@ is also the record of what has actually been verified rather than just what was 
 
 ## 2026-11-10
 
+### Added
+
+- **th19 and th20 now force the fastest Input Method** (`ef5ba4f`)
+
+  th19 (v1.10c and v1.00a) and th20 follow the other games by skipping the automatic, normal,
+  fullscreen, and Reset branches for slower input methods, along with the Sleep path used by
+  setting `1`. Both games reload their configuration at startup, so the patch also sets Input
+  Method to `3` after that load and forces the same value before every configuration write.
+  After a normal exit or an in-game settings change, `custom.exe` now shows and saves the fastest
+  setting. This was confirmed in game.
+
 ### Fixed
+
+- **th20 replay fast-forward and slowdown no longer stack with the game's native speed control** (`04495d0`)
+
+  th20's `ReplayInf` still read the game's own `Skip`/`Shoot` inputs and returned a native
+  accelerated result every eighth frame. Until now, after OilP selected `ReplaySkipFPS` or
+  `ReplaySlowFPS`, that native branch also affected the actual speed, causing extra acceleration
+  and a lower presented frame rate at high replay targets. With `ReplaySpeedControl = 1`, the
+  verified `74 2C` branch at `0x50828E` is now changed to `EB 2C`, so it always takes the normal
+  path. The address is rebased because th20 uses ASLR. Disabling `ReplaySpeedControl` leaves the
+  original branch untouched.
+
+  When frame interpolation is off, a lightweight Present hook is installed at the three verified
+  present sites. A high replay target can keep the game from reaching `TickUntil()`, so target
+  changes and key releases would otherwise not be noticed. The hook only calls
+  `Limiter::PollTargetFPS()` and then follows the existing `d3d9_present_frame()` path; it does not
+  update game logic, input, timers, or scene state. In-game testing confirmed that holding the
+  fast-forward key no longer adds extra speed when `GameFPS = ReplaySkipFPS = 1000`, while key
+  release and target changes still take effect.
 
 - **The practice-replay ending crash fix can now be switched independently** (`9fa5990`)
 
@@ -20,6 +49,13 @@ is also the record of what has actually been verified rather than just what was 
   leaves the original replay exit path in place.
 
 ### Changed
+
+- **th06 and th07 no longer generate automatic input traces** (`da5096b`)
+
+  The debug recorder that created `oilp_input_trace.txt` during normal gameplay was removed,
+  including its file handles, frame counters, and all call sites. Diagnostics are again limited
+  to the `oilp_diag.txt` and `oilp_display_diag.txt` files written with `U`, plus
+  `oilp_crash.txt` when a fatal exception occurs.
 
 - **`ReplaySkipFPS` now fully controls th10 replay fast-forward** (`c5c2dcd`)
 

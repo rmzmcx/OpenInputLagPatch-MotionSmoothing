@@ -8,7 +8,32 @@
 
 ## 2026-11-10
 
+### 新增
+
+- **th19 和 th20 强制使用高速 Input Method**（`ef5ba4f`）
+
+  th19（v1.10c、v1.00a）和 th20 现在按其它正作的方式跳过自动、普通、全屏和 Reset 中的
+  低速分支，并绕过设置值为 `1` 时的 Sleep 路径。两份游戏都会在启动时重新载入配置，因此
+  补丁还会在配置加载完成后把 Input Method 设为 `3`，并在所有配置写盘入口前再次强制该值。
+  正常退出游戏或进入游戏内设置后，`custom.exe` 的 Input Method 会显示并保存为高速。
+  已实机确认生效。
+
 ### 修复
+
+- **th20 的 replay 快进和减速不再叠加游戏原生速度控制**（`04495d0`）
+
+  th20 的 `ReplayInf` 仍会读取游戏自己的 `Skip`/`Shoot` 输入；按键命中后，它会每隔 8 帧
+  返回一次原生加速结果。此前 OilP 设置 `ReplaySkipFPS`/`ReplaySlowFPS` 后，原生分支仍会
+  参与实际速度，导致高倍率 replay 出现额外加速，画面 Present 帧率也可能下降。现在
+  `ReplaySpeedControl = 1` 时，会把 IDA 中已验证的 `0x50828E` 处 `74 2C` 改为 `EB 2C`，
+  让该分支始终走正常路径；运行时地址按 th20 的 ASLR 重新定位。关闭
+  `ReplaySpeedControl` 时不打这个补丁。
+
+  补帧关闭时还会安装三处轻量 Present hook。高倍率 replay 可能不再进入 `TickUntil()`，
+  因而无法重新读取按键或目标帧率；现在每次 Present 只调用 `Limiter::PollTargetFPS()`，
+  然后走原有的 `d3d9_present_frame()`，不会执行游戏逻辑、输入、计时器或场景状态更新。
+  已实机确认：`GameFPS = ReplaySkipFPS = 1000` 时按住快进键不会额外提速，松开按键和
+  修改目标帧率也能及时生效。
 
 - **练习模式 replay 结束崩溃修复现在可以单独开关**（`9fa5990`）
 
@@ -18,6 +43,12 @@
   游戏回到原版 replay 退出流程。
 
 ### 变更
+
+- **th06 和 th07 不再自动生成输入跟踪日志**（`da5096b`）
+
+  删除了两作在正常游玩时自动创建 `oilp_input_trace.txt` 的调试记录器，包括文件句柄、
+  帧计数和所有调用点。诊断输出恢复为按 `U` 生成的 `oilp_diag.txt`、
+  `oilp_display_diag.txt`，以及发生致命异常时生成的 `oilp_crash.txt`。
 
 - **th10 的 replay 快进改由 `ReplaySkipFPS` 完整控制**（`c5c2dcd`）
 
