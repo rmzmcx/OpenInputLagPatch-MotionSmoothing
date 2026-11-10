@@ -845,38 +845,32 @@ static ExtraFloatState th11_shake = { (float*)0x004C379C, 3 };
 // more than one fade for the same frame - the same bug th10 had. The fade object itself is fine:
 // its own timer runs on the update chain, once a frame.
 //
-// So an extra pass copies both stage objects (0x3158 bytes, the size FUN_00402470/FUN_004029E2
-// allocate) before its render walk and puts them back afterwards, and the fade factory call at
-// 0x40335B is skipped while an extra is drawing.
-static const size_t th11_stage_size = 0x3158;
-static void** const th11_stage_slots[2] = { (void**)0x004A8D5C, (void**)0x004A8D60 };
-static unsigned char* th11_stage_saved[2];
-static bool th11_stage_saved_valid[2];
+// So an extra pass puts the fields those callbacks change back after its render walk, and the fade
+// factory call at 0x40335B is skipped while an extra is drawing. The first range is the fade
+// counter, colour and terminal flag at +0x2324. The second is the three render counters, the stage
+// flags and the three scalar fields of the stage timer at +0x2FE4. It stops before the timer's
+// static speed pointer at +0x3000. The last range holds the two stage shake values.
+static const ExtraByteRange th11_stage_ranges[] = {
+	{ 0x2324, 0x0C },
+	{ 0x2FE4, 0x1C },
+	{ 0x3128, 0x08 },
+};
+static const size_t th11_stage_range_count =
+	sizeof(th11_stage_ranges) / sizeof(th11_stage_ranges[0]);
+static ExtraRangeState th11_stage_states[2] = {
+	{ (void**)0x004A8D5C, th11_stage_ranges, th11_stage_range_count, 0x3158 },
+	{ (void**)0x004A8D60, th11_stage_ranges, th11_stage_range_count, 0x3158 },
+};
 static bool th11_in_extra;
 
 static void th11_stage_save() {
-	for (int i = 0; i < 2; ++i) {
-		th11_stage_saved_valid[i] = false;
-		void* stage = *th11_stage_slots[i];
-		if (stage == nullptr)
-			continue;
-		if (th11_stage_saved[i] == nullptr)
-			th11_stage_saved[i] = (unsigned char*)malloc(th11_stage_size);
-		if (th11_stage_saved[i] == nullptr)
-			continue;
-		memcpy(th11_stage_saved[i], stage, th11_stage_size);
-		th11_stage_saved_valid[i] = true;
-	}
+	for (int i = 0; i < 2; ++i)
+		extra_range_state_save(&th11_stage_states[i]);
 }
 
 static void th11_stage_restore() {
-	for (int i = 0; i < 2; ++i) {
-		void* stage = *th11_stage_slots[i];
-		if (!th11_stage_saved_valid[i] || stage == nullptr)
-			continue;
-		memcpy(stage, th11_stage_saved[i], th11_stage_size);
-		th11_stage_saved_valid[i] = false;
-	}
+	for (int i = 0; i < 2; ++i)
+		extra_range_state_restore(&th11_stage_states[i]);
 }
 
 // FUN_004489E0 builds a fade object and puts its tasks on the chains. The call from the stage's

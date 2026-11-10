@@ -32,67 +32,13 @@ static void th7_player_measure();
 static void th7_shots_measure();
 static void th7_lasers_measure();
 
-static FILE* th7_input_trace;
-static unsigned int th7_input_trace_frame;
 static unsigned int th7_last_extra_presentations;
-
-static void th7_trace_player_phase(const char* phase) {
-    if (th7_input_trace == nullptr || th7_input_trace_frame >= 120)
-        return;
-    const float* player = (const float*)(0x004BDAD8 + 0x930);
-    fprintf(th7_input_trace, "  frame=%u phase=%s player=%.6f,%.6f,%.6f\n",
-            th7_input_trace_frame, phase, player[0], player[1], player[2]);
-    fflush(th7_input_trace);
-}
-
-static void th7_trace_input_state(int chain_result) {
-    if (CEngine::Instance->state != 2) {
-        th7_input_trace_frame = 0;
-        return;
-    }
-    ++th7_input_trace_frame;
-    if (th7_input_trace_frame > 600 || th7_input_trace_frame % 5 != 0)
-        return;
-
-    if (th7_input_trace == nullptr) {
-        wchar_t path[1024] = {};
-        if (GetModuleFileNameW(nullptr, path, _countof(path)) == 0)
-            return;
-        wchar_t* slash = wcsrchr(path, L'\\');
-        if (slash == nullptr)
-            return;
-        slash[1] = L'\0';
-        wcscat_s(path, L"oilp_input_trace.txt");
-        if (_wfopen_s(&th7_input_trace, path, L"w") != 0)
-            th7_input_trace = nullptr;
-        if (th7_input_trace == nullptr)
-            return;
-    }
-
-    const float* player = (const float*)(0x004BDAD8 + 0x930);
-    const HWND game_window = CWindowManager::Instance->hwnd;
-    const HWND foreground_window = GetForegroundWindow();
-    fprintf(th7_input_trace,
-            "frame=%u active=%d foreground=%d game_window=%p foreground_window=%p "
-            "raw=0x%04x copy=0x%04x controller=%p effective=%.4f flags=0x%08x "
-            "chain=%d refresh=%u target=%.2f extras=%u player=%.3f,%.3f\n",
-            th7_input_trace_frame, CWindowManager::Instance->activated != 0,
-            foreground_window == game_window, game_window, foreground_window,
-            *(const unsigned short*)0x004B9E4C, *(const unsigned short*)0x004B9E50,
-            *(void**)0x00575964, *(const float*)0x00575AC8,
-            *(const unsigned int*)0x0062F648, chain_result, Limiter::DisplayRefresh(),
-            Limiter::PresentRate(), th7_last_extra_presentations, player[0], player[1]);
-    fflush(th7_input_trace);
-}
 
 int __fastcall th7_update_calc_chain_hook() {
 	auto engine = CEngine::Instance;
 	Limiter::Tick();
 
-    th7_trace_player_phase("before_calc");
     auto ret = CChainManager__UpdateCalcChain(CChainManager::Instance);
-    th7_trace_player_phase("after_calc");
-    th7_trace_input_state(ret);
 
     // A screenshot the calculation chain just asked for is of the frame that is on screen now, which
     // is the one drawn last (see the comment on th7_take_pending_screenshot below): take it before
@@ -104,9 +50,7 @@ int __fastcall th7_update_calc_chain_hook() {
         // block lives now)
         if (th7_interpolating)
             th7_begin_game_draw();
-        th7_trace_player_phase("normal_draw_enter");
         th7_draw_pass();
-        th7_trace_player_phase("normal_draw_leave");
         th7_drew_frame = true;
     }
 
@@ -270,6 +214,94 @@ static void th7_install_fps_measurement() {
     }
 }
 
+// Touhou 7's HUD draws the current Cherry value with a fixed six-digit loop, even though the game
+// can produce values up to 9,999,990. Cherry Max already has a seven-digit branch. VsyncPatch's
+// BugFixCherry widens the current-value loop and shifts the two rows so the extra digit fits.
+// The fourth change below uses the game's existing 6.0f constant instead of VsyncPatch's copy.
+static auto th7_draw_sprite = (int(__thiscall*)(void*, void*))0x0044F770;
+
+// Gui::DrawStageElements draws the live Spell Card Bonus with its own sprite digits. The original
+// loop always uses 10,000,000 as the first divisor and exactly eight iterations, so a quotient of
+// 10 or more indexes past the ten ASCII digit sprites. Draw 1-10 digits here, keep values <= 8
+// digits right-aligned exactly as before, and leave the following history counter at its original
+// position.
+static void th7_draw_spell_bonus_digits(void* gui, unsigned int value) {
+    if (gui == nullptr)
+        return;
+    void* impl = *(void**)((char*)gui + 8);
+    void* manager = *(void**)0x004B9E44;
+    if (impl == nullptr || manager == nullptr)
+        return;
+
+    unsigned int digits = 1;
+    unsigned int divisor = 1;
+    for (unsigned int remaining = value; remaining >= 10; remaining /= 10) {
+        ++digits;
+        divisor *= 10;
+    }
+
+    const float* indicator_pos = (const float*)((char*)impl + 0x793C);
+    float* capture_pos = (float*)((char*)impl + 0x76F0);
+    const float base_x = indicator_pos[0] - 40.0f;
+    capture_pos[0] = base_x + (float)(8 - (int)digits) * 7.0f;
+
+    for (unsigned int i = 0; i < digits; ++i) {
+        const unsigned int digit = value / divisor;
+        value %= divisor;
+        if (divisor > 1)
+            divisor /= 10;
+
+        *(void**)((char*)impl + 0x770C) =
+            (char*)manager + ((digit + 132) << 6) + 96;
+        th7_draw_sprite(manager, (char*)impl + 0x7528);
+        capture_pos[0] += 7.0f;
+    }
+
+    capture_pos[0] = base_x + 56.0f;
+}
+
+static __declspec(naked) void th7_spell_bonus_digits_hook() {
+    __asm { mov eax, [ebp - 14h] }
+    __asm { push eax }
+    __asm { mov eax, [ebp - 88h] }
+    __asm { push eax }
+    __asm { call th7_draw_spell_bonus_digits }
+    __asm { add esp, 8 }
+    // Continue at the original history counter rendering
+    __asm { mov eax, 0042C934h }
+    __asm { jmp eax }
+}
+
+static void th7_install_display_fixes() {
+    static const BYTE cherry_divisor[] = { 0xA0, 0x86, 0x01, 0x00 }; // 100000
+    static const BYTE cherry_loop_count[] = { 0x06 };
+    static const BYTE cherry_offset[] = { 0xD8, 0x05, 0x54, 0x8B, 0x49, 0x00 }; // fadd [498B54]
+    static const BYTE cherry_layout_offset[] = { 0x2C, 0x8C, 0x49, 0x00 }; // [498C2C]
+    static const BYTE bonus_sprite_loop[] = { 0x83, 0x65, 0xFC, 0x00, 0xEB };
+
+    if (memcmp((void*)0x004048E1, cherry_divisor, sizeof(cherry_divisor)) != 0 ||
+        memcmp((void*)0x00404A0E, cherry_loop_count, sizeof(cherry_loop_count)) != 0 ||
+        memcmp((void*)0x00404924, cherry_offset, sizeof(cherry_offset)) != 0 ||
+        memcmp((void*)0x00404AD3, cherry_layout_offset, sizeof(cherry_layout_offset)) != 0 ||
+        memcmp((void*)0x0042C87C, bonus_sprite_loop, sizeof(bonus_sprite_loop)) != 0) {
+        printf("th07 Cherry/Bonus display patches don't match the known executable, skipping!\n");
+        return;
+    }
+
+    DWORD divisor = 1000000;
+    BYTE digits = 7;
+    BYTE nops[sizeof(cherry_offset)] = {};
+    memset(nops, 0x90, sizeof(nops));
+    DWORD six = 0x00498B54;
+
+    patch_bytes(0x004048E1, &divisor, sizeof(divisor));
+    patch_bytes(0x00404A0E, &digits, sizeof(digits));
+    patch_bytes(0x00404924, nops, sizeof(nops));
+    patch_bytes(0x00404AD3, &six, sizeof(six));
+    patch_jmp(0x0042C87C, th7_spell_bonus_digits_hook);
+    printf("th07 Cherry and Spell Card Bonus display fixes installed\n");
+}
+
 // Takes over the two present calls of GameWindow::Render (defined below, after the comment that
 // explains what a frame is made of)
 static void th7_install_interpolation();
@@ -311,6 +343,8 @@ void th7_install_patches() {
         BYTE patch[] = { 0x00, 0x00, 0x00, 0x00, 0x74 };
         patch_bytes(0x00430F03, patch, sizeof(patch));
     }
+    if (Config::FixTH07CherryBonusDisplay)
+        th7_install_display_fixes();
     if (Config::AlwaysBlt) {
         // GameWindow::Render bails out when [this+8] is 0, freezing the picture once the
         // window loses focus. Turn that conditional jump into an unconditional one.
@@ -1195,9 +1229,7 @@ static void th7_extra_presentation(float t) {
         th7_bullets_advance(t);
     }
     if (interpolatePlayerBody) {
-        th7_trace_player_phase("extra_before_advance");
         th7_player_advance(t);
-        th7_trace_player_phase("extra_after_advance");
     }
     if (interpolatePlayerShots) {
         th7_shots_advance(t);
@@ -1213,13 +1245,11 @@ static void th7_extra_presentation(float t) {
     th7_fps_state_save(&fps);
     th7_draw_pass();
     th7_fps_state_restore(&fps);
-    th7_trace_player_phase("extra_after_draw");
 
     if (interpolateBulletsAndLasers)
         th7_bullets_undo();
     if (interpolatePlayerBody) {
         th7_player_undo();
-        th7_trace_player_phase("extra_after_undo");
     }
     if (interpolatePlayerShots)
         th7_shots_undo();

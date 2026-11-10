@@ -21,32 +21,32 @@ QQ群群号：1128317778
 
 并非所有作品都受支持，支持范围仍在持续扩充中。
 
-| 作品 | 支持 | Replay 速度控制 |
-|---------------------------------|-----------|----------------------|
-| 东方红魔乡 |✅|✅|
-| 东方妖妖梦 |✅|✅|
-| 东方永夜抄 |✅|✅|
-| 东方花映塚 |✅|✅|
-| 东方文花帖 |✅|✅|
-| 东方风神录 |✅|✅|
-| 黄昏酒场 |❌|❔|
-| 东方地灵殿 |✅|✅|
-| 东方星莲船 |✅|✅|
-| 东方文花帖DS |✅|✅|
-| 妖精大战争 |✅|✅|
-| 东方神灵庙 |✅|✅|
-| 东方辉针城 |✅|✅|
-| 弹幕天邪鬼 |✅|✅|
-| 东方绀珠传 |✅|✅|
-| 东方天空璋 |✅|✅|
-| 秘封噩梦日记 |✅|✅|
-| 东方鬼形兽 |✅|✅|
-| 东方虹龙洞 |✅|✅|
-| 弹幕狂们的黑市 |✅|N/A|
-| 东方兽王园 |✅|N/A|
-| 东方锦上京 |✅|✅|
-| 弹幕风 v0.12m |❌|❔|
-| 弹幕风 ph3 |❌|❔|
+| 作品 | 基本功能支持 | Replay 速度控制 | 补帧 |
+|---------------------------------|-----------|----------------------|-----------|
+| 东方红魔乡 |✅|✅|✅|
+| 东方妖妖梦 |✅|✅|✅|
+| 东方永夜抄 |✅|✅|✅|
+| 东方花映塚 |✅|✅|❌|
+| 东方文花帖 |✅|✅|✅|
+| 东方风神录 |✅|✅|✅|
+| 黄昏酒场 |❌|❔|❌|
+| 东方地灵殿 |✅|✅|✅|
+| 东方星莲船 |✅|✅|✅|
+| 东方文花帖DS |✅|✅|✅|
+| 妖精大战争 |✅|✅|❌|
+| 东方神灵庙 |✅|✅|✅|
+| 东方辉针城 |✅|✅|✅|
+| 弹幕天邪鬼 |✅|✅|✅|
+| 东方绀珠传 |✅|✅|✅|
+| 东方天空璋 |✅|✅|✅|
+| 秘封噩梦日记 |✅|✅|❌|
+| 东方鬼形兽 |✅|✅|✅|
+| 东方虹龙洞 |✅|✅|✅|
+| 弹幕狂们的黑市 |✅|N/A|✅|
+| 东方兽王园 |✅|N/A|✅|
+| 东方锦上京 |✅|✅|✅|
+| 弹幕风 v0.12m |❌|❔|❌|
+| 弹幕风 ph3 |❌|❔|❌|
 
 # 配置
 
@@ -142,8 +142,8 @@ ReplaySpeedControl = 1
 ;
 ; Target framerate for replay skipping (hold LCTRL or attack key during replay playback).
 ;
-; 默认 / Default: 240
-ReplaySkipFPS = 240
+; 默认 / Default: 480
+ReplaySkipFPS = 480
 
 ; 回放慢放时的目标帧率（回放中按住 LSHIFT）。
 ;
@@ -239,6 +239,19 @@ DebugConsole = 0
 ;
 ; 默认 / Default: 0
 DebugWait = 0
+
+; 修复东方妖妖梦（th07）左下角当前樱点超过 999999 后的显示和排版异常，
+; 以及 Boss 符卡 Bonus 达到 100000000 以上时精灵数字只按 8 位拆分、导致越界精灵混入的问题。
+; 只调整 HUD 显示，不改变实际樱点、Bonus、得分、结算或 replay 数据；仅对 th07 生效。
+;
+; Fix the current Cherry layout above 999,999 and the Spell Card Bonus readout at 100,000,000
+; and above in Perfect Cherry Blossom (th07). The original Bonus HUD only splits eight sprite
+; digits, so a ninth digit produces an out-of-range sprite index and mixes unrelated HUD artwork.
+; This only changes HUD display code; gameplay values, results and replay data are unchanged.
+; th07 only.
+;
+; 默认 / Default: 1
+FixTH07Cherry&BonusDisplay = 1
 
 ; 修掉红魔乡/妖妖梦里「窗口不在前台时 DirectInput 拒绝给状态，游戏却只把『设备丢失』当失败，
 ; 于是继续读一份从没被填过的缓冲区」造成的乱按键、按键卡住（相当于 vpatch 的 FixInputGlitching；

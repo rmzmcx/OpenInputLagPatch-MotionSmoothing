@@ -1,6 +1,30 @@
 # 更新日志
 
 简体中文 | [English](Non-AI-CHANGELOG.en.md) | [日本語](Non-AI-CHANGELOG.ja.md)
+## v1.14
+- 补帧支持文花帖DS（符卡EX-4的超高速子弹不会被补帧，防止视觉上子弹无缝）
+- 优化了自机补帧算法，可解决在视觉上自机补帧有半帧滞后的问题（在某些界面暂停可能视觉上自机会随方向键抖动，但实际不会有影响）
+- 为th19和th20增加了启动游戏时强制将 `custom.exe` 里的 `input method` 设置为 `Fast` 的功能（该功能在上游仓库的版本里就已为其他作品添加）
+- 增加了一个[RUEEE版thprac](https://github.com/RUEEE/thprac)渲染API，用于解决小数点作补帧时thprac的GUI错误闪烁的问题（兼容 `thprac-CA` 以及以后的版本）
+- th06-th09.5开启 `AskWindowMode` 后的是否全屏窗口和th10游戏自带的窗口全屏选项支持按X关闭
+- `oilp_loader.exe` 中选择当前目录中的游戏exe的窗口现在能正确显示带有中文、日文名称的exe，且选择游戏的提示支持按系统对应多语言
+- 现在当游戏异常崩溃时oilp补丁会自动在游戏根目录生成 `oilp_crash.txt` 以便追踪BUG
+- 修复了当 `ReplaySpeedControl` 开启时风神录和锦上京仍使用游戏自身快放Replay机制的问题
+- 修复了当 `ReplaySpeedControl` 开启时星莲船Replay无法正常快放慢放的问题
+- 当 `ReplaySpeedControl` 开启时锦上京的Replay快放慢放速度现在可以通过RUEEE版的thprac更改， `GameFPS` 也和thprac的游戏逻辑帧修改兼容（兼容 `thprac-CA` 以及以后的版本）
+- 修复了部分情况当 `ReplaySkipFPS` 数值较高时即使松开加速播放的按键Replay仍然加速播放的问题
+- 修复了 `ReplaySkipFPS` 和 `ReplaySlowFPS` 数值小于等于0时Replay快慢放会变为超高速快放的BUG，现在当数值小于等于0时会变成默认的480fps和30fps
+- `ReplaySkipFPS` 现在默认值为480
+- 修复了th10-th15在转场等情况有更高概率导致游戏崩溃的问题（目前暂时不确定实际效果）
+- 修复了使用 `DgVoodoo2` 独占全屏配置时切屏后再回到游戏会导致4:3画面变成拉伸到整个屏幕的问题（检测到使用 DgVoodoo2 时，`D3D9Ex` 的选项会强行禁用，由于 DgVoodoo2 本身提供了低延迟的 `flip model` ，所以对延迟不会有负面影响）
+- 修复了红魔乡、妖妖梦、永夜抄开启补帧时自机火力在版面较高处时渲染异常的问题
+- 修复了红魔乡和妖妖梦启用补帧但 `PlayerBody = 0` 时自机被强行锁定在左上角的问题
+- 修复了妖妖梦左下角樱点值和在符卡中显示的Bonus到达较高数值时显示错误的问题，可在ini配置中的 `FixTH07Cherry&BonusDisplay` 选择是否开启，默认开启
+- 修复了星莲船得分超过一定数值后显示倒退的问题，可在ini配置中的 `FixTH12ScoreDisplay` 选择是否开启，默认开启
+- 修复了部分作品（风庙城绀天鬼）播放练习模式Replay时关底BOSS被击败的对话结束后游戏崩溃的问题，可在ini配置中的 `FixPracModeReplayCrash` 选择是否开启，默认开启
+- 新增独占全屏强制 4:3 输出（这个选项的修改方法会导致游戏画质大幅下降，如果游戏出现非4:3的情况请优先检查显卡和显示器设置），可在ini配置中的 `ForceRatio_4_3` 选择是否开启，默认关闭
+- 新增了强行绕过绕过 NVIDIA 安装在旧版 dgVoodoo2 Direct3DCreate8 入口上的损坏 Detours 跳板的设置，用于修复某些比较罕见的老电脑上dx8游戏无法启动的问题（该问题出现在Windows 7 + Optimus + dgVoodoo2的环境上），可在ini配置中的 `BypassNvidiaD3D8Detour` 选择是否开启，默认关闭
+- Payday帮已拿到希望蓝钻
 ## v1.13
 - 修复了开启补帧时鬼形兽进入下一面游戏崩溃的BUG（受影响的版本为v1.11-v1.12，使用这两个版本的玩家请务必更新）
 ## v1.12

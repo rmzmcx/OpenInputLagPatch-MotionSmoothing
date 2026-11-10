@@ -152,10 +152,10 @@ bool Limiter::UpdateTargetFPS() {
 			case FPSTarget::Game:
 				break;
 			case FPSTarget::ReplaySkip:
-				target = Config::ReplaySkipFPS;
+				target = Config::ReplaySkipFPS > 0 ? (UINT)Config::ReplaySkipFPS : 480;
 				break;
 			case FPSTarget::ReplaySlow:
-				target = Config::ReplaySlowFPS;
+				target = Config::ReplaySlowFPS > 0 ? (UINT)Config::ReplaySlowFPS : 30;
 				break;
 		}
 	}

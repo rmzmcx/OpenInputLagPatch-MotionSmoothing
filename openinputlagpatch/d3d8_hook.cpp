@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <stdarg.h>
 #include <stdint.h>
 #include <intrin.h>
 
@@ -32,34 +31,7 @@ namespace {
 	D3D8Hook::PresentInfo present_info = {};
 	UINT native_output_width = 0;
 	UINT native_output_height = 0;
-	FILE* trace_file = nullptr;
-	unsigned int present_count = 0;
 	void* direct_d3d8_create_body = nullptr;
-
-	void trace_d3d8(const char* format, ...) {
-		if (trace_file == nullptr) {
-			wchar_t path[1024] = {};
-			if (GetModuleFileNameW(nullptr, path, _countof(path)) == 0)
-				return;
-			wchar_t* slash = wcsrchr(path, L'\\');
-			if (slash == nullptr)
-				return;
-			slash[1] = L'\0';
-			wcscat_s(path, L"oilp_d3d8_trace.txt");
-			if (_wfopen_s(&trace_file, path, L"w") != 0)
-				trace_file = nullptr;
-			if (trace_file == nullptr)
-				return;
-		}
-
-		fprintf(trace_file, "[%lu tid=%lu] ", GetTickCount(), GetCurrentThreadId());
-		va_list args;
-		va_start(args, format);
-		vfprintf(trace_file, format, args);
-		va_end(args);
-		fputc('\n', trace_file);
-		fflush(trace_file);
-	}
 
 	bool range_has_execute_access(const void* address, size_t size) {
 		const uintptr_t start = (uintptr_t)address;
@@ -151,46 +123,29 @@ namespace {
 
 	void prepare_nvidia_detour_bypass() {
 		direct_d3d8_create_body = nullptr;
-		trace_d3d8("Detour bypass probe: original=%p", (void*)Direct3DCreate8_orig);
 		if (Direct3DCreate8_orig == nullptr)
 			return;
-		if (!Config::BypassNvidiaD3D8Detour) {
-			trace_d3d8("Detour bypass disabled by config");
+		if (!Config::BypassNvidiaD3D8Detour)
 			return;
-		}
-		if (!d3d8_is_expected_packed_build()) {
-			trace_d3d8("Detour bypass disabled: d3d8.dll is not a supported dgVoodoo2 build");
+		if (!d3d8_is_expected_packed_build())
 			return;
-		}
 
 		const BYTE* entry = (const BYTE*)Direct3DCreate8_orig;
-		if (!range_has_execute_access(entry, 16)) {
-			trace_d3d8("Detour bypass disabled: entry is not executable");
+		if (!range_has_execute_access(entry, 16))
 			return;
-		}
-		trace_d3d8("Detour entry bytes: %02x %02x %02x %02x %02x %02x %02x %02x "
-		           "%02x %02x %02x %02x %02x %02x %02x %02x",
-		           entry[0], entry[1], entry[2], entry[3], entry[4], entry[5], entry[6], entry[7],
-		           entry[8], entry[9], entry[10], entry[11], entry[12], entry[13], entry[14],
-		           entry[15]);
 		if (entry[0] != 0xE9 || entry[6] != 0xE8)
 			return;
 
 		int32_t detour_offset = 0;
 		memcpy(&detour_offset, entry + 1, sizeof(detour_offset));
 		const BYTE* trampoline = entry + 5 + detour_offset;
-		trace_d3d8("Detour target: %p", trampoline);
 		const HMODULE nvidia_d3d9_wrapper = GetModuleHandleW(L"nvd3d9wrap.dll");
 		const HMODULE nvidia_dxgi_wrapper = GetModuleHandleW(L"nvdxgiwrap.dll");
 		if (!address_belongs_to_module(nvidia_d3d9_wrapper, trampoline) &&
-			!address_belongs_to_module(nvidia_dxgi_wrapper, trampoline)) {
-			trace_d3d8("Detour bypass disabled: target is not an NVIDIA wrapper");
+			!address_belongs_to_module(nvidia_dxgi_wrapper, trampoline))
 			return;
-		}
 
 		direct_d3d8_create_body = (void*)(entry + 6);
-		trace_d3d8("Detected NVIDIA wrapper detour: entry=%p wrapper=%p body=%p",
-		           entry, trampoline, direct_d3d8_create_body);
 	}
 
 	// NVIDIA's build-time Detours stub copied six zero bytes from the packed dgVoodoo2 export.
@@ -529,9 +484,6 @@ namespace {
 
 	HRESULT __stdcall Present_hook(IDirect3DDevice8* device, const RECT* src_rect, const RECT* dst_rect,
 	                               HWND dst_window, const RGNDATA* dirty_region) {
-		++present_count;
-		if (present_count <= 5 || present_count % 60 == 0)
-			trace_d3d8("Present enter: count=%u device=%p", present_count, device);
 		if (!Limiter::ShouldPresent())
 			return D3D_OK;
 
@@ -545,8 +497,6 @@ namespace {
 		LARGE_INTEGER present_end;
 		QueryPerformanceCounter(&present_start);
 		auto result = Present_orig(device, src_rect, dst_rect, dst_window, dirty_region);
-		if (present_count <= 5 || present_count % 60 == 0)
-			trace_d3d8("Present return: count=%u result=0x%08lx", present_count, result);
 		QueryPerformanceCounter(&present_end);
 		present_diag_note_present_duration((uint64_t)present_start.QuadPart,
 		                                   (uint64_t)present_end.QuadPart);
@@ -563,9 +513,6 @@ namespace {
 
 	HRESULT __stdcall Reset_hook(IDirect3DDevice8* device, D3DPRESENT_PARAMETERS* present_params) {
 		printf("D3D8 Reset intercepted!\n");
-		trace_d3d8("Reset enter: device=%p size=%ux%u windowed=%d",
-		           device, present_params->BackBufferWidth, present_params->BackBufferHeight,
-		           present_params->Windowed);
 		void* caller = _ReturnAddress();
 		apply_presentation_overrides(present_params);
 		present_info.width = present_params->BackBufferWidth;
@@ -588,7 +535,6 @@ namespace {
 		}
 
 		auto ret = Reset_orig(device, present_params);
-		trace_d3d8("Reset return: result=0x%08lx", ret);
 
 		if (SUCCEEDED(ret)) {
 			D3DDEVICE_CREATION_PARAMETERS creation_params = {};
@@ -610,11 +556,6 @@ namespace {
 
 	HRESULT __stdcall CreateDevice_hook(IDirect3D8* self, UINT Adapter, D3DDEVTYPE DeviceType, HWND hFocusWindow,
 	                                    DWORD BehaviorFlags, D3DPRESENT_PARAMETERS* pp, IDirect3DDevice8** ppReturnedDeviceInterface) {
-		trace_d3d8("CreateDevice enter: self=%p adapter=%u type=%u flags=0x%08lx window=%p",
-		           self, Adapter, DeviceType, BehaviorFlags, hFocusWindow);
-		trace_d3d8("CreateDevice params: size=%ux%u backbuffers=%u swap=%u interval=0x%08x windowed=%d",
-		           pp->BackBufferWidth, pp->BackBufferHeight, pp->BackBufferCount,
-		           pp->SwapEffect, pp->FullScreen_PresentationInterval, pp->Windowed);
 		printf("D3D8 CreateDevice intercepted! adapter=%u type=%u flags=0x%08lx "
 		       "window=%p size=%ux%u backbuffers=%u swap=%u interval=0x%08x windowed=%d\n",
 		       Adapter, DeviceType, BehaviorFlags, hFocusWindow,
@@ -624,8 +565,6 @@ namespace {
 		release_force_ratio_resources();
 		capture_native_output_size(hFocusWindow ? hFocusWindow : pp->hDeviceWindow);
 		apply_presentation_overrides(pp);
-		trace_d3d8("CreateDevice after overrides: interval=0x%08x windowed=%d",
-		           pp->FullScreen_PresentationInterval, pp->Windowed);
 		printf("D3D8 CreateDevice parameters after overrides: size=%ux%u backbuffers=%u "
 		       "swap=%u interval=0x%08x windowed=%d\n",
 		       pp->BackBufferWidth, pp->BackBufferHeight, pp->BackBufferCount,
@@ -641,8 +580,6 @@ namespace {
 		printf("Calling original D3D8 CreateDevice at %p...\n", (void*)CreateDevice_orig);
 		fflush(stdout);
 		auto ret = CreateDevice_orig(self, Adapter, DeviceType, hFocusWindow, BehaviorFlags, pp, ppReturnedDeviceInterface);
-		trace_d3d8("CreateDevice return: result=0x%08lx device=%p", ret,
-		           ppReturnedDeviceInterface != nullptr ? (void*)*ppReturnedDeviceInterface : nullptr);
 		printf("Original D3D8 CreateDevice returned 0x%08lx, device=%p\n", ret,
 		       ppReturnedDeviceInterface != nullptr ? (void*)*ppReturnedDeviceInterface : nullptr);
 		fflush(stdout);
@@ -664,8 +601,6 @@ namespace {
 
 	IDirect3D8* WINAPI Direct3DCreate8_hook(UINT SDKVersion) {
 		prepare_nvidia_detour_bypass();
-		trace_d3d8("Direct3DCreate8 enter: SDKVersion=0x%x module=%p original=%p",
-		           SDKVersion, GetModuleHandleA("d3d8.dll"), (void*)Direct3DCreate8_orig);
 		printf("Direct3DCreate8 intercepted! SDKVersion=0x%x original=%p\n",
 		       SDKVersion, (void*)Direct3DCreate8_orig);
 		fflush(stdout);
@@ -673,10 +608,8 @@ namespace {
 		// Window mode: this runs after the game read its config but before it creates its
 		// window, which is the point where the game's own windowed flag has to be set
 		WindowMode::OnD3DCreate();
-		trace_d3d8("WindowMode::OnD3DCreate returned");
 		if (direct3d_create_callback != nullptr)
 			direct3d_create_callback();
-		trace_d3d8("Direct3DCreate callback returned");
 
 		const bool bypass_detour = direct_d3d8_create_body != nullptr;
 		printf("Calling original Direct3DCreate8%s...\n",
@@ -685,7 +618,6 @@ namespace {
 		auto d3d8 = bypass_detour
 		                ? Direct3DCreate8_bypassing_broken_detour(SDKVersion)
 		                : Direct3DCreate8_orig(SDKVersion);
-		trace_d3d8("Direct3DCreate8 original returned: %p", (void*)d3d8);
 		printf("Original Direct3DCreate8 returned %p\n", (void*)d3d8);
 		fflush(stdout);
 		if (d3d8 == nullptr)

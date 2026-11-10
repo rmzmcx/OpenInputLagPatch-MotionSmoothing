@@ -3,18 +3,20 @@
 #include <stdio.h>
 #include "config.h"
 #include "default_ini.h"
+#include "x64_config.h"
 
-UINT Config::GameFPS = 60;
+int Config::GameFPS = 60;
 BOOL Config::ReplaySpeedControl = TRUE;
-UINT Config::ReplaySkipFPS = 240;
-UINT Config::ReplaySlowFPS = 30;
-float Config::ReplaySlowRate = 0.5f;
-UINT Config::ReplayFastRate = 8;
+int Config::ReplaySkipFPS = 480;
+int Config::ReplaySlowFPS = 30;
 UINT Config::BltPrepareTime = 2;
 SleepType Config::Sleep = SleepType::Vpatch;
 int Config::ShowOverlay = 1;
 BOOL Config::DebugConsole = FALSE;
-BOOL Config::ForceFlipDiscard = TRUE;
+
+float X64Config::ReplaySlowRate = 0.5f;
+UINT X64Config::ReplayFastRate = 8;
+BOOL X64Config::ForceFlipDiscard = TRUE;
 
 namespace {
 const wchar_t* const config_name = L"openinputlagpatch_x64.ini";
@@ -70,15 +72,15 @@ void load_config_file(const wchar_t* config_path) {
 	wchar_t replay_slow_rate[64] = {};
 	GetPrivateProfileStringW(L"Option", L"ReplaySlowRate", L"0.5",
 		replay_slow_rate, _countof(replay_slow_rate), config_path);
-	Config::ReplaySlowRate = (float)_wtof(replay_slow_rate);
-	Config::ReplayFastRate = GetPrivateProfileIntW(
-		L"Option", L"ReplayFastRate", Config::ReplayFastRate, config_path);
+	X64Config::ReplaySlowRate = (float)_wtof(replay_slow_rate);
+	X64Config::ReplayFastRate = GetPrivateProfileIntW(
+		L"Option", L"ReplayFastRate", X64Config::ReplayFastRate, config_path);
 	Config::ShowOverlay = GetPrivateProfileIntW(
 		L"Option", L"ShowOverlay", Config::ShowOverlay, config_path);
 	Config::DebugConsole = GetPrivateProfileIntW(
 		L"Option", L"DebugConsole", Config::DebugConsole, config_path);
-	Config::ForceFlipDiscard = GetPrivateProfileIntW(
-		L"Option", L"ForceFlipDiscard", Config::ForceFlipDiscard, config_path);
+	X64Config::ForceFlipDiscard = GetPrivateProfileIntW(
+		L"Option", L"ForceFlipDiscard", X64Config::ForceFlipDiscard, config_path);
 }
 }
 
@@ -102,14 +104,16 @@ bool Config::Load() {
 
 	if (Config::GameFPS < 60)
 		Config::GameFPS = 60;
-	if (Config::ReplaySlowRate <= 0.0f || Config::ReplaySlowRate >= 1.0f)
-		Config::ReplaySlowRate = 0.5f;
-	if (Config::ReplayFastRate < 1)
-		Config::ReplayFastRate = 1;
-	else if (Config::ReplayFastRate > 128)
-		Config::ReplayFastRate = 128;
+	if (X64Config::ReplaySlowRate <= 0.0f ||
+		X64Config::ReplaySlowRate >= 1.0f) {
+		X64Config::ReplaySlowRate = 0.5f;
+	}
+	if (X64Config::ReplayFastRate < 1)
+		X64Config::ReplayFastRate = 1;
+	else if (X64Config::ReplayFastRate > 128)
+		X64Config::ReplayFastRate = 128;
 	Config::ReplaySlowFPS =
-		(UINT)((float)Config::GameFPS * Config::ReplaySlowRate + 0.5f);
+		(int)((float)Config::GameFPS * X64Config::ReplaySlowRate + 0.5f);
 	if (Config::ReplaySlowFPS < 1)
 		Config::ReplaySlowFPS = 1;
 	if (Config::ShowOverlay < 0)

@@ -20,14 +20,10 @@ class Config {
 public:
 	static bool Load();
 
-	static UINT GameFPS;
+	static int GameFPS;
 	static BOOL ReplaySpeedControl;
-	static UINT ReplaySkipFPS;
-	static UINT ReplaySlowFPS;
-	// x64 replay slowdown as a fraction of GameFPS (0.5 = half speed).
-	static float ReplaySlowRate;
-	// x64 replay fast-forward multiplier while the native shoot key is held.
-	static UINT ReplayFastRate;
+	static int ReplaySkipFPS;
+	static int ReplaySlowFPS;
 	static UINT BltPrepareTime;
 	static SleepType Sleep;
 	static BOOL D3D9Ex;
@@ -44,9 +40,10 @@ public:
 	static int ShowOverlay;
 	static BOOL DebugConsole;
 	static BOOL DebugWait;
+	static BOOL FixTH07CherryBonusDisplay;
+	static BOOL FixTH12ScoreDisplay;
+	static BOOL FixPracModeReplayCrash;
 	static BOOL FixInputGlitching;
-	// Request DXGI_FLIP_DISCARD when the x64 renderer creates its swap chain.
-	static BOOL ForceFlipDiscard;
 
 	// Whether the patch should replace the frame rate the game measures for itself, the way vpatch's
 	// CalcFPS=1 does. Touhou 6, 7 and 8 count their own draw passes and work their frame rate out of

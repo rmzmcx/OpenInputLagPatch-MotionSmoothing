@@ -26,48 +26,7 @@ static bool th6_drew_frame;
 static void th6_begin_game_draw();
 static void th6_draw_pass();
 
-static FILE* th6_input_trace;
-static unsigned int th6_input_trace_frame;
 static unsigned int th6_last_extra_presentations;
-
-static void th6_trace_input_state(int chain_result) {
-    if (CEngine::Instance->state != 2) {
-        th6_input_trace_frame = 0;
-        return;
-    }
-    ++th6_input_trace_frame;
-    if (th6_input_trace_frame > 600 || th6_input_trace_frame % 5 != 0)
-        return;
-
-    if (th6_input_trace == nullptr) {
-        wchar_t path[1024] = {};
-        if (GetModuleFileNameW(nullptr, path, _countof(path)) == 0)
-            return;
-        wchar_t* slash = wcsrchr(path, L'\\');
-        if (slash == nullptr)
-            return;
-        slash[1] = L'\0';
-        wcscat_s(path, L"oilp_input_trace.txt");
-        if (_wfopen_s(&th6_input_trace, path, L"w") != 0)
-            th6_input_trace = nullptr;
-        if (th6_input_trace == nullptr)
-            return;
-    }
-
-    const float* player = (const float*)(0x006CA628 + 0x440);
-    const HWND game_window = CWindowManager::Instance->hwnd;
-    const HWND foreground_window = GetForegroundWindow();
-    fprintf(th6_input_trace,
-            "frame=%u active=%d foreground=%d game_window=%p foreground_window=%p "
-            "input=0x%04x controller=%p effective=%.4f chain=%d refresh=%u target=%.2f "
-            "extras=%u player=%.3f,%.3f\n",
-            th6_input_trace_frame, CWindowManager::Instance->activated != 0,
-            foreground_window == game_window, game_window, foreground_window,
-            *(const unsigned short*)0x0069D904, *(void**)0x006C6D2C,
-            *(const float*)0x006C6EC0, chain_result, Limiter::DisplayRefresh(),
-            Limiter::PresentRate(), th6_last_extra_presentations, player[0], player[1]);
-    fflush(th6_input_trace);
-}
 
 // HACK: This should actually be taking in a parameter and using that in place of CChainManager::Instance
 // However, if I did that, the edi register gets corrupted by CChainManager::UpdateCalcChain
@@ -80,7 +39,6 @@ int __fastcall th6_update_calc_chain_hook() {
     Limiter::Tick();
 
     auto ret = CChainManager__UpdateCalcChain(CChainManager::Instance);
-    th6_trace_input_state(ret);
     if (ret != 0 && ret != -1 && engine->config.frameskip <= (int)CWindowManager::Instance->frames_skipped) {
         // The frame's own draw (see the frame interpolation comment below, which is where the
         // block lives now)

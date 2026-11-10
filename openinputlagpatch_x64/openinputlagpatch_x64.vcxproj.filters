@@ -30,6 +30,7 @@
     <ClInclude Include="..\openinputlagpatch\patch_util.h"><Filter>Shared</Filter></ClInclude>
     <ClInclude Include="..\openinputlagpatch\sha256.h"><Filter>Shared</Filter></ClInclude>
     <ClInclude Include="d3d11_hook.h" />
+    <ClInclude Include="x64_config.h" />
     <ClInclude Include="x64_games.h" />
     <ClInclude Include="x64_overlay.h" />
     <ClInclude Include="games\touhou6nc.h"><Filter>Games</Filter></ClInclude>

@@ -13,12 +13,12 @@ void __stdcall oilp_set_renderer(void (*update_func)()) {
 }
 
 bool __stdcall oilp_set_replay_skip_fps(int fps) {
-	Config::ReplaySkipFPS = fps;
+	Config::ReplaySkipFPS = fps > 0 ? fps : 480;
 	return true;
 }
 
 bool __stdcall oilp_set_replay_slow_fps(int fps) {
-	Config::ReplaySlowFPS = fps;
+	Config::ReplaySlowFPS = fps > 0 ? fps : 30;
 	return true;
 }
 

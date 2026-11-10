@@ -113,8 +113,124 @@ static void patch_frame_wait(DWORD address) {
 // Takes over the game's render block and its presents (defined below, after the comment that
 // explains what they are)
 static void th20_install_interpolation();
+static void th20_install_present_polling();
+
+// The game has its own replay speed control in ReplayInf::Update: while a replay is playing it
+// reads the skip/shoot bits and, every eighth frame, returns 6 to speed playback up. OilP's
+// ReplaySkipFPS/ReplaySlowFPS target must be the only replay speed control when this option is on,
+// so force that test to take the normal branch. The caller still runs its normal input update.
+static void th20_disable_native_replay_speed() {
+	BYTE* site = (BYTE*)rebase(0x0050828E);
+	if (site[0] != 0x74 || site[1] != 0x2C) {
+		printf("th20 native replay speed branch at 0x50828E doesn't look like the known one, skipping!\n");
+		return;
+	}
+
+	BYTE patch[] = { 0xEB };
+	patch_bytes(site, patch, sizeof(patch));
+	printf("Replay speed control: disabled th20's native replay speed branch\n");
+}
+
+struct Th20InputMethodPatch {
+	DWORD address;
+	const BYTE* expected;
+	const BYTE* replacement;
+	size_t size;
+};
+
+static auto th20_config_load_original =
+	(int(__fastcall*)(void* self, void* unused, const char* path))rebase(0x004DC1C0);
+static auto th20_config_write_original =
+	(int(__cdecl*)(const char* path, void* data, size_t size))rebase(0x00410E70);
+static const DWORD th20_config_base = 0x005C4F08;
+static const DWORD th20_input_method_offset = 0x81;
+
+static int __fastcall th20_config_load_hook(void* self, void* unused, const char* path) {
+	int result = th20_config_load_original(self, unused, path);
+	*((BYTE*)rebase(th20_config_base) + th20_input_method_offset) = 3;
+	return result;
+}
+
+static int __cdecl th20_config_write_hook(const char* path, void* data, size_t size) {
+	if (size == 0xB0 && data == (void*)rebase(th20_config_base))
+		*((BYTE*)data + th20_input_method_offset) = 3;
+	return th20_config_write_original(path, data, size);
+}
+
+static bool th20_is_call_to(DWORD site_address, DWORD target_address) {
+	const BYTE* site = (const BYTE*)rebase(site_address);
+	const DWORD site_runtime = rebase(site_address);
+	const DWORD target_runtime = rebase(target_address);
+	return site[0] == 0xE8 && *(const DWORD*)(site + 1) == target_runtime - site_runtime - 5;
+}
+
+static void th20_install_config_persistence() {
+	static const DWORD load_call = 0x0041E8EF;
+	static const DWORD write_calls[] = {
+		0x0041AAE6,
+		0x004DC467,
+		0x004DD987,
+	};
+
+	if (!th20_is_call_to(load_call, 0x004DC1C0)) {
+		printf("th20 config load call at 0x%x doesn't look like the known one, skipping Input Method persistence!\n",
+			load_call);
+		return;
+	}
+	for (DWORD call : write_calls) {
+		if (!th20_is_call_to(call, 0x00410E70)) {
+			printf("th20 config write call at 0x%x doesn't look like the known one, skipping Input Method persistence!\n",
+				call);
+			return;
+		}
+	}
+
+	patch_call(rebase(load_call), (void*)&th20_config_load_hook);
+	for (DWORD call : write_calls)
+		patch_call(rebase(call), (void*)&th20_config_write_hook);
+}
+
+// th20 chooses its input method in the automatic path, both windowed and fullscreen device
+// creation, the device-reset path, the setting 2 flag, and the setting 1 Sleep path. These
+// checks run again after the game loads its configuration, so redirect every one of them to
+// the result of setting 3 instead of relying on one write to the setting variable.
+static void th20_force_fast_input_method() {
+	static const BYTE sleep[] = { 0x0F, 0x85, 0x9A, 0x00, 0x00, 0x00 };
+	static const BYTE sleep_patch[] = { 0xE9, 0x9A, 0x00, 0x00, 0x00, 0x90 };
+	static const BYTE automatic[] = { 0x74, 0x09 };
+	static const BYTE automatic_patch[] = { 0xEB, 0x09 };
+	static const BYTE normal[] = { 0x75, 0x09 };
+	static const BYTE normal_patch[] = { 0x90, 0x90 };
+	static const BYTE fullscreen[] = { 0x74, 0x06 };
+	static const BYTE fullscreen_patch[] = { 0xEB, 0x06 };
+	static const BYTE reset[] = { 0x75, 0x18 };
+	static const BYTE reset_patch[] = { 0x90, 0x90 };
+	static const BYTE special[] = { 0x75, 0x17 };
+	static const BYTE special_patch[] = { 0xEB, 0x17 };
+	static const Th20InputMethodPatch patches[] = {
+		{ 0x00419A74, sleep, sleep_patch, sizeof(sleep) },
+		{ 0x0041C523, automatic, automatic_patch, sizeof(automatic) },
+		{ 0x0041C538, normal, normal_patch, sizeof(normal) },
+		{ 0x0041C58E, fullscreen, fullscreen_patch, sizeof(fullscreen) },
+		{ 0x0041C762, reset, reset_patch, sizeof(reset) },
+		{ 0x0041CDC2, special, special_patch, sizeof(special) },
+	};
+
+	for (const Th20InputMethodPatch& patch : patches) {
+		if (memcmp((void*)rebase(patch.address), patch.expected, patch.size) != 0) {
+			printf("th20 input latency branch at 0x%x doesn't look like the known one, skipping forced fast mode!\n",
+				patch.address);
+			return;
+		}
+	}
+
+	for (const Th20InputMethodPatch& patch : patches)
+		patch_bytes(rebase(patch.address), (void*)patch.replacement, patch.size);
+}
 
 void th20_install_patches() {
+	th20_force_fast_input_method();
+	th20_install_config_persistence();
 	{
 		// Make the game's frame limiter return immediately, exactly like on th19 - it's called
 		// from the update paths that render, and our limiter (ticked from the wait the game
@@ -141,8 +257,12 @@ void th20_install_patches() {
 		// so this makes sure our hook is the one that gets called
 		patch_call(rebase(0x0041C335), Direct3DCreate9_hook);
 	}
+	if (Config::ReplaySpeedControl)
+		th20_disable_native_replay_speed();
 	if (Config::Interpolation || Config::InterpolationFPS)
 		th20_install_interpolation();
+	else if (Config::ReplaySpeedControl)
+		th20_install_present_polling();
 }
 
 // The game runs replay playback as its own app state, which is what this checks before it lets
@@ -1671,15 +1791,33 @@ static HRESULT th20_present_hook() {
 	return result;
 }
 
+// The replay target has to be refreshed from a presentation even when frame interpolation is
+// off. At a high replay fast-forward rate the game's clock can stay behind its own update path,
+// so TickUntil() is not reached and the shoot key release would otherwise remain unnoticed.
+// This hook keeps the game's present path intact; it only adds the target poll before Present.
+static HRESULT th20_present_poll_hook() {
+	Limiter::PollTargetFPS();
+
+	IDirect3DDevice9* device = th20_device();
+	if (device == nullptr)
+		return E_FAIL;
+	return d3d9_present_frame(device);
+}
+
 // The present the game sets up at each present call site: the renderer load, the device it returns,
 // the arguments and the call itself, 39 bytes in all (see the comment above)
 static const size_t th20_present_setup_size = 39;
+static const DWORD th20_present_call_sites[] = {
+	0x00419666, // FUN_004193E0
+	0x004199B2, // FUN_004199A0
+	0x00419B2E, // FUN_00419A50
+};
 
 // Takes over one of the game's Present calls. The renderer load at its start is 5 bytes, which is
 // what the hook's call needs, so the hook goes over those 5 bytes, and the 34 bytes of setup that
 // follow are jumped over - all five arguments are pushed inside them, so skipping them leaves the
 // stack the way the game expects.
-static bool th20_hook_present(DWORD address) {
+static bool th20_hook_present(DWORD address, DWORD hook_address) {
 	BYTE* site = (BYTE*)rebase(address);
 	DWORD renderer = rebase(0x005C4D40);
 
@@ -1707,7 +1845,7 @@ static bool th20_hook_present(DWORD address) {
 	{
 		// The hook's call
 		BYTE patch[5] = { 0xE8, 0x00, 0x00, 0x00, 0x00 };
-		*(DWORD*)(patch + 1) = (DWORD)&th20_present_hook - ((DWORD)site + 5);
+		*(DWORD*)(patch + 1) = hook_address - ((DWORD)site + 5);
 		patch_bytes(site, patch, sizeof(patch));
 	}
 	{
@@ -1770,13 +1908,8 @@ static void th20_install_interpolation() {
 	}
 
 	// Take over the presents in the frame functions (see th20_hook_present)
-	static const DWORD present_sites[] = {
-		0x00419666, // FUN_004193E0
-		0x004199B2, // FUN_004199A0
-		0x00419B2E, // FUN_00419A50
-	};
-	for (DWORD address : present_sites) {
-		if (th20_hook_present(address))
+	for (DWORD address : th20_present_call_sites) {
+		if (th20_hook_present(address, (DWORD)&th20_present_hook))
 			++th20_present_patched;
 	}
 	printf("Frame interpolation: %u render call(s) and %u present call(s) taken over (setting %d)\n",
@@ -1791,4 +1924,17 @@ static void th20_install_interpolation() {
 	// than at the bottom right corner of the window where it would sit on top of the frame rate and
 	// slowdown readout thprac draws there (see overlay.h)
 	overlay_set_present_rate_follow_text(true);
+}
+
+// When interpolation is off, the game still presents once per frame. Taking those presents over
+// lets a release of the replay fast-forward key be noticed even when the game's own wait never
+// reaches TickUntil(). Nothing from the interpolation path is installed here.
+static void th20_install_present_polling() {
+	unsigned int present_patched = 0;
+	for (DWORD address : th20_present_call_sites) {
+		if (th20_hook_present(address, (DWORD)&th20_present_poll_hook))
+			++present_patched;
+	}
+	printf("Replay speed control: %u present call(s) taken over for target polling\n",
+		present_patched);
 }

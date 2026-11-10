@@ -1,6 +1,7 @@
 #include <Windows.h>
 #include <stdio.h>
 #include <string.h>
+#include "config.h"
 #include "patch_util.h"
 #include "replay_practice_end.h"
 
@@ -135,6 +136,8 @@ bool replay_practice_patch_late_stage_exit(const ReplayPracticeGuard* guard,
 	uintptr_t finish_replay, uintptr_t address, int* scene_state, int normal_state,
 	uintptr_t normal_resume, uintptr_t missing_target,
 	const unsigned char* expected, size_t expected_size) {
+	if (!Config::FixPracModeReplayCrash)
+		return true;
 	if (expected_size != 10 ||
 		memcmp((const void*)address, expected, expected_size) != 0)
 		return false;
@@ -153,6 +156,8 @@ bool replay_practice_patch_late_stage_exit(const ReplayPracticeGuard* guard,
 }
 
 bool replay_practice_patch_finish_call(uintptr_t call_site, uintptr_t finish_replay) {
+	if (!Config::FixPracModeReplayCrash)
+		return true;
 	const unsigned char* bytes = (const unsigned char*)call_site;
 	if (bytes[0] != 0xE8)
 		return false;
@@ -168,6 +173,8 @@ bool replay_practice_patch_finish_call(uintptr_t call_site, uintptr_t finish_rep
 }
 
 void replay_practice_present_tick() {
+	if (!Config::FixPracModeReplayCrash)
+		return;
 	if (pending_finish_frames == 0)
 		return;
 	if (--pending_finish_frames != 0)
@@ -183,6 +190,8 @@ void replay_practice_present_tick() {
 
 bool replay_practice_patch_function(uintptr_t address, void* replacement,
 	const unsigned char* expected, size_t expected_size) {
+	if (!Config::FixPracModeReplayCrash)
+		return true;
 	if (expected_size == 0 || expected_size > 8 ||
 		memcmp((const void*)address, expected, expected_size) != 0)
 		return false;

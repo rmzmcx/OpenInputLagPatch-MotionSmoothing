@@ -7,6 +7,152 @@ Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/O
 Only changes that have been tested in-game and confirmed working are listed here, so this file
 is also the record of what has actually been verified rather than just what was attempted.
 
+## 2026-11-10
+
+### Added
+
+- **th19 and th20 now force the fastest Input Method** (`ef5ba4f`)
+
+  th19 (v1.10c and v1.00a) and th20 follow the other games by skipping the automatic, normal,
+  fullscreen, and Reset branches for slower input methods, along with the Sleep path used by
+  setting `1`. Both games reload their configuration at startup, so the patch also sets Input
+  Method to `3` after that load and forces the same value before every configuration write.
+  After a normal exit or an in-game settings change, `custom.exe` now shows and saves the fastest
+  setting. This was confirmed in game.
+
+### Fixed
+
+- **Non-positive replay fast-forward and slowdown rates no longer cause unlimited speed or crashes** (`12364f2`)
+
+  `ReplaySlowFPS = 0` made the limiter convert its timing with a zero target frame rate, while a
+  negative value wrapped to nearly `UINT_MAX` in the old unsigned field so the existing `< 0`
+  check could never catch it. Both cases produced invalid limiter timing: some games ran without
+  pacing, while th19 and th20 could crash because they also use the limiter frame rate for their
+  own clocks.
+
+  All three frame-rate settings are now parsed as signed integers. A non-positive
+  `ReplaySlowFPS` falls back to `30`, and a non-positive `ReplaySkipFPS` falls back to `480`.
+  The same protection is applied during INI loading, through the thprac-facing API, and when the
+  limiter reads the target. `ReplaySlowFPS = 0` has been confirmed to no longer cause unlimited
+  speed or a crash; zero and negative fast-forward rates use the same safe default.
+
+- **th20 replay fast-forward and slowdown no longer stack with the game's native speed control** (`04495d0`)
+
+  th20's `ReplayInf` still read the game's own `Skip`/`Shoot` inputs and returned a native
+  accelerated result every eighth frame. Until now, after OilP selected `ReplaySkipFPS` or
+  `ReplaySlowFPS`, that native branch also affected the actual speed, causing extra acceleration
+  and a lower presented frame rate at high replay targets. With `ReplaySpeedControl = 1`, the
+  verified `74 2C` branch at `0x50828E` is now changed to `EB 2C`, so it always takes the normal
+  path. The address is rebased because th20 uses ASLR. Disabling `ReplaySpeedControl` leaves the
+  original branch untouched.
+
+  When frame interpolation is off, a lightweight Present hook is installed at the three verified
+  present sites. A high replay target can keep the game from reaching `TickUntil()`, so target
+  changes and key releases would otherwise not be noticed. The hook only calls
+  `Limiter::PollTargetFPS()` and then follows the existing `d3d9_present_frame()` path; it does not
+  update game logic, input, timers, or scene state. In-game testing confirmed that holding the
+  fast-forward key no longer adds extra speed when `GameFPS = ReplaySkipFPS = 1000`, while key
+  release and target changes still take effect.
+
+- **The practice-replay ending crash fix can now be switched independently** (`9fa5990`)
+
+  `b211b97` added protection for th10 and th13-th17 so a practice replay no longer tries to load
+  a nonexistent next stage after the boss is defeated and all post-boss dialogue has finished.
+  `[Option]` now has `FixPracModeReplayCrash = 1` between `FixTH12ScoreDisplay` and
+  `FixInputGlitching`, enabled by default. Setting it to `0` does not install that protection and
+  leaves the original replay exit path in place.
+
+### Changed
+
+- **th06 and th07 no longer generate automatic input traces** (`da5096b`)
+
+  The debug recorder that created `oilp_input_trace.txt` during normal gameplay was removed,
+  including its file handles, frame counters, and all call sites. Diagnostics are again limited
+  to the `oilp_diag.txt` and `oilp_display_diag.txt` files written with `U`, plus
+  `oilp_crash.txt` when a fatal exception occurs.
+
+- **`ReplaySkipFPS` now fully controls th10 replay fast-forward** (`c5c2dcd`)
+
+  th10's original replay task returns its own accelerated step from `0x0040BA45` while the
+  fast-forward key is held. The patch previously only raised the limiter target, so the original
+  acceleration could still affect the actual speed. With `ReplaySpeedControl = 1`, the verified
+  `74 11` conditional now takes the normal-step return unconditionally, leaving `ReplaySkipFPS`
+  as the only replay fast-forward rate. Disabling `ReplaySpeedControl` preserves the original
+  behavior. The configured fast-forward speed has been confirmed in game.
+
+- **The default `ReplaySkipFPS` is now 480** (`9fa5990`)
+
+  Newly generated global configs and the reference ini use `480`; the built-in fallback is also
+  `480` for existing configs that do not contain the key.
+
+- **Temporary configuration and D3D8 traces are no longer written** (`9fa5990`)
+
+  `oilp_config_trace.txt` and `oilp_d3d8_trace.txt` are no longer generated. The standard
+  `oilp_diag.txt` and `oilp_display_diag.txt` diagnostics remain available.
+
+## 2026-11-09
+
+### Fixed
+
+- **th10-th15 no longer restore the whole stage object for extra frames, fixing crashes when loading after transitions and practice sessions** (`683151e`)
+
+  Extra presentations run the stage draw callbacks again, and th10-th15 advance their stage-clear
+  timer and fade creation from those callbacks. To keep one game frame from advancing the
+  transition two or three times, the patch saved and restored stage state; the old implementation
+  copied the entire stage object. Those objects also hold resource pointers and task handles that
+  the render walk can replace, so restoring the old bytes could expose stale state during the next
+  stage load. In th11, this was confirmed to crash while reading the next stage data header from
+  both normal transitions and practice mode.
+
+  The patch now saves only the fields each game's draw callbacks actually change: fade colour and
+  terminal state, render counters, stage flags, timer scalar fields and the stage shake values. A
+  shared helper checks every range against that game's real allocation size and skips the restore
+  if the stage slot now names another object. The interpolation algorithm, input, logic timing,
+  transition duration and replay data are unchanged. The transition and next-stage load paths
+  have been confirmed in game.
+
+- **Perfect Cherry Blossom's current Cherry and Spell Card Bonus displays are fixed** (`3bce335`)
+
+  PCB splits the current Cherry value into a fixed six sprite digits. Above `999999`, the leading
+  quotient no longer maps to one of the ten digit sprites. The patch applies VsyncPatch's verified
+  seven-digit layout, including the spacing and starting-position adjustments for both Cherry
+  rows. CherryMax already has a seven-digit branch and is unchanged.
+
+  The in-game `Bonus +... history ...` line is original Anm sprite-digit HUD. Its loop always starts
+  at `10000000` and runs eight times, so once Bonus reaches 100 million the leading quotient is 10
+  or greater and indexes past the digit sprites. Cherry, border, and history artwork then appears
+  in the Bonus line. The patch chooses the divisor from the actual 1-10 digit value while preserving
+  the original right alignment up to eight digits and the original history position.
+
+  `[Option]` adds `FixTH07Cherry&BonusDisplay = 1` between `DebugWait` and
+  `FixTH12ScoreDisplay`. It defaults to enabled. Actual Cherry, Bonus, score, results, and replay
+  data are unchanged. Both fixes have been confirmed in game.
+
+- **th12 high scores no longer become negative or appear to count backwards** (`b4f6ea0`)
+
+  UFO's displayed score is built from `base score + 10 * current score`. The original formatter
+  at `0x00401610` uses signed comparisons and `%d`, so a displayed value above `INT_MAX` becomes
+  negative and the readout appears to run backwards.
+
+  The patch applies the same display-only workaround as VsyncPatch. After validating the original
+  eighteen bytes at `0x00401631`, it replaces the signed formatting branch with an unsigned decimal
+  conversion that inserts thousands separators, then returns to the common text enqueue at
+  `0x004016F3`. The actual score, results and replay data are unchanged. The new
+  `[Option] FixTH12ScoreDisplay = 1` setting defaults to enabled and has been confirmed in game.
+
+- **th12 replay fast-forward and slowdown work again** (`b47db78`)
+
+  The UFO replay callback read `0x004C22C8`, which is Ten Desires' replay manager pointer. That
+  value was accidentally copied into the th12 source by upstream commit `b8625c9` when th13
+  support was added. `th12.exe` contains no reference to that address, so the callback never saw
+  an active replay and always returned the normal game frame rate. The patch had also already
+  bypassed the game's native replay-speed branch, leaving neither path active.
+
+  Use UFO's actual replay manager pointer at `0x004B4518`, which is read and written throughout
+  `th12.exe`. The fixed replay-manager pointers in the other supported games were audited as well;
+  no other mismatches were found. th12 replay slowdown and fast-forward have been confirmed in
+  game.
+
 ## 2026-11-08
 
 ### Fixed

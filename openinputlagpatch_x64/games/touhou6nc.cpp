@@ -6,6 +6,7 @@
 #include "limiter.h"
 #include "patch_util.h"
 #include "touhou6nc.h"
+#include "x64_config.h"
 
 namespace {
 constexpr uintptr_t kRenderChainRva = 0x3BF70;
@@ -191,7 +192,7 @@ bool install_replay_rate_text_patch() {
 	replay_rate_text = allocate_near_game(0x1000);
 	if (replay_rate_text == nullptr)
 		return false;
-	sprintf_s(replay_rate_text, 16, "x%u", Config::ReplayFastRate);
+	sprintf_s(replay_rate_text, 16, "x%u", X64Config::ReplayFastRate);
 	const int32_t displacement = (int32_t)(
 		(intptr_t)replay_rate_text -
 		(intptr_t)(site + 7));
@@ -221,12 +222,12 @@ bool install_replay_fast_rate_patch() {
 		memcmp(branch, expected_branch, sizeof(expected_branch)) != 0) {
 		return false;
 	}
-	if (Config::ReplayFastRate == 1) {
+	if (X64Config::ReplayFastRate == 1) {
 		const uint8_t skip_loop = 0xEB;
 		patch_bytes(branch, (void*)&skip_loop, sizeof(skip_loop));
 	} else {
 		const uint8_t extra_updates =
-			(uint8_t)(Config::ReplayFastRate - 1);
+			(uint8_t)(X64Config::ReplayFastRate - 1);
 		patch_bytes(compare + 2, (void*)&extra_updates,
 			sizeof(extra_updates));
 	}
@@ -239,10 +240,10 @@ int64_t __fastcall replay_indicator_hook(void* controller, void* render) {
 	if (replay_rate_text != nullptr) {
 		if (replay_slow_active)
 			sprintf_s(replay_rate_text, 16, "x%.3g",
-				Config::ReplaySlowRate);
+				X64Config::ReplaySlowRate);
 		else
 			sprintf_s(replay_rate_text, 16, "x%u",
-				Config::ReplayFastRate);
+				X64Config::ReplayFastRate);
 	}
 	uint32_t* input = (uint32_t*)game_address(kInputStateRva);
 	const uint32_t saved_input = *input;
@@ -361,7 +362,7 @@ int64_t __fastcall update_chain_hook(void* chain) {
 			begin_replay_slow();
 			run_update = true;
 		} else {
-			replay_slow_credit += (double)Config::ReplaySlowRate;
+			replay_slow_credit += (double)X64Config::ReplaySlowRate;
 			if (replay_slow_credit >= 1.0 - 1e-9) {
 				replay_slow_credit -= 1.0;
 				run_update = true;
@@ -374,7 +375,7 @@ int64_t __fastcall update_chain_hook(void* chain) {
 		return 0;
 	++replay_slow_frames;
 	replay_slow_debt = (double)replay_slow_frames *
-		(1.0 / (double)Config::ReplaySlowRate - 1.0);
+		(1.0 / (double)X64Config::ReplaySlowRate - 1.0);
 	return update_chain(chain);
 }
 
@@ -418,10 +419,10 @@ void write_diagnostic() {
 		"ShowOverlay %d, DebugConsole %d, "
 		"ForceFlipDiscard %d\n",
 		Config::GameFPS, Config::ReplaySpeedControl ? 1 : 0,
-		Config::ReplaySlowRate, Config::ReplayFastRate,
+		X64Config::ReplaySlowRate, X64Config::ReplayFastRate,
 		Config::ShowOverlay,
 		Config::DebugConsole ? 1 : 0,
-		Config::ForceFlipDiscard ? 1 : 0);
+		X64Config::ForceFlipDiscard ? 1 : 0);
 	fprintf(file,
 		"swap chain: FLIP_DISCARD hook %d, current FLIP_DISCARD %d\n",
 		flip_discard_hook_installed ? 1 : 0,
@@ -561,7 +562,7 @@ void th06nc_install_patches() {
 		}
 	}
 
-	if (Config::ForceFlipDiscard) {
+	if (X64Config::ForceFlipDiscard) {
 		uint8_t* factory2_call =
 			game_address(kFactory2SwapChainCallRva);
 		uint8_t* factory1_call =

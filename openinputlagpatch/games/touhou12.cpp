@@ -15,7 +15,57 @@
 
 using namespace Touhou12;
 
-CReplayManager** CReplayManager::InstancePtr = (CReplayManager**)0x004C22C8;
+// This is UFO's replay manager. 0x004C22C8 belongs to Ten Desires and was
+// accidentally copied here when th13 support was added.
+CReplayManager** CReplayManager::InstancePtr = (CReplayManager**)0x004B4518;
+
+// The game's score formatter at 0x401610 uses signed comparisons and "%d". UFO can construct a
+// displayed score above INT_MAX, at which point that formatter shows a negative value and the
+// readout appears to count backwards. VsyncPatch fixed the same bug by replacing the formatting
+// path with an unsigned decimal writer; this is the same conversion.
+static char* __fastcall th12_format_score(unsigned int score, char* output) {
+	char* cursor = output;
+	unsigned int digits = 0;
+	for (;;) {
+		*cursor++ = (char)('0' + score % 10);
+		score /= 10;
+		++digits;
+		if (score == 0)
+			break;
+		if (digits % 3 == 0)
+			*cursor++ = ',';
+	}
+	*cursor = '\0';
+	return _strrev(output);
+}
+
+static void th12_fix_score_display() {
+	BYTE* site = (BYTE*)0x00401631;
+	static const BYTE expected[] = {
+		0x7D, 0x18, 0x51, 0x8D, 0x44, 0x24, 0x08, 0x68, 0x84,
+		0xF4, 0x49, 0x00, 0x50, 0xE8, 0x78, 0xB5, 0x06, 0x00,
+	};
+	if (memcmp(site, expected, sizeof(expected)) != 0) {
+		printf("th12 score formatter at 0x401631 doesn't look like the known one, skipping!\n");
+		return;
+	}
+
+	// At this point the caller still has the score in ECX and its 256-byte text buffer starts at
+	// [ESP+4]. The original signed/formatting branch is replaced with a direct call to the unsigned
+	// formatter, then jumps to the common text enqueue at 0x4016F3.
+	BYTE patch[sizeof(expected)];
+	patch[0] = 0x8D;
+	patch[1] = 0x54;
+	patch[2] = 0x24;
+	patch[3] = 0x04;
+	patch[4] = 0xE8;
+	*(DWORD*)(patch + 5) = (DWORD)th12_format_score - (0x00401631 + 9);
+	patch[9] = 0xE9;
+	*(DWORD*)(patch + 10) = 0x004016F3 - (0x00401631 + 14);
+	memset(patch + 14, 0x90, 4);
+	patch_bytes(site, patch, sizeof(patch));
+	printf("th12 score display fix installed\n");
+}
 
 int __stdcall th12_window_update_hook(void* self) {
 	Limiter::Tick();
@@ -172,38 +222,32 @@ static ExtraFloatState th12_shake = { (float*)0x004CEE04, 2 };
 // more than one fade for the same frame. The fade object itself is fine: its own timer runs on the
 // update chain, once a frame.
 //
-// So an extra pass copies both stage objects (0x3724 bytes, the size the allocator uses) before
-// its render walk and puts them back afterwards, and the fade factory call at 0x40391D is skipped
-// while an extra is drawing.
-static const size_t th12_stage_size = 0x3724;
-static void** const th12_stage_slots[2] = { (void**)0x004B43BC, (void**)0x004B43C0 };
-static unsigned char* th12_stage_saved[2];
-static bool th12_stage_saved_valid[2];
+// So an extra pass puts the fields those callbacks change back after its render walk, and the fade
+// factory call at 0x40391D is skipped while an extra is drawing. The first range is the fade
+// counter, colour and terminal flag at +0x2770. The second is the three render counters, the stage
+// flags and the three scalar fields of the stage timer at +0x35B0. It stops before the timer's
+// static speed pointer at +0x35CC. The last range holds the two stage shake values.
+static const ExtraByteRange th12_stage_ranges[] = {
+	{ 0x2770, 0x0C },
+	{ 0x35B0, 0x1C },
+	{ 0x36F4, 0x08 },
+};
+static const size_t th12_stage_range_count =
+	sizeof(th12_stage_ranges) / sizeof(th12_stage_ranges[0]);
+static ExtraRangeState th12_stage_states[2] = {
+	{ (void**)0x004B43BC, th12_stage_ranges, th12_stage_range_count, 0x3724 },
+	{ (void**)0x004B43C0, th12_stage_ranges, th12_stage_range_count, 0x3724 },
+};
 static bool th12_in_extra;
 
 static void th12_stage_save() {
-	for (int i = 0; i < 2; ++i) {
-		th12_stage_saved_valid[i] = false;
-		void* stage = *th12_stage_slots[i];
-		if (stage == nullptr)
-			continue;
-		if (th12_stage_saved[i] == nullptr)
-			th12_stage_saved[i] = (unsigned char*)malloc(th12_stage_size);
-		if (th12_stage_saved[i] == nullptr)
-			continue;
-		memcpy(th12_stage_saved[i], stage, th12_stage_size);
-		th12_stage_saved_valid[i] = true;
-	}
+	for (int i = 0; i < 2; ++i)
+		extra_range_state_save(&th12_stage_states[i]);
 }
 
 static void th12_stage_restore() {
-	for (int i = 0; i < 2; ++i) {
-		void* stage = *th12_stage_slots[i];
-		if (!th12_stage_saved_valid[i] || stage == nullptr)
-			continue;
-		memcpy(stage, th12_stage_saved[i], th12_stage_size);
-		th12_stage_saved_valid[i] = false;
-	}
+	for (int i = 0; i < 2; ++i)
+		extra_range_state_restore(&th12_stage_states[i]);
 }
 
 // FUN_004529A0 builds a fade object and puts its tasks on the chains (six arguments, ret 18h).
@@ -1180,6 +1224,8 @@ void th12_install_patches() {
 		BYTE patch[] = { 0xEB };
 		patch_bytes(0x0043C54F, patch, sizeof(patch));
 	}
+	if (Config::FixTH12ScoreDisplay)
+		th12_fix_score_display();
 	if (Config::Interpolation || Config::InterpolationFPS) {
 		// Take over the object render, only to remember the viewport the scene is drawn with (see
 		// th12_render_hook); the render itself runs exactly the way it always did
