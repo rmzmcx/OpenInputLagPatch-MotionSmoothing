@@ -1635,6 +1635,18 @@ void th10_install_patches() {
 		// This should force our Direct3DCreate9 hook to be loaded no matter what
 		patch_call(0x00438BC3, Direct3DCreate9_hook);
 	}
+	if (Config::ReplaySpeedControl) {
+		// The replay task checks the game's Skip input here and returns its native accelerated step
+		// when the key is held. Make that decision always take the normal-step return instead, so
+		// ReplaySkipFPS controls the replay speed through the patch's limiter.
+		BYTE* replay_skip = (BYTE*)0x0040BA45;
+		if (replay_skip[0] == 0x74 && replay_skip[1] == 0x11) {
+			BYTE patch[] = { 0xEB };
+			patch_bytes(0x0040BA45, patch, sizeof(patch));
+		} else {
+			printf("th10 replay speed branch at 0x40BA45 doesn't look like the known one, skipping!\n");
+		}
+	}
 	if (Config::Interpolation || Config::InterpolationFPS) {
 		// Take over the call into the game's own update walk as well, only to count how many times
 		// it ran for a frame (see th10_update_hook); the walk itself runs exactly as it always did
