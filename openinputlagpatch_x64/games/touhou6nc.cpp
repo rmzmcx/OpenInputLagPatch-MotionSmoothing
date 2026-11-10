@@ -38,8 +38,13 @@ constexpr uintptr_t kInputUpdateRva = 0x12BE0;
 constexpr uintptr_t kInputUpdateCallRva = 0x79D32;
 constexpr uintptr_t kReplayFastLoopCompareRva = 0x45DDF;
 constexpr uintptr_t kReplayFastLoopBranchRva = 0x45DBC;
+constexpr uintptr_t kReplayFastLoopImmediateRva =
+	kReplayFastLoopCompareRva + 2;
 constexpr uint32_t kInputFocusMask = 0x4;
 constexpr uint32_t kInputShootMask = 0x8000;
+constexpr uintptr_t kThpracShiftHeldRva = 0xC21F9A;
+constexpr uintptr_t kThpracFarTriggerHeldRva = 0x54601C;
+constexpr uintptr_t kFpsLimiterConstantRva = 0xC22100;
 constexpr uintptr_t kAudioStreamRva = 0x50966C;
 constexpr uintptr_t kAudioLoopFlagRva = 0x50967C;
 constexpr uintptr_t kAudioLoopPointsFlagRva = 0x50967D;
@@ -60,10 +65,17 @@ bool replay_indicator_hook_installed;
 bool update_chain_hook_installed;
 bool input_update_hook_installed;
 bool replay_fast_rate_hook_installed;
+bool logic_update_hook_installed;
+bool replay_rate_text_patch_installed;
+bool thprac_compatibility_ready;
 bool practice_tool_loaded;
+bool thprac_focus_mirrored;
+HMODULE thprac_module;
 char* replay_rate_text;
-bool logic_update_ran = true;
+int32_t replay_rate_text_original_displacement;
+bool logic_update_ran;
 uint32_t live_input_state;
+uint64_t logic_updates_this_frame;
 
 double replay_slow_credit;
 double replay_slow_debt;
@@ -71,6 +83,7 @@ bool replay_slow_active;
 int replay_slow_stream = -1;
 int64_t replay_slow_bgm_start = -1;
 int64_t replay_slow_frames;
+int64_t replay_slow_ticks;
 int64_t replay_last_bgm_position = -1;
 int64_t replay_last_bgm_target = -1;
 
@@ -97,6 +110,15 @@ bool call_targets(uint8_t* site, uintptr_t target) {
 	int32_t displacement = 0;
 	memcpy(&displacement, site + 1, sizeof(displacement));
 	return (uintptr_t)(site + 5) + displacement == target;
+}
+
+bool thprac_loaded() {
+	if (thprac_module != nullptr)
+		return true;
+	thprac_module = GetModuleHandleW(L"thprac64.dll");
+	if (thprac_module == nullptr)
+		thprac_module = GetModuleHandleW(L"thprac.dll");
+	return thprac_module != nullptr;
 }
 
 using CreateSwapChainForHwndFunction = HRESULT(__fastcall*)(
@@ -189,6 +211,8 @@ bool install_replay_rate_text_patch() {
 	static const uint8_t expected[] = { 0x48, 0x8D, 0x1D };
 	if (memcmp(site, expected, sizeof(expected)) != 0)
 		return false;
+	memcpy(&replay_rate_text_original_displacement, site + 3,
+		sizeof(replay_rate_text_original_displacement));
 	replay_rate_text = allocate_near_game(0x1000);
 	if (replay_rate_text == nullptr)
 		return false;
@@ -197,17 +221,33 @@ bool install_replay_rate_text_patch() {
 		(intptr_t)replay_rate_text -
 		(intptr_t)(site + 7));
 	patch_bytes(site + 3, (void*)&displacement, sizeof(displacement));
+	replay_rate_text_patch_installed = true;
 	return true;
+}
+
+void restore_replay_rate_text() {
+	if (!replay_rate_text_patch_installed)
+		return;
+	patch_bytes(game_address(kReplayRateTextPatchRva) + 3,
+		(void*)&replay_rate_text_original_displacement,
+		sizeof(replay_rate_text_original_displacement));
+	replay_rate_text_patch_installed = false;
 }
 
 using ReplayIndicatorFunction = int64_t(__fastcall*)(void*, void*);
 ReplayIndicatorFunction replay_indicator_original;
 
+using UpdateChainFunction = int64_t(__fastcall*)(void*);
+UpdateChainFunction logic_update_original;
+
 using InputUpdateFunction = uint32_t(__fastcall*)();
 InputUpdateFunction input_update_original;
 
+void reflect_focus_for_thprac();
+
 uint32_t __fastcall input_update_hook() {
 	live_input_state = input_update_original();
+	reflect_focus_for_thprac();
 	return live_input_state;
 }
 
@@ -237,7 +277,9 @@ bool install_replay_fast_rate_patch() {
 int64_t __fastcall replay_indicator_hook(void* controller, void* render) {
 	if (replay_indicator_original == nullptr)
 		return 0;
-	if (replay_rate_text != nullptr) {
+	if (thprac_loaded())
+		return replay_indicator_original(controller, render);
+	if (replay_rate_text_patch_installed && replay_rate_text != nullptr) {
 		if (replay_slow_active)
 			sprintf_s(replay_rate_text, 16, "x%.3g",
 				X64Config::ReplaySlowRate);
@@ -298,7 +340,7 @@ void align_bgm_after_replay_slow() {
 	((AudioSeekFunction)game_address(kAudioSeekRva))(target, stream);
 }
 
-bool replay_slow_requested() {
+bool replay_slow_prerequisites() {
 	void* replay_controller =
 		*(void**)game_address(kReplayControllerRva);
 	const uint32_t input =
@@ -310,8 +352,40 @@ bool replay_slow_requested() {
 		*(uint8_t*)game_address(kReplaySpeedBlockedRva) == 0 &&
 		*(uint8_t*)game_address(kBulletUpdateBlockedRva) == 0 &&
 		*(uint32_t*)game_address(kGameModeRva) == kGameplayMode &&
-		(input & kInputShootMask) == 0 &&
+		(input & kInputShootMask) == 0;
+}
+
+bool replay_slow_requested() {
+	return replay_slow_prerequisites() &&
 		(live_input_state & kInputFocusMask) != 0;
+}
+
+bool thprac_replay_slow_requested() {
+	if (!replay_slow_prerequisites())
+		return false;
+	const bool shift_held =
+		*(const uint8_t*)game_address(kThpracShiftHeldRva) != 0;
+	const bool trigger_held =
+		*(const uint8_t*)game_address(kThpracFarTriggerHeldRva) != 0;
+	return (live_input_state & kInputFocusMask) != 0 ||
+		shift_held || trigger_held;
+}
+
+void reflect_focus_for_thprac() {
+	if (!Config::ReplaySpeedControl || !thprac_loaded()) {
+		return;
+	}
+	const bool focus_held = (live_input_state & kInputFocusMask) != 0;
+	if (focus_held && replay_slow_prerequisites()) {
+		*(uint8_t*)game_address(kThpracShiftHeldRva) = 1;
+		thprac_focus_mirrored = true;
+	} else if (thprac_focus_mirrored) {
+		const bool physical_shift =
+			(GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+		*(uint8_t*)game_address(kThpracShiftHeldRva) =
+			physical_shift ? 1 : 0;
+		thprac_focus_mirrored = false;
+	}
 }
 
 void begin_replay_slow() {
@@ -322,6 +396,7 @@ void begin_replay_slow() {
 		? ((AudioPositionFunction)game_address(kAudioPositionRva))(stream)
 		: -1;
 	replay_slow_frames = 0;
+	replay_slow_ticks = 0;
 	replay_slow_credit = 0.0;
 	replay_slow_debt = 0.0;
 	replay_slow_active = true;
@@ -335,14 +410,19 @@ void end_replay_slow() {
 	replay_slow_stream = -1;
 	replay_slow_bgm_start = -1;
 	replay_slow_frames = 0;
+	replay_slow_ticks = 0;
 	replay_slow_credit = 0.0;
 	replay_slow_debt = 0.0;
 }
 
 int64_t __fastcall update_chain_hook(void* chain) {
-	using UpdateChainFunction = int64_t(__fastcall*)(void*);
 	auto update_chain =
 		(UpdateChainFunction)game_address(kUpdateChainRva);
+
+	if (thprac_loaded()) {
+		logic_update_ran = true;
+		return update_chain(chain);
+	}
 
 	if (!replay_slow_requested()) {
 		if (replay_slow_active)
@@ -373,10 +453,94 @@ int64_t __fastcall update_chain_hook(void* chain) {
 	logic_update_ran = run_update;
 	if (!run_update)
 		return 0;
-	++replay_slow_frames;
-	replay_slow_debt = (double)replay_slow_frames *
-		(1.0 / (double)X64Config::ReplaySlowRate - 1.0);
+	if (!logic_update_hook_installed) {
+		++replay_slow_frames;
+		replay_slow_debt = (double)replay_slow_frames *
+			(1.0 / (double)X64Config::ReplaySlowRate - 1.0);
+	}
 	return update_chain(chain);
+}
+
+void update_thprac_slow_tracking() {
+	if (!thprac_loaded())
+		return;
+	const bool requested = thprac_replay_slow_requested();
+	if (requested && !replay_slow_active)
+		begin_replay_slow();
+	else if (!requested && replay_slow_active)
+		end_replay_slow();
+}
+
+int64_t __fastcall update_chain_entry_hook(void* chain) {
+	update_thprac_slow_tracking();
+	++logic_updates_this_frame;
+	logic_update_ran = true;
+	if (replay_slow_active)
+		++replay_slow_frames;
+	return logic_update_original(chain);
+}
+
+bool install_logic_update_hook() {
+	if (logic_update_hook_installed)
+		return true;
+	static const uint8_t expected_prologue[] = {
+		0x48, 0x89, 0x5C, 0x24, 0x08,
+		0x48, 0x89, 0x6C, 0x24, 0x10,
+		0x48, 0x89, 0x74, 0x24, 0x18, 0x57,
+	};
+	uint8_t* target = game_address(kUpdateChainRva);
+	if (memcmp(target, expected_prologue, sizeof(expected_prologue)) != 0)
+		return false;
+	logic_update_original = (UpdateChainFunction)install_x64_detour(
+		target, (void*)&update_chain_entry_hook, sizeof(expected_prologue));
+	logic_update_hook_installed = logic_update_original != nullptr;
+	return logic_update_hook_installed;
+}
+
+void restore_thprac_replay_defaults() {
+	uint8_t* compare = game_address(kReplayFastLoopCompareRva);
+	uint8_t* branch = game_address(kReplayFastLoopBranchRva);
+	if (compare[0] == 0x83 && compare[1] == 0xFF &&
+		compare[3] == 0x7C && compare[4] == 0xB3) {
+		const uint8_t default_extra_updates = 7;
+		patch_bytes(game_address(kReplayFastLoopImmediateRva),
+			(void*)&default_extra_updates, sizeof(default_extra_updates));
+	}
+	if (branch[0] == 0xEB && branch[1] == 0x3C) {
+		const uint8_t normal_branch = 0x74;
+		patch_bytes(branch, (void*)&normal_branch, sizeof(normal_branch));
+	}
+}
+
+void synchronize_thprac_compatibility() {
+	if (!thprac_loaded() || thprac_compatibility_ready)
+		return;
+	restore_replay_rate_text();
+	if (replay_fast_rate_hook_installed) {
+		restore_thprac_replay_defaults();
+		replay_fast_rate_hook_installed = false;
+	}
+	const bool logic_hook = install_logic_update_hook();
+	thprac_compatibility_ready = true;
+	printf("TH06NC: thprac compatibility active, logic update hook %d\n",
+		logic_hook ? 1 : 0);
+}
+
+UINT thprac_external_game_fps() {
+	if (!thprac_loaded())
+		return 0;
+	const uint64_t period =
+		*(const uint64_t*)game_address(kFpsLimiterConstantRva);
+	if (period == 0)
+		return 0;
+	LARGE_INTEGER frequency;
+	if (!QueryPerformanceFrequency(&frequency) ||
+		frequency.QuadPart <= 0) {
+		return 0;
+	}
+	const uint64_t fps =
+		((uint64_t)frequency.QuadPart + period / 2) / period;
+	return fps > 0 && fps <= 1000 ? (UINT)fps : 0;
 }
 
 void write_diagnostic() {
@@ -429,13 +593,21 @@ void write_diagnostic() {
 		d3d11_swapchain_is_flip_discard() ? 1 : 0);
 	fprintf(file,
 		"hooks: replay indicator %d, update chain %d, "
-		"input update %d, replay fast rate %d\n",
+		"input update %d, replay fast rate %d, logic update %d\n",
 		replay_indicator_hook_installed ? 1 : 0,
 		update_chain_hook_installed ? 1 : 0,
 		input_update_hook_installed ? 1 : 0,
-		replay_fast_rate_hook_installed ? 1 : 0);
+		replay_fast_rate_hook_installed ? 1 : 0,
+		logic_update_hook_installed ? 1 : 0);
 	fprintf(file, "practice tool module: %d\n",
 		practice_tool_loaded ? 1 : 0);
+	fprintf(file,
+		"thprac module: %d, compatibility %d, external FPS %u, "
+		"replay fast x%u\n",
+		thprac_loaded() ? 1 : 0, thprac_compatibility_ready ? 1 : 0,
+		thprac_external_game_fps(),
+		(unsigned int)*(const uint8_t*)game_address(
+			kReplayFastLoopImmediateRva) + 1);
 	fprintf(file,
 		"game state: mode %u (%s), input 0x%08lx, "
 		"live input 0x%08lX, focus %d, shoot %d, "
@@ -492,6 +664,19 @@ uintptr_t screen_flip() {
 }
 
 uintptr_t frame_begin() {
+	synchronize_thprac_compatibility();
+	update_thprac_slow_tracking();
+	if (logic_update_hook_installed) {
+		logic_update_ran = logic_updates_this_frame != 0;
+		logic_updates_this_frame = 0;
+	}
+	if (replay_slow_active) {
+		++replay_slow_ticks;
+		if (replay_slow_ticks > replay_slow_frames) {
+			replay_slow_debt =
+				(double)(replay_slow_ticks - replay_slow_frames);
+		}
+	}
 	Limiter::Tick();
 	render_chain();
 	return 0;
@@ -527,7 +712,9 @@ void th06nc_install_patches() {
 	}
 	practice_tool_loaded =
 		GetModuleHandleW(L"th06nc_test.dll") != nullptr;
+	Limiter::external_game_fps = thprac_external_game_fps;
 	QueryPerformanceFrequency(&diag_frequency);
+	const bool thprac_present = thprac_loaded();
 
 	uint8_t* input_update_call = game_address(kInputUpdateCallRva);
 	if (call_targets(input_update_call, game_base + kInputUpdateRva)) {
@@ -540,13 +727,15 @@ void th06nc_install_patches() {
 			(void*)kInputUpdateCallRva);
 	}
 
-	replay_fast_rate_hook_installed = install_replay_fast_rate_patch();
-	if (!replay_fast_rate_hook_installed) {
-		printf("TH06NC: replay fast-forward rate patch at RVA %p does not match\n",
-			(void*)kReplayFastLoopCompareRva);
+	if (!thprac_present) {
+		replay_fast_rate_hook_installed = install_replay_fast_rate_patch();
+		if (!replay_fast_rate_hook_installed) {
+			printf("TH06NC: replay fast-forward rate patch at RVA %p does not match\n",
+				(void*)kReplayFastLoopCompareRva);
+		}
 	}
 
-	if (install_replay_rate_text_patch()) {
+	if (!thprac_present && install_replay_rate_text_patch()) {
 		static const uint8_t expected_indicator_prologue[] = {
 			0x40, 0x53, 0x48, 0x81, 0xEC, 0x60, 0x01, 0x00, 0x00,
 		};
@@ -636,6 +825,7 @@ void th06nc_install_patches() {
 	}
 
 	printf("TH06NC: x64 runtime entry installed\n");
+	synchronize_thprac_compatibility();
 }
 
 FPSTarget th06nc_replay_callback() {
