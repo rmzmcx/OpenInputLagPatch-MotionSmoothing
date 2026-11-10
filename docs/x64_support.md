@@ -35,7 +35,7 @@ Replay 加速倍率由 `ReplayFastRate` 设置，默认 `8`，允许 `1` 到 `12
 ### ShowOverlay
 
 通过 D3D11 Present 在游戏 BackBuffer 上绘制，不创建额外覆盖窗口，因此不会让游戏的现代 flip
-呈现降级。
+呈现降级。游戏窗口失焦后，overlay 会跟随游戏继续刷新和绘制。
 
 - `0`：关闭
 - `1`：显示实际 Present 帧率

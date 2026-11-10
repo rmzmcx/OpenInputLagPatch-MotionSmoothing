@@ -5,6 +5,17 @@
 This file records features and changes on the standalone x64 branch. It is maintained separately
 from the changelogs for the x86 games.
 
+## 2026-11-10
+
+### Fixed
+
+- **The overlay no longer disappears when the window loses focus** (`284d165`)
+
+  The game continues rendering and presenting while its window is in the background, but the
+  overlay previously turned itself off when the foreground-window check failed. The overlay now
+  continues to refresh and draw, including the Present FPS and frame-processing time readouts.
+  `ShowOverlay = 0` still turns it off normally.
+
 ## 2026-11-09
 
 ### Added
