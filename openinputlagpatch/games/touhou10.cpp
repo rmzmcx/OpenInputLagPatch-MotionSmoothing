@@ -1636,15 +1636,16 @@ void th10_install_patches() {
 		patch_call(0x00438BC3, Direct3DCreate9_hook);
 	}
 	if (Config::ReplaySpeedControl) {
-		// The replay task checks the game's Skip input here and returns its native accelerated step
-		// when the key is held. Make that decision always take the normal-step return instead, so
-		// ReplaySkipFPS controls the replay speed through the patch's limiter.
-		BYTE* replay_skip = (BYTE*)0x0040BA45;
-		if (replay_skip[0] == 0x74 && replay_skip[1] == 0x11) {
+		// ReplayInf registers ReplayFrameStep::Check (0x42A3E0) as its priority-27 primary task.
+		// During playback, holding Skip makes it return 6, which restarts the primary scheduler
+		// and stacks the game's native fast-forward with ReplaySkipFPS. Force the normal-step
+		// return instead so the patch's limiter remains the only replay speed control.
+		BYTE* replay_skip = (BYTE*)0x0042A401;
+		if (replay_skip[0] == 0x74 && replay_skip[1] == 0x1A) {
 			BYTE patch[] = { 0xEB };
-			patch_bytes(0x0040BA45, patch, sizeof(patch));
+			patch_bytes(replay_skip, patch, sizeof(patch));
 		} else {
-			printf("th10 replay speed branch at 0x40BA45 doesn't look like the known one, skipping!\n");
+			printf("th10 native replay speed branch at 0x42A401 doesn't look like the known one, skipping!\n");
 		}
 	}
 	if (Config::Interpolation || Config::InterpolationFPS) {
