@@ -248,7 +248,6 @@ void Limiter::PollTargetFPS() {
 
 // TODO: Implement https://blat-blatnik.github.io/computerBear/making-accurate-sleep-function/
 
-#ifndef OILP_X64
 // Waits until the given point in time (see limiter.h)
 void Limiter::WaitUntil(LARGE_INTEGER target) {
 	switch (Config::Sleep) {
@@ -260,7 +259,6 @@ void Limiter::WaitUntil(LARGE_INTEGER target) {
 			break;
 	}
 }
-#endif
 
 // How long one of the limiter's frames is (see limiter.h)
 LARGE_INTEGER Limiter::FrameWait() {

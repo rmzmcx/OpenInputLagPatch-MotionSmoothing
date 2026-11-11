@@ -6,5 +6,8 @@
 
 bool d3d11_install_present_hook(uintptr_t game_present_call);
 bool d3d11_swapchain_is_flip_discard();
-void d3d11_prepare_flip_discard(DXGI_SWAP_CHAIN_DESC1* desc);
-void d3d11_prepare_flip_discard(DXGI_SWAP_CHAIN_DESC* desc);
+bool d3d11_swapchain_allows_tearing();
+void d3d11_prepare_flip_discard(DXGI_SWAP_CHAIN_DESC1* desc,
+	bool allow_tearing);
+void d3d11_prepare_flip_discard(DXGI_SWAP_CHAIN_DESC* desc,
+	bool allow_tearing);

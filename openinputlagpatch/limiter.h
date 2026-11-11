@@ -31,11 +31,9 @@ public:
 	static void CountGameFrame();
 	static float MeasuredFps();
 
-#ifndef OILP_X64
 	// Waits until the given point in time, in performance counter units. The frame interpolation
 	// uses this to place the extra presentations inside a frame.
 	static void WaitUntil(LARGE_INTEGER target);
-#endif
 
 	// The games with frame interpolation present more than once per frame. The extra presentations
 	// are the patch's own work and shouldn't count towards the frame time the overlay reports, so

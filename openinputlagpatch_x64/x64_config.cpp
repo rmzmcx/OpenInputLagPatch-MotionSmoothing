@@ -17,6 +17,13 @@ BOOL Config::DebugConsole = FALSE;
 float X64Config::ReplaySlowRate = 0.5f;
 UINT X64Config::ReplayFastRate = 8;
 BOOL X64Config::ForceFlipDiscard = TRUE;
+BOOL X64Config::AllowTearing = TRUE;
+int X64Config::Interpolation = 0;
+UINT X64Config::InterpolationFPS = 0;
+BOOL X64Config::InterpolateEnemyBullets = TRUE;
+BOOL X64Config::InterpolateLasers = TRUE;
+BOOL X64Config::InterpolatePlayerBody = TRUE;
+BOOL X64Config::InterpolatePlayerShots = TRUE;
 
 namespace {
 const wchar_t* const config_name = L"openinputlagpatch_x64.ini";
@@ -81,6 +88,32 @@ void load_config_file(const wchar_t* config_path) {
 		L"Option", L"DebugConsole", Config::DebugConsole, config_path);
 	X64Config::ForceFlipDiscard = GetPrivateProfileIntW(
 		L"Option", L"ForceFlipDiscard", X64Config::ForceFlipDiscard, config_path);
+	X64Config::AllowTearing = GetPrivateProfileIntW(
+		L"Option", L"AllowTearing", X64Config::AllowTearing, config_path);
+	wchar_t interpolation[64] = {};
+	GetPrivateProfileStringW(L"Interpolation", L"Interpolation", L"\x1",
+		interpolation, _countof(interpolation), config_path);
+	if (interpolation[0] != L'\x1') {
+		if (interpolation[0] == L'*') {
+			X64Config::Interpolation = 0;
+			X64Config::InterpolationFPS = (UINT)_wtoi(interpolation + 1);
+		} else {
+			X64Config::Interpolation = _wtoi(interpolation);
+			X64Config::InterpolationFPS = 0;
+		}
+	}
+	X64Config::InterpolateEnemyBullets = GetPrivateProfileIntW(
+		L"Interpolation", L"EnemyBullets",
+		X64Config::InterpolateEnemyBullets, config_path);
+	X64Config::InterpolateLasers = GetPrivateProfileIntW(
+		L"Interpolation", L"Lasers",
+		X64Config::InterpolateLasers, config_path);
+	X64Config::InterpolatePlayerBody = GetPrivateProfileIntW(
+		L"Interpolation", L"PlayerBody",
+		X64Config::InterpolatePlayerBody, config_path);
+	X64Config::InterpolatePlayerShots = GetPrivateProfileIntW(
+		L"Interpolation", L"PlayerShots",
+		X64Config::InterpolatePlayerShots, config_path);
 }
 }
 
@@ -120,5 +153,24 @@ bool Config::Load() {
 		Config::ShowOverlay = 0;
 	else if (Config::ShowOverlay > 3)
 		Config::ShowOverlay = 3;
+	if (X64Config::Interpolation < -1)
+		X64Config::Interpolation = -1;
+	else if (X64Config::Interpolation > 32)
+		X64Config::Interpolation = 32;
+	if (X64Config::InterpolationFPS > 0 &&
+		X64Config::InterpolationFPS < 60) {
+		X64Config::InterpolationFPS = 60;
+	} else if (X64Config::InterpolationFPS > 1000) {
+		X64Config::InterpolationFPS = 1000;
+	}
+	X64Config::InterpolateEnemyBullets =
+		X64Config::InterpolateEnemyBullets != FALSE;
+	X64Config::InterpolateLasers =
+		X64Config::InterpolateLasers != FALSE;
+	X64Config::InterpolatePlayerBody =
+		X64Config::InterpolatePlayerBody != FALSE;
+	X64Config::InterpolatePlayerShots =
+		X64Config::InterpolatePlayerShots != FALSE;
+	X64Config::AllowTearing = X64Config::AllowTearing != FALSE;
 	return true;
 }
