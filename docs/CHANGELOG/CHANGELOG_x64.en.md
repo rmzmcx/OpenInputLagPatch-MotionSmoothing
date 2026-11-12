@@ -5,6 +5,39 @@
 This file records features and changes on the standalone x64 branch. It is maintained separately
 from the changelogs for the x86 games.
 
+## 2026-11-12
+
+### Added
+
+- **The x64 runtime for Touhou 6 NC now supports object-level frame interpolation** (`37a6ad9`)
+
+  The x64 runtime for `th06nc.exe` now preserves the original Update Chain rate and only repeats
+  the game's Render Chain, final composition, and Present. Extra frames reuse the game's native
+  D3D11 rendering path and existing Present/overlay hook, while object and rendering state is
+  restored around each pass. No Update Chain runs during extra Render or Compose.
+
+  The current coverage includes ordinary enemy bullets in state 1, the player and both options,
+  player shots, and straight lasers. Enemy bullets use their current velocity and state scale;
+  the player uses the current input and character speed table; options, player shots, and lasers
+  use measured motion between logic frames. Reuse guards check object type, logical position, and
+  draw position. Laser angles use the shortest arc.
+
+  Enemy bullets and lasers do not advance in extra frames while time is stopped, the game is
+  paused, or object updates are blocked. The game's native FPS accounting is saved and restored
+  around the extra final composition, so its FPS text continues to report the real logic/main-loop
+  rate. Test logs show about 60fps of main-loop updates and zero Update calls during extra Render
+  or Compose.
+
+  `[Interpolation]` accepts the x86 formats `0`, `1`, `-1`, `N`, and `*R`, with separate
+  `EnemyBullets`, `Lasers`, `PlayerBody`, and `PlayerShots` switches. The D3D11 swap chain can
+  optionally use `ALLOW_TEARING`, so submissions above the display refresh rate can affect latency
+  or tearing. Official thprac UI replay state is discovered through a `thprac64.dll` version table;
+  UI replay is disabled for an unrecognised version.
+
+  Enemy bodies and curved lasers are not covered yet. The exact pre-spawn empty-slot hook for
+  player shots is still unidentified, so same-frame slot reuse is currently handled through object
+  state, shot type, logical-position, and draw-position guards.
+
 ## 2026-11-11
 
 ### Added
