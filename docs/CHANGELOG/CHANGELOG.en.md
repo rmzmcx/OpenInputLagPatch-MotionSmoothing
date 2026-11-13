@@ -7,6 +7,56 @@ Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/O
 Only changes that have been tested in-game and confirmed working are listed here, so this file
 is also the record of what has actually been verified rather than just what was attempted.
 
+## 2026-11-14
+
+### Added
+
+- **th06's round bullets are drawn at their real position instead of being quantised to whole pixels** (`01085b8`)
+
+  `AnmManager::Draw2` in EoSD rounds the sprite centre to whole pixels before handing it to D3D
+  (`AnmManager.cpp:910-911`, the two `frndint` at `0x433658` and `0x433693`). Everything that goes
+  through it - the round bullets, the player's own shots, text, the HUD - can only move a whole
+  pixel at a time, so the fractional positions the interpolation extrapolates to are thrown away
+  again when the sprite is drawn and several extra frames in a row show the same pixel.
+
+  Those two instructions are now NOPs, so the matrix gets the fractional position with the same
+  half-pixel shift. `Draw`, `DrawNoRotation` and `Draw3` are untouched.
+
+  Removing the rounding alone exposes a second problem. The sprite rectangles in the original
+  atlases sit edge to edge (`etama3` packs 154 sprites at 16 pixel steps with no gap at all,
+  checked against `th06CM.DAT`), so a fractional position makes the edge pixels sample just
+  outside the rectangle and the neighbouring sprite bleeds in. The remake keeps two pixels between
+  sprites in its own data; here the same is done at runtime: every small bullet sprite gets a
+  texture of its own, its UV rectangle becomes the whole texture, and `D3DTADDRESS_CLAMP` pins a
+  straying sample to that sprite's own edge. Nothing is scaled or squeezed, and no atlas is
+  modified or released.
+
+  Sprites outside the bullet atlases are rounded again at the entry of `Draw2`, so text, the HUD,
+  the player and the enemies keep the pixel alignment they had.
+
+  Confirmed in game: the round bullets and the ring bullets move smoothly at 60/180Hz without
+  streaking, darkening or missing corners, and the text and HUD are unchanged. `oilp_diag.txt`
+  over 300 frames shows 3 presentations per frame (2.993 average, 176.2/s), 294 bullets projected
+  forward, and no errors.
+
+  Not covered yet: the rotating bullets go through `Draw3`, and `BIG_BALL` with the larger bullet
+  sprites still draws from the atlas.
+
+### Changed
+
+- **The draw-side settings move to `[Rendering]`, with a new `FixBulletPixelSnapping`** (`01085b8`)
+
+  `[Interpolation]` is renamed to `[Rendering]`; the interpolation master switch and its three
+  sub-switches stay there, with the sub-switches indented to show the relationship.
+  `FixBulletPixelSnapping` sits above the master switch, is on by default, and is meant to be
+  shared by later games.
+
+  Existing files keep working: the value is read from `[Rendering]` first, then `[Interpolation]`,
+  then `[Option]` (the oldest layout). The three readme configuration blocks are now identical;
+  `README.ja.md` had been left at a much older revision and was missing `FixTH12ScoreDisplay`,
+  `FixPracModeReplayCrash`, the interpolation sub-switches and this option, and `README.en.md` was
+  missing `FixTH07Cherry&BonusDisplay`.
+
 ## 2026-11-12
 
 ### Fixed
