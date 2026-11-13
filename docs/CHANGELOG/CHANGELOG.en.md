@@ -7,6 +7,25 @@ Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/O
 Only changes that have been tested in-game and confirmed working are listed here, so this file
 is also the record of what has actually been verified rather than just what was attempted.
 
+## 2026-11-12
+
+### Fixed
+
+- **th10's Skip-key replay fast-forward no longer stacks with the game's native acceleration** (`0f7a906`)
+
+  The earlier `c5c2dcd` change made replay fast-forward normal when triggered by the shoot key,
+  but holding the Skip key still entered a separate native acceleration path. th10 registers
+  `ReplayFrameStep::Check` (`0x42A3E0`) on the primary scheduler at priority `0x1B`. During replay
+  playback, it returned `6` while Skip was held unless the frame counter was divisible by four.
+  The scheduler handles `6` by restarting the whole primary scheduler, so the native fast-forward
+  still affected the actual speed.
+
+  With `ReplaySpeedControl = 1`, the verified `74 1A` branch at `0x42A401` is now changed to
+  `EB 1A`, making the Skip path return the normal step and leaving `ReplaySkipFPS` as the only
+  fast-forward rate. Replay records, input queues, and game logic are unchanged; disabling
+  `ReplaySpeedControl` preserves the original behavior. The Skip-key behavior was confirmed in
+  game.
+
 ## 2026-11-10
 
 ### Added
@@ -71,14 +90,12 @@ is also the record of what has actually been verified rather than just what was 
   to the `oilp_diag.txt` and `oilp_display_diag.txt` files written with `U`, plus
   `oilp_crash.txt` when a fatal exception occurs.
 
-- **`ReplaySkipFPS` now fully controls th10 replay fast-forward** (`c5c2dcd`)
+- **`ReplaySkipFPS` controls th10's Shoot-key replay fast-forward** (`c5c2dcd`)
 
-  th10's original replay task returns its own accelerated step from `0x0040BA45` while the
-  fast-forward key is held. The patch previously only raised the limiter target, so the original
-  acceleration could still affect the actual speed. With `ReplaySpeedControl = 1`, the verified
-  `74 11` conditional now takes the normal-step return unconditionally, leaving `ReplaySkipFPS`
-  as the only replay fast-forward rate. Disabling `ReplaySpeedControl` preserves the original
-  behavior. The configured fast-forward speed has been confirmed in game.
+  This earlier change handled the replay fast-forward path triggered by the shoot key, making its
+  speed follow `ReplaySkipFPS`. Testing later showed that the Skip key still entered the separate
+  `ReplayFrameStep::Check` path and received additional native acceleration; `0f7a906` fills that
+  gap.
 
 - **The default `ReplaySkipFPS` is now 480** (`9fa5990`)
 

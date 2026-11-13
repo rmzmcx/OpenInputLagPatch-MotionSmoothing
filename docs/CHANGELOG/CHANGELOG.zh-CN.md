@@ -6,6 +6,21 @@
 
 只记录已经在游戏里实测确认可用的改动，因此本文件同时也是「哪些修改真正被验证过」的凭证。
 
+## 2026-11-12
+
+### 修复
+
+- **th10 的 Skip 键 replay 快进不再叠加游戏原生加速**（`0f7a906`）
+
+  先前 `c5c2dcd` 的处理已让射击键触发 replay 快进时正常，但按住 Skip 键仍会走进另一条原生
+  加速路径。th10 的 `ReplayFrameStep::Check`（`0x42A3E0`）以优先级 `0x1B` 注册到 primary
+  scheduler；replay 模式且按住 Skip 时，只要帧计数不是 4 的倍数就返回 `6`。调度器收到 `6`
+  会重新运行整个 primary scheduler，因此实际速度仍会叠加游戏原生快进。
+
+  `ReplaySpeedControl = 1` 时，现在把已验证的 `0x42A401` 处 `74 1A` 改为 `EB 1A`，让 Skip
+  路径返回正常步长，只由 `ReplaySkipFPS` 控制快进速度。修改不涉及 replay 记录数据、输入
+  队列或游戏逻辑；关闭 `ReplaySpeedControl` 时保持原版行为。Skip 键行为已实机确认。
+
 ## 2026-11-10
 
 ### 新增
@@ -61,12 +76,11 @@
   帧计数和所有调用点。诊断输出恢复为按 `U` 生成的 `oilp_diag.txt`、
   `oilp_display_diag.txt`，以及发生致命异常时生成的 `oilp_crash.txt`。
 
-- **th10 的 replay 快进改由 `ReplaySkipFPS` 完整控制**（`c5c2dcd`）
+- **th10 的射击键 replay 快进改由 `ReplaySkipFPS` 控制**（`c5c2dcd`）
 
-  th10 原版会在 replay 快进键按住时从 `0x0040BA45` 返回自己的加速步长；补丁此前只提高
-  限帧器目标，因此原版加速仍会参与实际速度。现在 `ReplaySpeedControl = 1` 时会把该处已验证的
-  `74 11` 条件跳转改为无条件返回正常步长，使 replay 快进速度只由 `ReplaySkipFPS` 决定。
-  关闭 `ReplaySpeedControl` 时保持原版行为。已实机确认快进速度会随配置值变化。
+  先前实现先解决了射击键触发 replay 快进时的速度控制，使快进速度跟随 `ReplaySkipFPS`。
+  后续实测发现 Skip 键仍会走独立的 `ReplayFrameStep::Check` 路径并获得额外加速；该漏项
+  已由 `0f7a906` 补上。
 
 - **`ReplaySkipFPS` 的默认值改为 480**（`9fa5990`）
 

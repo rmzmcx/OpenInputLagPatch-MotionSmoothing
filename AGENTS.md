@@ -95,15 +95,14 @@ When you are writing, please
 9. `RELEASE_NOTES_v<ver>.md` 与 `UPDATES&USAGES_v<ver>.md` 的「改动 / 更新」内容必须取自
    `docs/CHANGELOG/Non-AI-CHANGELOG.zh-CN.md` 的对应版本。AI 不自行补写更新内容；若人工版缺少该版本记录，
    先在对话中列出本次更新内容，等用户写入人工版后再继续生成发布文档。安装、配置、校验等其它发布信息可单独维护。
+
 ## 构建 / 部署 / 实测流程
 
 - 构建（在仓库根目录）：
   `& 'E:\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe' openinputlagpatch.sln /m /p:Configuration=Release /v:minimal /nologo`
-  这条命令在沙箱里会因 MSBuild 的 FileTracker 需要越权而失败，要用 `require_escalated` 跑。
 - 产物在 `build/`：`openinputlagpatch.dll`、`oilp_loader.exe`（以及 pdb / lib / exp）。
-- x64 构建加 `/p:Platform=x64`，产物在 `build/x64/`：`openinputlagpatch_x64.dll`、
-  `oilp_loader_x64.exe`。
-- 改完代码要**部署到游戏目录**再让用户实测。th15 的目录：
+- 改完代码要**部署到游戏目录**再让用户实测。
+- 例如：th15 的目录：
   `E:\东方MotionSmoothing相关\原版游戏\[th15] 东方绀珠传 (汉化版+日文版)\`
   （游戏正在运行时复制会失败，需先让用户关掉游戏。）
 - 用户实测后按 `U` 会在游戏目录导出 `oilp_diag.txt`；先看这个文件再下结论，不要凭猜测下判断。
@@ -113,11 +112,12 @@ When you are writing, please
 ## 逆向工具
 
 - 优先使用 IDA-MCP 工作流，并使用Ida-Sequential和Idapython技能来操控IDA。
+- 当前会话提供 `mcp__ida_pro_mcp.*` 工具组时，直接使用其中的 `server_health`、`decompile`、`disasm`、`xrefs_to`、`insn_query`、`analyze_function` 等接口；不要先写本地 HTTP 客户端绕行。
 - 只有现成 MCP 工具无法完成跨函数批量扫描、全二进制立即数搜索或复杂栈帧分析时，才使用 `py_eval`/IDAPython。此类临时脚本应合并、及时删除，最终只保留逆向结论文档。
 - IDA目录：`D:\IDA_Pro_v8.3_Portable\ida.exe`
+- 若需要逆向的程序是64位程序，可能需要使用`ida64.exe`
 - 如果 IDA-MCP 不可用，先说明阻塞点并询问我，不要静默改用别的数据库。
 - 逆向过程中请使用`math mcp`提高逆向精度
-- 若逆向研究的程序是64位程序，可能需要使用 `ida64.exe`
 - 只有在现有结论已写在文档里时，才可直接引用；任何新逆向都需要先询问并得到我的确认。
 - 辅助工具仍可用 dumpbin /DISASM；按助记符文本搜索，MSVC 可能把“基址+静态偏移”折成绝对地址。
 - Ghidra 路径(次要选择，IDA无法使用再考虑)：
