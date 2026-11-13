@@ -53,21 +53,49 @@ QQ グループ番号：1128317778
 ゲームの exe と同じフォルダにある `openinputlagpatch.ini` で設定します。このファイルが無くてもゲームは普通に動き、必要ならいつでも自分で作れます。以下は設定例です（同梱の ini と同じ内容で、コメントは中国語と英語です）：
 
 ```
-; OpenInputLagPatch 参考配置（[Option] 与 [Window] 两节），注释为中英双语，键名与取值保持不变。
+; OpenInputLagPatch 参考配置（[Interpolation]、[Option] 与 [Window] 三节），注释为中英双语，键名与取值保持不变。
 ;
-; OpenInputLagPatch reference config ([Option] and [Window]), with bilingual comments. The keys
-; and their values are unchanged.
+; OpenInputLagPatch reference config ([Interpolation], [Option] and [Window]), with bilingual
+; comments. The keys and their values are unchanged.
+;
+; 全局配置默认在 %APPDATA%\ShanghaiAlice\oilp_custom\openinputlagpatch.ini，不存在时会自动创建；
+; 游戏目录下的同名文件会覆盖其中出现的键。
+;
+; The global config defaults to %APPDATA%\ShanghaiAlice\oilp_custom\openinputlagpatch.ini and is
+; created automatically when it does not exist; a file with the same name in the game directory
+; overrides the keys it contains.
 
-[Option]
+[Rendering]
 
-; 目标帧率。
-; 超过 60 不会让画面更顺滑，只会让游戏跑得更快。
+; 红魔乡（th06）的精灵绘制在把位置交给 D3D 之前会把精灵中心四舍五入到整像素，
+; 圆形弹、自机弹这些没有 SET_AUTO_ROTATE 的精灵因此只能按整像素移动：
+; 补帧额外帧算出来的分数位置会在这一步被吃掉，连续几个额外帧看起来仍是同一个像素。
 ;
-; Target framerate of the game.
-; Going above 60 doesn't make the game any smoother, it just makes it faster.
+; 打开后取消这两处取整（两条 frndint 换成 NOP），0.5 像素的中心补偿照旧保留。
+; 只改最终送给 D3D 的矩阵平移量：子弹位置、速度、碰撞、擦弹、随机数、计时器与录像数据都不受影响，
+; 与 Interpolation 无关（纯 60Hz 下同样生效）。
+; 文字、HUD、自机、敌人这些不在子弹图集里的精灵，在绘制入口仍按原样取整，保持原来的像素对齐。
+; 目前实现于 th06；遇到不匹配的可执行文件会跳过并在控制台说明原因。
 ;
-; 默认 / Default: 60
-GameFPS = 60
+; The sprite drawing in EoSD (th06) rounds a sprite's centre to whole pixels before it hands the
+; position to D3D, so the round bullets and the player's own shots - every sprite without
+; SET_AUTO_ROTATE - can only move a whole pixel at a time: the fractional positions the extra
+; presentations extrapolate to are thrown away there, and several of them in a row look like the
+; same picture.
+;
+; On, that rounding is removed (two frndint instructions become NOPs) and the half-pixel shift for
+; the pixel centre stays. Only the matrix translation handed to D3D changes: bullet positions,
+; speeds, collision, grazing, random numbers, timers and replay data are untouched, and this works
+; independently of Interpolation (the 60hz picture changes too).
+; The small bullet sprites also get a texture of their own, so a sample that strays past a sprite's
+; edge is clamped to that edge instead of reading the sprite next door.
+; Sprites outside the bullet atlases - text, the HUD, the player, the enemies - are still rounded
+; at the entry of the draw, so they keep the alignment they had. Currently implemented for th06; an executable that does
+; not match is skipped with a note in
+; the console.
+;
+; 默认 / Default: 1
+FixBulletPixelSnapping = 1
 
 ; 补帧（动态平滑）：在游戏自己的帧之间多画几帧，游戏保持自己的帧率，但呈现得更频繁。
 ;
@@ -75,9 +103,8 @@ GameFPS = 60
 ; 画出来之后再立刻还原，所以游戏自己的逻辑和随机数完全不受影响。这里没有保存上一帧、也没有做
 ; 反向插值——是单向的向前外推（extrapolation），不是常见的双向插值。
 ;
-; 目前对东方红魔乡（th06）、东方妖妖梦（th07）、东方永夜抄（th08）、东方风神录（th10）、东方地灵殿（th11）、东方星莲船（th12）、东方神灵庙（th13）、东方辉针城（th14）、东方绀珠传（th15）、
-; 东方天空璋（th16）、东方鬼形兽（th17）、东方虹龙洞（th18）、东方兽王园（th19）与东方锦上京（th20）生效：
-; 子弹、自机本体（含子机/option 与自机弹）、直线激光会被外推；敌人本体不做，曲线激光不做。
+; 目前对东方红魔乡（th06）、东方妖妖梦（th07）、东方永夜抄（th08）、东方文花帖（th09.5）、东方风神录（th10）、东方地灵殿（th11）、东方星莲船（th12）、东方神灵庙（th13）、东方辉针城（th14）、东方绀珠传（th15）、
+; 东方天空璋（th16）、东方鬼形兽（th17）、东方虹龙洞（th18）、东方兽王园（th19）与东方锦上京（th20）生效。
 ; ShowOverlay 勾了「帧率」这一项时，会显示实际呈现率（每秒呈现多少次）。
 ;
 ; 取值：0 关闭；1 补到显示屏刷新率（144hz 显示器就呈现 144fps，60fps 逻辑则是每帧 2/3 次交替）；-1 取显示屏刷新率里游戏帧率的最大整数倍（间隔最均匀）；
@@ -91,11 +118,6 @@ GameFPS = 60
 ; drawn, and put back again, so the game's own logic and its random numbers never see it. No
 ; previous frame is kept and nothing is interpolated backwards - this is forward extrapolation.
 ;
-; Touhou 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 and 20 for now: their bullets, the
-; player itself (with its options or orbs and its shots) and the straight lasers are extrapolated;
-; the enemies aren't interpolated and the curve lasers are left alone. When ShowOverlay asks for the
-; rate readout, the rate the frames are actually presented at is shown as well.
-;
 ; 0: off, 1: present at the display's own refresh rate (a 144hz display shows 144fps, which for
 ; 60fps logic is 2 and 3 presentations a frame alternating), -1: pick the largest whole multiple of
 ; the game's frame rate the display can show (evenly spaced presentations),
@@ -108,6 +130,35 @@ GameFPS = 60
 ;
 ; 默认 / Default: 1
 Interpolation = 1
+
+; 上面的 Interpolation 是总开关。以下几个开关只在总开关开启时，选择要外推的内容。
+; The Interpolation setting above is the master switch. The following switches select what is
+; extrapolated while the master switch is on.
+;
+; 是否补帧自机本体（包括子机/option、orb 等跟随自机的东西）。
+; Whether to extrapolate the player body (including options, orbs and other things that follow it).
+;
+; 是否补帧自机子弹。
+; Whether to extrapolate the player's own shots.
+;
+; 是否补帧敌弹和直线激光。
+; Whether to extrapolate enemy bullets and straight lasers.
+;
+; 默认 / Default: 1
+    PlayerBody = 1
+    PlayerShots = 1
+    BulletsAndLasers = 1
+
+[Option]
+
+; 目标帧率。
+; 超过 60 不会让画面更顺滑，只会让游戏跑得更快。
+;
+; Target framerate of the game.
+; Going above 60 doesn't make the game any smoother, it just makes it faster.
+;
+; 默认 / Default: 60
+GameFPS = 60
 
 ; 是否允许控制 replay 回放速度（会覆盖游戏自带的回放速度控制，如果有的话）。
 ;
@@ -218,6 +269,19 @@ DebugConsole = 0
 ;
 ; 默认 / Default: 0
 DebugWait = 0
+
+; 修复东方妖妖梦（th07）左下角当前樱点超过 999999 后的显示和排版异常，
+; 以及 Boss 符卡 Bonus 达到 100000000 以上时精灵数字只按 8 位拆分、导致越界精灵混入的问题。
+; 只调整 HUD 显示，不改变实际樱点、Bonus、得分、结算或 replay 数据；仅对 th07 生效。
+;
+; Fix the current Cherry layout above 999,999 and the Spell Card Bonus readout at 100,000,000
+; and above in Perfect Cherry Blossom (th07). The original Bonus HUD only splits eight sprite
+; digits, so a ninth digit produces an out-of-range sprite index and mixes unrelated HUD artwork.
+; This only changes HUD display code; gameplay values, results and replay data are unchanged.
+; th07 only.
+;
+; 默认 / Default: 1
+FixTH07Cherry&BonusDisplay = 1
 
 ; 修掉红魔乡/妖妖梦里「窗口不在前台时 DirectInput 拒绝给状态，游戏却只把『设备丢失』当失败，
 ; 于是继续读一份从没被填过的缓冲区」造成的乱按键、按键卡住（相当于 vpatch 的 FixInputGlitching；
@@ -358,6 +422,7 @@ AlwaysOnTop = 0
 ;
 ; 默认 / Default: 0
 CoverTaskbar = 0
+
 ```
 
 ## GameOverride

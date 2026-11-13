@@ -45,6 +45,17 @@ public:
 	static BOOL FixPracModeReplayCrash;
 	static BOOL FixInputGlitching;
 
+	// Whether the game's sprite draw should keep the sprite's real (fractional) position instead of
+	// rounding it to whole pixels before handing it to D3D as the world matrix's translation. That
+	// rounding is why the extra presentations can move a sprite only from one pixel to the next: the
+	// fractional positions they extrapolate to are thrown away again when the sprite is drawn.
+	//
+	// EoSD's version of this is AnmManager::Draw2, which the round bullets, the player's shots and
+	// whatever else an Anm script draws without SET_AUTO_ROTATE go through; text, the HUD, the
+	// player and the rotating bullets use Draw, DrawNoRotation or Draw3 and keep their alignment.
+	// Later games are meant to take the same switch. Currently implemented for th06.
+	static BOOL FixBulletPixelSnapping;
+
 	// Whether the patch should replace the frame rate the game measures for itself, the way vpatch's
 	// CalcFPS=1 does. Touhou 6, 7 and 8 count their own draw passes and work their frame rate out of
 	// them over half second windows, and the ratio of that to half a second of frames is the

@@ -25,6 +25,7 @@ static bool th6_interpolating;
 static bool th6_drew_frame;
 static void th6_begin_game_draw();
 static void th6_draw_pass();
+static void th6_collect_bullet_sprites();
 
 static unsigned int th6_last_extra_presentations;
 
@@ -37,6 +38,8 @@ int __fastcall th6_update_calc_chain_hook() {
     // The device only exists after the game initialises D3D, so install lazily (idempotent).
     D3D8Hook::Install(engine->d3d8_device);
     Limiter::Tick();
+    // Notes which sprites the bullet manager draws, so only those get a texture of their own
+    th6_collect_bullet_sprites();
 
     auto ret = CChainManager__UpdateCalcChain(CChainManager::Instance);
     if (ret != 0 && ret != -1 && engine->config.frameskip <= (int)CWindowManager::Instance->frames_skipped) {
@@ -104,6 +107,319 @@ static __declspec(naked) void th6_fps_hook() {
     __asm { jmp eax }
 }
 
+// AnmManager::Draw2 (0x433590) takes the sprite's position from the AnmVm - a float - and rounds
+// it to whole pixels on the way to the world matrix: x is loaded, frndint'd and stored back, and
+// the rounded value becomes the matrix's translation (x - 0.5f, and -y + 0.5f for D3D's y axis).
+// Every sprite drawn through Draw2 lands on that grid: the round bullets, the player's own shots,
+// anything an Anm script draws without SET_AUTO_ROTATE.
+//
+// The rounding is one instruction per axis (0x433658 for x, 0x433693 for y, both `frndint`), and
+// the half-pixel shift after it is what puts a sprite's centre on a pixel centre. Replacing those
+// two instructions with NOPs leaves the value they loaded alone, so the matrix gets the float
+// position with the same half-pixel shift. Nothing else in Draw2 turns a coordinate into an
+// integer (the vertices are computed from the matrix), so the whole path follows the float.
+//
+// Draw (0x432CC0), DrawNoRotation (0x432AD0) and Draw3 (0x433150) stay as they are. Draw3 rounds
+// the sprite's centre and its half sizes too, and then rotates the corners off that centre, so its
+// corners are fractional either way.
+static void th6_install_subpixel_sprites() {
+    // The load in front of each frndint tells the two axes apart and catches a build where the
+    // rounding sits somewhere else; the whole set is checked before anything is written.
+    struct Site {
+        DWORD address;
+        BYTE loaded[6];
+        const char *axis;
+    };
+    static const Site sites[] = {
+        { 0x00433658, { 0xD9, 0x85, 0x3C, 0xFF, 0xFF, 0xFF }, "x" }, // fld [ebp-0C4h]
+        { 0x00433693, { 0xD9, 0x85, 0x34, 0xFF, 0xFF, 0xFF }, "y" }, // fld [ebp-0CCh]
+    };
+    static const BYTE frndint[] = { 0xD9, 0xFC };
+
+    for (unsigned int i = 0; i < sizeof(sites) / sizeof(sites[0]); i++) {
+        const BYTE *site = (const BYTE *)sites[i].address;
+        if (memcmp(site - sizeof(sites[i].loaded), sites[i].loaded, sizeof(sites[i].loaded)) != 0 ||
+            memcmp(site, frndint, sizeof(frndint)) != 0) {
+            printf("th06 Draw2 %s rounding at 0x%x doesn't look like a known one, skipping!\n",
+                sites[i].axis, sites[i].address);
+            return;
+        }
+    }
+
+    BYTE nop[] = { 0x90, 0x90 };
+    for (unsigned int i = 0; i < sizeof(sites) / sizeof(sites[0]); i++)
+        patch_bytes(sites[i].address, nop, sizeof(nop));
+    printf("th06 subpixel sprite positions installed (Draw2 keeps the fractional centre)\n");
+}
+
+// ---------------------------------------------------------------------------
+// Per-sprite textures for the bullets
+// ---------------------------------------------------------------------------
+//
+// A bullet's rectangle sits edge to edge with its neighbours in etama3/etama4, so a fractional
+// draw position makes the edge samples reach into the sprite next door. The equivalent of clamping
+// the sample to the sprite's own rectangle is to give that sprite a texture of its own: the UV then
+// runs over the whole texture, and D3DTADDRESS_CLAMP pins anything that strays past an edge to that
+// edge's texel. Nothing is squeezed and nothing moves.
+//
+// Only the sprites the bullet manager actually draws get a texture; everything else keeps using the
+// atlas exactly as before. The atlas itself is left alone and never released.
+static const unsigned int th6_sprite_entry_size = 0x38;
+static const unsigned int th6_sprite_entries = 2048;
+static const unsigned int th6_anm_textures_offset = 0x1C110;
+static const unsigned int th6_texture_entries = 264;
+static const unsigned int th6_bt_slots = 640;        // MAX_ENEMY_BULLETS
+static const unsigned int th6_bt_size = 0x5C4;       // sizeof(Bullet)
+static const unsigned int th6_bt_state_offset = 0x5BE;
+static unsigned char* th6_bt_manager = (unsigned char*)0x005A5FF8;
+
+static IDirect3DTexture8* th6_bullet_texture[th6_sprite_entries];
+static bool th6_bullet_sprite[th6_sprite_entries];
+static bool th6_bullet_texture_failed[th6_sprite_entries];
+static bool th6_bullet_atlas[th6_texture_entries];
+
+// The bullet manager only hands out the vms it draws itself. Sprites that belong to the same
+// atlas are pulled in as well: a ring bullet is a circle plus a ring, and the ring can sit in a
+// slot the manager does not reference directly, which is exactly where the streaking survived.
+static void th6_collect_bullet_sprites() {
+    unsigned char* manager = *(unsigned char**)0x006D4588;
+    if (manager == nullptr)
+        return;
+
+    unsigned char* bullets = th6_bt_manager + 0x5600;
+    for (unsigned int i = 0; i < th6_bt_slots; i++) {
+        unsigned char* bullet = bullets + i * th6_bt_size;
+        if (*(unsigned short*)(bullet + th6_bt_state_offset) == 0)
+            continue;
+        for (unsigned int slot = 1; slot <= 4; slot++) {
+            unsigned char* sprite = *(unsigned char**)(bullet + 0x110 * slot + 0xC0);
+            if (sprite == nullptr)
+                continue;
+            unsigned int offset = (unsigned int)(sprite - manager);
+            if (offset >= th6_sprite_entries * th6_sprite_entry_size)
+                continue;
+            if (offset % th6_sprite_entry_size != 0)
+                continue;
+            const unsigned int index = offset / th6_sprite_entry_size;
+            const int texture_index = *(int*)sprite;
+            if (texture_index < 0 || (unsigned int)texture_index >= th6_texture_entries)
+                continue;
+            th6_bullet_sprite[index] = true;
+            th6_bullet_atlas[texture_index] = true;
+        }
+    }
+
+    // Second pass: only the small sprites of that atlas (the ring bullet's circle and the ring
+    // itself, both 16 pixels or less). The large bullets keep using the atlas as before.
+    for (unsigned int i = 0; i < th6_sprite_entries; i++) {
+        unsigned char* sprite = manager + i * th6_sprite_entry_size;
+        const int texture_index = *(int*)sprite;
+        if (texture_index < 0 || (unsigned int)texture_index >= th6_texture_entries)
+            continue;
+        if (!th6_bullet_atlas[texture_index])
+            continue;
+        const float width = *(float*)(sprite + 0x30);
+        const float height = *(float*)(sprite + 0x2C);
+        if (width <= 0.0f || height <= 0.0f || width > 16.0f || height > 16.0f)
+            continue;
+        th6_bullet_sprite[i] = true;
+    }
+}
+
+static IDirect3DTexture8* th6_bullet_texture_for(unsigned char* manager, unsigned char* sprite) {
+    const int texture_index = *(int*)sprite;
+    if (texture_index < 0 || (unsigned int)texture_index >= th6_texture_entries)
+        return nullptr;
+
+    IDirect3DTexture8* atlas = *(IDirect3DTexture8**)(manager + th6_anm_textures_offset + texture_index * 4);
+    if (atlas == nullptr)
+        return nullptr;
+
+    const int width = (int)(*(float*)(sprite + 0x30) + 0.5f);
+    const int height = (int)(*(float*)(sprite + 0x2C) + 0.5f);
+    const int left = (int)(*(float*)(sprite + 0x04) + 0.5f);
+    const int top = (int)(*(float*)(sprite + 0x08) + 0.5f);
+    if (width <= 0 || height <= 0 || width > 256 || height > 256)
+        return nullptr;
+
+    D3DSURFACE_DESC description;
+    if (atlas->GetLevelDesc(0, &description) != D3D_OK)
+        return nullptr;
+
+    unsigned int bpp;
+    switch (description.Format) {
+    case D3DFMT_A8R8G8B8:
+    case D3DFMT_X8R8G8B8:
+        bpp = 4;
+        break;
+    case D3DFMT_A4R4G4B4:
+    case D3DFMT_A1R5G5B5:
+    case D3DFMT_R5G6B5:
+        bpp = 2;
+        break;
+    default:
+        return nullptr;
+    }
+
+    D3DLOCKED_RECT source_rect;
+    if (atlas->LockRect(0, &source_rect, nullptr, D3DLOCK_READONLY) != D3D_OK)
+        return nullptr;
+
+    IDirect3DTexture8* target = nullptr;
+    if (CEngine::Instance->d3d8_device->CreateTexture(width, height, 1, 0, description.Format,
+            D3DPOOL_MANAGED, &target) != D3D_OK) {
+        atlas->UnlockRect(0);
+        return nullptr;
+    }
+
+    D3DLOCKED_RECT target_rect;
+    if (target->LockRect(0, &target_rect, nullptr, 0) != D3D_OK) {
+        atlas->UnlockRect(0);
+        target->Release();
+        return nullptr;
+    }
+
+    for (int y = 0; y < height; y++) {
+        const int sy = top + y;
+        if (sy < 0 || sy >= (int)description.Height)
+            continue;
+        unsigned char* source_row = (unsigned char*)source_rect.pBits + sy * source_rect.Pitch;
+        unsigned char* target_row = (unsigned char*)target_rect.pBits + y * target_rect.Pitch;
+        for (int x = 0; x < width; x++) {
+            const int sx = left + x;
+            if (sx < 0 || sx >= (int)description.Width)
+                continue;
+            memcpy(target_row + x * bpp, source_row + sx * bpp, bpp);
+        }
+    }
+
+    atlas->UnlockRect(0);
+    target->UnlockRect(0);
+    return target;
+}
+
+static void th6_bind_bullet_texture(unsigned char* vm) {
+    unsigned char* manager = *(unsigned char**)0x006D4588;
+    if (manager == nullptr)
+        return;
+
+    unsigned char* sprite = *(unsigned char**)(vm + 0xC0);
+    if (sprite == nullptr)
+        return;
+
+    const unsigned int offset = (unsigned int)(sprite - manager);
+    if (offset >= th6_sprite_entries * th6_sprite_entry_size || offset % th6_sprite_entry_size != 0)
+        return;
+    const unsigned int index = offset / th6_sprite_entry_size;
+    if (!th6_bullet_sprite[index])
+        return;
+
+    if (th6_bullet_texture[index] == nullptr) {
+        if (th6_bullet_texture_failed[index])
+            return;
+        th6_bullet_texture[index] = th6_bullet_texture_for(manager, sprite);
+        if (th6_bullet_texture[index] == nullptr) {
+            th6_bullet_texture_failed[index] = true;
+            return;
+        }
+    }
+
+    IDirect3DDevice8* device = CEngine::Instance->d3d8_device;
+    IDirect3DTexture8* texture = th6_bullet_texture[index];
+    device->SetTexture(0, texture);
+    // The whole texture is this one sprite, so the UV rectangle becomes the unit square
+    D3DMATRIX matrix;
+    memset(&matrix, 0, sizeof(matrix));
+    matrix._11 = 1.0f;
+    matrix._22 = 1.0f;
+    matrix._33 = 1.0f;
+    matrix._44 = 1.0f;
+    device->SetTransform(D3DTS_TEXTURE0, &matrix);
+    *(void**)(manager + 0x210B8) = texture; // AnmManager::currentTexture
+}
+
+static __declspec(naked) void th6_bullet_texture_hook() {
+    __asm {
+        pushad
+        mov eax, [ebp + 8]
+        push eax
+        call th6_bind_bullet_texture
+        add esp, 4
+        popad
+        // The instruction the jump displaced, then on with the draw
+        mov ecx, [ebp + 0FFFFFF2Ch]
+        mov eax, 0043387Bh
+        jmp eax
+    }
+}
+
+static void th6_install_bullet_textures() {
+    static const BYTE site[] = { 0x8B, 0x8D, 0x2C, 0xFF, 0xFF, 0xFF };
+    if (memcmp((void*)0x00433875, site, sizeof(site)) != 0) {
+        printf("th06 Draw2 sprite branch at 0x433875 doesn't look like a known one, skipping!\n");
+        return;
+    }
+
+    patch_jmp(0x00433875, th6_bullet_texture_hook);
+
+    // Anything that strays past a sprite's own texture edge is pinned to that edge
+    IDirect3DDevice8* device = CEngine::Instance->d3d8_device;
+    if (device != nullptr) {
+        device->SetTextureStageState(0, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
+        device->SetTextureStageState(0, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
+    }
+    printf("th06 bullet sprites given their own clamped textures\n");
+}
+
+// Draw2 rounds the sprite's centre before it builds the world matrix, and the subpixel patch removes
+// that rounding. Text, the HUD, the player and everything else that is not a bullet still wants it:
+// their positions are whole pixels by design, and letting them drift makes their edges sample
+// outside their own rectangle. The rounding is put back at the entry for every sprite whose atlas
+// never held a bullet, so only the bullet atlases keep the float.
+static void th6_apply_pixel_centres(unsigned char* vm) {
+    unsigned char* manager = *(unsigned char**)0x006D4588;
+    if (manager == nullptr)
+        return;
+
+    unsigned char* sprite = *(unsigned char**)(vm + 0xC0);
+    if (sprite != nullptr) {
+        const int texture_index = *(int*)sprite;
+        if (texture_index >= 0 && (unsigned int)texture_index < th6_texture_entries &&
+            th6_bullet_atlas[texture_index])
+            return;
+    }
+
+    float* pos = (float*)(vm + 0x90);
+    pos[0] = rintf(pos[0]);
+    pos[1] = rintf(pos[1]);
+}
+
+static __declspec(naked) void th6_draw2_entry_hook() {
+    __asm {
+        pushad
+        mov eax, [ebp + 8]
+        push eax
+        call th6_apply_pixel_centres
+        add esp, 4
+        popad
+        // The instruction the jump displaced, then the rest of the prologue
+        sub esp, 0D4h
+        mov eax, 00433599h
+        jmp eax
+    }
+}
+
+static void th6_install_pixel_centre_restore() {
+    static const BYTE original[] = { 0x81, 0xEC, 0xD4, 0x00, 0x00, 0x00 }; // sub esp, 0D4h
+    if (memcmp((void*)0x00433593, original, sizeof(original)) != 0) {
+        printf("th06 Draw2 prologue at 0x433593 doesn't look like a known one, skipping!\n");
+        return;
+    }
+
+    patch_jmp(0x00433593, th6_draw2_entry_hook);
+    printf("th06 pixel centres restored outside the bullet atlases\n");
+}
+
 // The present hook records diagnostics whether interpolation is on or not. Interpolation adds the
 // shot-spawn hook and tells an extra presentation to draw beyond the game's own one.
 static void th6_install_present_hook();
@@ -142,6 +458,11 @@ void th6_install_patches() {
         // Turn that conditional jump into an unconditional one (same idea as vpatch's AlwaysBlt).
         BYTE patch[] = { 0xEB, 0x07 }; // jne 004206F9 -> jmp 004206F9
         patch_bytes(0x004206F0, patch, sizeof(patch));
+    }
+    if (Config::FixBulletPixelSnapping) {
+        th6_install_subpixel_sprites();
+        th6_install_pixel_centre_restore();
+        th6_install_bullet_textures();
     }
     if (Config::CalcFPS) {
         // Replace the frame rate the game measures for itself (see the comment above)

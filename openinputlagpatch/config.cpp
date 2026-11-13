@@ -21,6 +21,7 @@ BOOL Config::FixTH07CherryBonusDisplay = TRUE;
 BOOL Config::FixTH12ScoreDisplay = TRUE;
 BOOL Config::FixPracModeReplayCrash = TRUE;
 BOOL Config::FixInputGlitching = TRUE;
+BOOL Config::FixBulletPixelSnapping = TRUE;
 BOOL Config::CalcFPS = TRUE;
 int Config::Interpolation = 1;
 UINT Config::InterpolationFPS = 0;
@@ -50,11 +51,12 @@ static const char default_global_ini[] =
     "; This file is read before the game folder's openinputlagpatch.ini.\r\n"
     "; If the game folder has its own openinputlagpatch.ini, that file overrides these values.\r\n"
     "\r\n"
-    "[Interpolation]\r\n"
+    "[Rendering]\r\n"
+    "FixBulletPixelSnapping = 1\r\n"
     "Interpolation = 1\r\n"
-    "PlayerBody = 1\r\n"
-    "PlayerShots = 1\r\n"
-    "BulletsAndLasers = 1\r\n"
+    "    PlayerBody = 1\r\n"
+    "    PlayerShots = 1\r\n"
+    "    BulletsAndLasers = 1\r\n"
     "\r\n"
     "[Option]\r\n"
     "GameFPS = 60\r\n"
@@ -90,7 +92,6 @@ static const char default_global_ini[] =
     "\r\n"
     "[Experimental]\r\n"
     "BypassNvidiaD3D8Detour = 0\r\n";
-
 // Builds the global path and creates the file with the defaults if this is the first run.
 static bool ensure_global_config(wchar_t* path, size_t path_count) {
     wchar_t appdata[MAX_PATH] = {};
@@ -147,8 +148,17 @@ static bool ensure_global_config(wchar_t* path, size_t path_count) {
 #define LOAD_SETTING(x) Config::x = (decltype(Config::x))GetPrivateProfileInt(TEXT("Option"), TEXT(#x), (int)Config::x, config_path)
 // Same as LOAD_SETTING, but for the [Window] section (the keys don't match the field names)
 #define LOAD_WINDOW_SETTING(x, key) Config::x = (decltype(Config::x))GetPrivateProfileInt(TEXT("Window"), TEXT(key), (int)Config::x, config_path)
-// Same as LOAD_SETTING, but for the [Interpolation] section (the keys don't match the field names)
-#define LOAD_INTERPOLATION_SETTING(x, key) Config::x = (decltype(Config::x))GetPrivateProfileInt(TEXT("Interpolation"), TEXT(key), (int)Config::x, config_path)
+// The draw-side settings live in [Rendering]. That section used to be called [Interpolation], and a
+// file that still has the old name keeps working: the new one is read first and the old one is the
+// fallback. Absent from both, the value the previous file (or the defaults) left stays.
+static int rendering_setting(const wchar_t* key, int current, const wchar_t* config_path) {
+	int value = (int)GetPrivateProfileInt(TEXT("Rendering"), key, INT_MIN, config_path);
+	if (value != INT_MIN)
+		return value;
+	return (int)GetPrivateProfileInt(TEXT("Interpolation"), key, current, config_path);
+}
+#define LOAD_RENDERING_SETTING(x, key)                                                                                 \
+	Config::x = (decltype(Config::x))rendering_setting(TEXT(key), (int)Config::x, config_path)
 // Same as LOAD_SETTING, but for the [Experimental] section.
 #define LOAD_EXPERIMENTAL_SETTING(x, key) Config::x = (decltype(Config::x))GetPrivateProfileInt(TEXT("Experimental"), TEXT(key), (int)Config::x, config_path)
 
@@ -176,6 +186,14 @@ static void load_config_file(const wchar_t* config_path) {
 	LOAD_SETTING(FixTH12ScoreDisplay);
 	LOAD_SETTING(FixPracModeReplayCrash);
 	LOAD_SETTING(FixInputGlitching);
+	{
+		// Moved from [Option] to [Rendering]; the old spot is still read for files that have it there
+		int value = rendering_setting(TEXT("FixBulletPixelSnapping"), INT_MIN, config_path);
+		if (value == INT_MIN)
+			value = (int)GetPrivateProfileInt(TEXT("Option"), TEXT("FixBulletPixelSnapping"),
+				(int)Config::FixBulletPixelSnapping, config_path);
+		Config::FixBulletPixelSnapping = (BOOL)value;
+	}
 	LOAD_SETTING(CalcFPS);
 	// Interpolation is read as text below, it has more than one form
 	LOAD_SETTING(AlwaysBlt);
@@ -195,9 +213,11 @@ static void load_config_file(const wchar_t* config_path) {
 	// Frame interpolation: "0", "1", "-1", a multiplier, or "*<frame rate>"
 	{
 		wchar_t value[64] = {};
-		GetPrivateProfileStringW(TEXT("Interpolation"), TEXT("Interpolation"), L"\x1", value, 64, config_path);
-		// Older files kept the master switch in [Option]; still read it from there when the new
-		// section does not have one.
+		GetPrivateProfileStringW(TEXT("Rendering"), TEXT("Interpolation"), L"\x1", value, 64, config_path);
+		// Files written before the section was renamed keep it in [Interpolation]; the oldest ones
+		// kept the master switch in [Option].
+		if (wcscmp(value, L"\x1") == 0)
+			GetPrivateProfileStringW(TEXT("Interpolation"), TEXT("Interpolation"), L"\x1", value, 64, config_path);
 		if (wcscmp(value, L"\x1") == 0)
 			GetPrivateProfileStringW(TEXT("Option"), TEXT("Interpolation"), L"\x1", value, 64, config_path);
 		// The sentinel means this file has no Interpolation key: keep what the previous file set.
@@ -217,9 +237,9 @@ static void load_config_file(const wchar_t* config_path) {
 			Config::InterpolationFPS = 60;
 	}
 
-	LOAD_INTERPOLATION_SETTING(InterpolatePlayerBody, "PlayerBody");
-	LOAD_INTERPOLATION_SETTING(InterpolatePlayerShots, "PlayerShots");
-	LOAD_INTERPOLATION_SETTING(InterpolateBulletsAndLasers, "BulletsAndLasers");
+	LOAD_RENDERING_SETTING(InterpolatePlayerBody, "PlayerBody");
+	LOAD_RENDERING_SETTING(InterpolatePlayerShots, "PlayerShots");
+	LOAD_RENDERING_SETTING(InterpolateBulletsAndLasers, "BulletsAndLasers");
 
 	LOAD_EXPERIMENTAL_SETTING(BypassNvidiaD3D8Detour, "BypassNvidiaD3D8Detour");
 }
@@ -280,5 +300,5 @@ bool Config::Load() {
 
 #undef LOAD_SETTING
 #undef LOAD_WINDOW_SETTING
-#undef LOAD_INTERPOLATION_SETTING
+#undef LOAD_RENDERING_SETTING
 #undef LOAD_EXPERIMENTAL_SETTING

@@ -65,7 +65,37 @@ OpenInputLagPatch 通过 ini 配置。补丁启动时会先读取并应用全局
 ; created automatically when it does not exist; a file with the same name in the game directory
 ; overrides the keys it contains.
 
-[Interpolation]
+[Rendering]
+
+; 红魔乡（th06）的精灵绘制在把位置交给 D3D 之前会把精灵中心四舍五入到整像素，
+; 圆形弹、自机弹这些没有 SET_AUTO_ROTATE 的精灵因此只能按整像素移动：
+; 补帧额外帧算出来的分数位置会在这一步被吃掉，连续几个额外帧看起来仍是同一个像素。
+;
+; 打开后取消这两处取整（两条 frndint 换成 NOP），0.5 像素的中心补偿照旧保留。
+; 只改最终送给 D3D 的矩阵平移量：子弹位置、速度、碰撞、擦弹、随机数、计时器与录像数据都不受影响，
+; 与 Interpolation 无关（纯 60Hz 下同样生效）。
+; 文字、HUD、自机、敌人这些不在子弹图集里的精灵，在绘制入口仍按原样取整，保持原来的像素对齐。
+; 目前实现于 th06；遇到不匹配的可执行文件会跳过并在控制台说明原因。
+;
+; The sprite drawing in EoSD (th06) rounds a sprite's centre to whole pixels before it hands the
+; position to D3D, so the round bullets and the player's own shots - every sprite without
+; SET_AUTO_ROTATE - can only move a whole pixel at a time: the fractional positions the extra
+; presentations extrapolate to are thrown away there, and several of them in a row look like the
+; same picture.
+;
+; On, that rounding is removed (two frndint instructions become NOPs) and the half-pixel shift for
+; the pixel centre stays. Only the matrix translation handed to D3D changes: bullet positions,
+; speeds, collision, grazing, random numbers, timers and replay data are untouched, and this works
+; independently of Interpolation (the 60hz picture changes too).
+; The small bullet sprites also get a texture of their own, so a sample that strays past a sprite's
+; edge is clamped to that edge instead of reading the sprite next door.
+; Sprites outside the bullet atlases - text, the HUD, the player, the enemies - are still rounded
+; at the entry of the draw, so they keep the alignment they had. Currently implemented for th06; an executable that does
+; not match is skipped with a note in
+; the console.
+;
+; 默认 / Default: 1
+FixBulletPixelSnapping = 1
 
 ; 补帧（动态平滑）：在游戏自己的帧之间多画几帧，游戏保持自己的帧率，但呈现得更频繁。
 ;
@@ -115,9 +145,9 @@ Interpolation = 1
 ; Whether to extrapolate enemy bullets and straight lasers.
 ;
 ; 默认 / Default: 1
-PlayerBody = 1
-PlayerShots = 1
-BulletsAndLasers = 1
+    PlayerBody = 1
+    PlayerShots = 1
+    BulletsAndLasers = 1
 
 [Option]
 
