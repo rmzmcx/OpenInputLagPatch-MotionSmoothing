@@ -104,8 +104,9 @@ static __declspec(naked) void th6_fps_hook() {
     __asm { jmp eax }
 }
 
-// Takes over the two present calls of GameWindow::Render (defined below, after the comment that
-// explains what a frame is made of)
+// The present hook records diagnostics whether interpolation is on or not. Interpolation adds the
+// shot-spawn hook and tells an extra presentation to draw beyond the game's own one.
+static void th6_install_present_hook();
 static void th6_install_interpolation();
 
 void th6_install_patches() {
@@ -151,6 +152,7 @@ void th6_install_patches() {
             printf("th06 fps measurement at 0x423F45 doesn't look like a known one, skipping!\n");
         }
     }
+    th6_install_present_hook();
     if (Config::Interpolation != 0 || Config::InterpolationFPS != 0)
         th6_install_interpolation();
 }
@@ -1227,7 +1229,8 @@ static void th6_present_hook() {
     // The extras have nothing to draw in a frame the game didn't (see the frame skip note above), and
     // nothing to add while the presents are being thinned out - that is there to keep a frame rate above
     // the display's from being throttled by its presents, and extras would undo it
-    if (th6_drew_frame && !Limiter::PresentingEveryNthFrame() && Limiter::ShouldPresent()) {
+    if (th6_interpolating && th6_drew_frame && !Limiter::PresentingEveryNthFrame() &&
+        Limiter::ShouldPresent()) {
         double rate = Limiter::PresentRate();
         if (rate > 0.0) {
             static bool rate_printed = false;
@@ -1302,18 +1305,10 @@ static void th6_present_hook() {
     }
 }
 
-// Takes over the two present calls the frame ends with
-static void th6_install_interpolation() {
-    {
-        // call 0x429710, Player::__shoot_bullets (0x429199). Its entry is after the existing shots
-        // have been updated, so this records exactly which slots the spawner may fill this frame.
-        BYTE* site = (BYTE*)0x00429199;
-        if (site[0] == 0xE8 && *(DWORD*)(site + 1) == 0x00429710 - (0x00429199 + 5)) {
-            patch_call(0x00429199, th6_shoot_bullets_hook);
-        } else {
-            printf("th06 player shot spawn at 0x429199 doesn't look like a known one, skipping!\n");
-        }
-    }
+// Takes over the two present calls the frame ends with. These run diagnostics even with interpolation
+// disabled; th6_present_hook adds extra presentations only while th6_interpolating is on.
+static void th6_install_present_hook() {
+    bool installed = false;
     {
         // call 0x420B50, GameWindow_Present (0x420A01) - the exit the fullscreen path takes when the
         // game's own frame skip setting says enough of this frame has been drawn, which then goes round
@@ -1321,6 +1316,7 @@ static void th6_install_interpolation() {
         BYTE* site = (BYTE*)0x00420A01;
         if (site[0] == 0xE8 && *(DWORD*)(site + 1) == 0x00420B50 - (0x00420A01 + 5)) {
             patch_call(0x00420A01, th6_present_hook);
+            installed = true;
         } else {
             printf("th06 present call at 0x420A01 doesn't look like a known one, skipping!\n");
         }
@@ -1331,8 +1327,25 @@ static void th6_install_interpolation() {
         BYTE* site = (BYTE*)0x00420A0B;
         if (site[0] == 0xE8 && *(DWORD*)(site + 1) == 0x00420B50 - (0x00420A0B + 5)) {
             patch_call(0x00420A0B, th6_present_hook);
+            installed = true;
         } else {
             printf("th06 present call at 0x420A0B doesn't look like a known one, skipping!\n");
+        }
+    }
+    if (installed)
+        printf("th06 diagnostics: present hook installed\n");
+}
+
+// Takes over the player shot spawn and enables the extra presentations.
+static void th6_install_interpolation() {
+    {
+        // call 0x429710, Player::__shoot_bullets (0x429199). Its entry is after the existing shots
+        // have been updated, so this records exactly which slots the spawner may fill this frame.
+        BYTE* site = (BYTE*)0x00429199;
+        if (site[0] == 0xE8 && *(DWORD*)(site + 1) == 0x00429710 - (0x00429199 + 5)) {
+            patch_call(0x00429199, th6_shoot_bullets_hook);
+        } else {
+            printf("th06 player shot spawn at 0x429199 doesn't look like a known one, skipping!\n");
         }
     }
     {
