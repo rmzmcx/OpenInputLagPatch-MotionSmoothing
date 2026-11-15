@@ -7,6 +7,58 @@ Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/O
 Only changes that have been tested in-game and confirmed working are listed here, so this file
 is also the record of what has actually been verified rather than just what was attempted.
 
+## 2026-11-16
+
+### Added
+
+- **th10's bullets are drawn at their real position** (`8d97885`)
+
+  th10 does not quantise where the earlier games do. `sub_442670` does carry four `frndint`
+  (`0x00442702`, `0x00442710`, `0x0044271E`, `0x0044272C`), each followed by `fsub 0.5`, and the
+  bullets do reach it through `sub_443080`'s `push 1` - but turning those into NOPs changed nothing
+  at all on screen.
+
+  The quantising is one layer up: `sub_443080` floors the centre-minus-half-extent itself, at
+  `0x00443149` for the x edge and `0x00443216` for the y edge, both through the CRT's `floor`
+  (`0x00452FF0`). By the time the four `frndint` see those vertices they are already whole numbers.
+
+  Both calls become `fld qword [esp]` (the value the same code has just stored there) plus two NOPs,
+  which leaves the edge on its fraction, and the four `frndint` go too for the anchors 1 and 2 that
+  never floored.
+
+  No copy of the sprite, no second texture and no blend change, which is where eagler-touhou's th10
+  port arrives from the other side - the geometry it rewrote never had the floor, so its `submit`
+  only subtracts 0.5. The trade is that an edge landing between two texels still lets the linear
+  filter read into the neighbouring sprite in the atlas; th07 and th08 avoid that with a
+  premultiplied copy that carries its own border, and the same can be added here. The other way
+  round, every sprite with the flag set keeps its fraction, text and HUD included.
+
+  Confirmed in game: the bullets move smoothly and nothing looks wrong.
+
+  Not covered yet: the streaking at an edge - a thin line across the large bullets, a paler ring
+  bullet - comes out of that trade and is left as it is; th07's and th08's copies are the answer if
+  it matters.
+
+### Fixed
+
+- **The player projection counters read as zero in th10, th11 and th12** (`8d97885`)
+
+  Those three reset their body, option and shot counters at the top of the measurement pass and fill
+  them in from the advance pass later in the same frame. The key used to be read at the end of each
+  game's own present hook, after the extras, so the dump saw the filled values; when the export moved
+  into the D3D9 Present hook (`35bece9`) it began reading just before them, and has been reporting
+  zero for a projection that was working all along.
+
+  The three counters are now reset only where they are filled in, so the dump describes the last
+  extra presentation. Counters that describe the pool - shots in flight, option motions a focus hold
+  zeroed, sprites with no movement record - keep their reset in the measurement pass, because that is
+  the pass that fills them.
+
+  Every other game was checked the same way: each counter the dump reads was traced to where it is
+  reset and where it is accumulated, and only these three pair a measurement-pass reset with an
+  advance-pass accumulation. The frame count, the lag samples, the frame rate readouts and the
+  present time table are each written from one place and cannot be caught between halves.
+
 ## 2026-11-15
 
 ### Added
