@@ -6,6 +6,44 @@
 
 只记录已经在游戏里实测确认可用的改动，因此本文件同时也是「哪些修改真正被验证过」的凭证。
 
+## 2026-11-15
+
+### 新增
+
+- **th08 的子弹按真实位置绘制**（`6cde4bc`）
+
+  永夜抄的 `AnmManager::DrawInner` 与妖妖梦同构：`0x00462959`、`0x00462967`、`0x00462975`、
+  `0x00462983` 四条 `frndint`，各跟一条 `fsub 0.5`（常量在 `0x004B847C`），只在 `drawFlags & 1`
+  为真时执行（`0x00462949` 判定），而 `DrawNoRotation`（`0x00462FF0`）传的就是 1。
+
+  这一作多了 `Draw2DNoRound`（`0x00463470`）与 `DrawNoRotationNoRound`（`0x00463800`）两个传 0
+  的入口，所以先要确认子弹走哪一条：`BulletManager::DrawSingleBullet`（`0x00432F20`）把子弹
+  自己的位置写进 vm 之后交给 `AnmManager::Draw2D`（`0x00433057` 调 `0x00463210`），`Draw2D`
+  在 `rotation.z` 为 0 时转到 `DrawNoRotation`（`0x00463233` 调 `0x00462FF0`），最后是
+  `DrawInner(vm, 1)`。两个 NoRound 入口不在子弹的任何一条路上。
+
+  改法与 th07 一致：四条 `frndint` 换 NOP，`DrawInner` 入口挂跳转，非子弹的取整在这里补做；
+  子弹精灵换成预乘副本，四周留两像素透明边框，共享一张 1024×1024 `A8R8G8B8` 图集，小数偏移
+  全部放进 UV；进出子弹段各切一次 `D3DRS_SRCBLEND`。
+
+  判定用结构体常量：`g_BulletManager + 0x1A880` 起是 `bullets[]`，`0x601` 个 × `0x10B8`
+  （前面是 32 个 `0xD44` 的类型模板），`sizeof(AnmVm) = 0x2A4`。一个 Bullet 里五个 vm，本体在
+  头，弹雾在 `+0x2A4`、`+0x548`、`+0x7EC`、`+0xA90`，只有本体参与替换，理由与 th07 相同；
+  旋转路径也不参与。
+
+  与 th07 的两处差别：这一作的精灵自带纹理指针（`AnmLoadedSprite+0x04`），副本不必再去管理器
+  里占纹理槽，只需指向打包图集并改写 `uvStart`/`uvEnd`；缓存另外核对精灵所指的纹理，因为换关
+  时 anm 会重新加载精灵数组，新数组可能落在旧地址上，只比指针会把旧副本交给新精灵。
+
+  图集实测为 `D3DFMT_A4R4G4B4`（诊断 `atlas format 26`），副本因此统一升到八位通道。
+
+  实机确认：视觉正常，没有串图集、变色或缺失。诊断
+  `bullet sprites: 2 cached, 0 last failure, atlas format 26` 说明副本创建成功、没有回退到图集。
+
+  尚未覆盖：这一轮实测补帧是关的（`Interpolation = 0`，诊断 `frames recorded: 0`），验证到的
+  是副本渲染本身没有引入错误，补帧开启下的平滑程度还要再确认一次。边缘变薄与 th07 同源，来自
+  几何本身。
+
 ## 2026-11-14
 
 ### 新增

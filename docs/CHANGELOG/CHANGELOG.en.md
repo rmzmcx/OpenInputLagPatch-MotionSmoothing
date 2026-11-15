@@ -7,6 +7,52 @@ Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/O
 Only changes that have been tested in-game and confirmed working are listed here, so this file
 is also the record of what has actually been verified rather than just what was attempted.
 
+## 2026-11-15
+
+### Added
+
+- **th08's bullets are drawn at their real position** (`6cde4bc`)
+
+  Imperishable Night's `AnmManager::DrawInner` is shaped like Perfect Cherry Blossom's: four
+  `frndint` at `0x00462959`, `0x00462967`, `0x00462975` and `0x00462983`, each followed by
+  `fsub 0.5` (the constant at `0x004B847C`), and the block only runs when `drawFlags & 1` is set
+  (`0x00462949`). `DrawNoRotation` (`0x00462FF0`) is the entry that passes 1.
+
+  This game adds `Draw2DNoRound` (`0x00463470`) and `DrawNoRotationNoRound` (`0x00463800`), both of
+  which pass 0, so the first question was which entry the bullets take.
+  `BulletManager::DrawSingleBullet` (`0x00432F20`) copies the bullet's own position into the vm and
+  hands it to `AnmManager::Draw2D` (`0x00433057` calls `0x00463210`); `Draw2D` branches to
+  `DrawNoRotation` when `rotation.z` is 0 (`0x00463233` calls `0x00462FF0`), which ends in
+  `DrawInner(vm, 1)`. Neither NoRound entry is on any path the bullet manager takes.
+
+  The change is th07's: the four `frndint` become NOPs, a jump at the head of `DrawInner` rounds for
+  everything that is not a bullet, and the bullet sprites are drawn from premultiplied copies with
+  two cleared texels around them, shelved into one shared 1024×1024 `A8R8G8B8` texture with the
+  fractional offset in the UV. The blend changes once entering the bullet run and once leaving it.
+
+  The vms are found from structure sizes: `bullets[]` starts at `g_BulletManager + 0x1A880`, `0x601`
+  slots of `0x10B8` (behind 32 type templates of `0xD44`), `sizeof(AnmVm) = 0x2A4`. A slot carries
+  five vms, the bullet at the head and the four spawn effects at `+0x2A4`, `+0x548`, `+0x7EC` and
+  `+0xA90`; only the head is replaced, for the reason th07 excluded the effects. Vms on the rotating
+  path are left alone.
+
+  Two differences from th07. The sprite carries its own texture here (`AnmLoadedSprite+0x04`), so a
+  copy only has to point at the packed texture and rewrite `uvStart`/`uvEnd`; nothing has to be taken
+  out of the manager's texture list. The cache also checks the texture the sprite points at, because
+  the anm manager reloads its sprite arrays on a stage change and a new array can land on an old
+  address - comparing pointers alone would hand an old copy to a new sprite.
+
+  The atlas measures as `D3DFMT_A4R4G4B4` (`atlas format 26` in the diagnostic), so the copies use
+  eight bit channels.
+
+  Confirmed in game: visually correct, with no bleeding from the neighbouring sprites, no colour
+  shift and nothing missing. `bullet sprites: 2 cached, 0 last failure, atlas format 26` says the
+  copies were made and nothing fell back to the atlas.
+
+  Not covered yet: interpolation was off for this run (`Interpolation = 0`, `frames recorded: 0`), so
+  what was verified is that the copies introduce no error of their own; how smooth it looks with the
+  extra presentations still wants one more run. The thinner edge is the same geometry th07 ran into.
+
 ## 2026-11-14
 
 ### Added
