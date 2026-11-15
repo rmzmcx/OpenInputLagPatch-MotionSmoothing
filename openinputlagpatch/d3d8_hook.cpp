@@ -482,6 +482,21 @@ namespace {
 			D3D8Overlay::Instance->Draw();
 	}
 
+	// The diagnostics file is written from here rather than from a game's own present hook: this
+	// runs for every presented frame, so the hotkey works whether or not frame interpolation is on.
+	void check_diag_hotkey() {
+		static bool down = false;
+		const bool pressed = (GetAsyncKeyState('U') & 0x8000) != 0;
+		if (pressed && !down) {
+			DiagDumpFunction dump = get_diag_dump_function(detect_game());
+			if (dump != nullptr) {
+				dump();
+				present_diag_write_into_game_diag();
+			}
+		}
+		down = pressed;
+	}
+
 	HRESULT __stdcall Present_hook(IDirect3DDevice8* device, const RECT* src_rect, const RECT* dst_rect,
 	                               HWND dst_window, const RGNDATA* dirty_region) {
 		if (!Limiter::ShouldPresent())
@@ -500,6 +515,7 @@ namespace {
 		QueryPerformanceCounter(&present_end);
 		present_diag_note_present_duration((uint64_t)present_start.QuadPart,
 		                                   (uint64_t)present_end.QuadPart);
+		check_diag_hotkey();
 
 		// The first completed Present is the first frame safe to expose. th095's startup window is
 		// hidden until this point so device/window setup cannot flash an intermediate frame.

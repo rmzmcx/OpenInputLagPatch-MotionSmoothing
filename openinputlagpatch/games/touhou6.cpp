@@ -1425,10 +1425,9 @@ struct Th6DiagFrame {
 };
 static Th6DiagFrame th6_diag_frames[th6_diag_frames_max];
 static unsigned int th6_diag_count;
-static bool th6_diag_key_down;
 static LARGE_INTEGER th6_diag_perf_freq;
 
-static void th6_diag_dump() {
+void th6_diag_dump() {
     wchar_t path[1024] = {};
     if (!GetModuleFileNameW(NULL, path, MAX_PATH))
         return;
@@ -1615,16 +1614,8 @@ static void th6_present_hook() {
         ++th6_diag_count;
     }
 
-    // U dumps the diagnostics
-    if (GetAsyncKeyState('U') & 0x8000) {
-        if (!th6_diag_key_down) {
-            th6_diag_key_down = true;
-            th6_diag_dump();
-        }
-    } else {
-        th6_diag_key_down = false;
-    }
-}
+}    
+
 
 // Takes over the two present calls the frame ends with. These run diagnostics even with interpolation
 // disabled; th6_present_hook adds extra presentations only while th6_interpolating is on.

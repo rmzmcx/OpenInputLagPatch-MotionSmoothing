@@ -25,7 +25,6 @@ unsigned int record_start;
 uint64_t previous_qpc;
 uint64_t first_qpc;
 uint64_t total_presents;
-bool hotkey_down;
 HWND diagnostic_window;
 
 __declspec(thread) uint64_t pending_duration_start;
@@ -81,10 +80,10 @@ bool write_display_diag() {
     if (slash == nullptr)
         return false;
     slash[1] = L'\0';
-    wcscat_s(path, L"oilp_display_diag.txt");
+    wcscat_s(path, L"oilp_diag.txt");
 
     FILE* file = nullptr;
-    if (_wfopen_s(&file, path, L"w") != 0 || file == nullptr)
+    if (_wfopen_s(&file, path, L"a") != 0 || file == nullptr)
         return false;
 
     LARGE_INTEGER frequency;
@@ -113,7 +112,7 @@ bool write_display_diag() {
     const D3D9PresentInfo present9 = d3d9_get_present_info();
     const DwmSnapshot dwm = query_dwm_timing();
 
-    fprintf(file, "oilp display pipeline diagnostics\n");
+    fprintf(file, "\noilp display pipeline diagnostics\n");
     fprintf(file, "logic fps %.2f, target presentation fps %.2f, limiter display refresh %u\n",
             Limiter::game_fps, Limiter::PresentRate(), Limiter::DisplayRefresh());
     fprintf(file, "window 0x%p, monitor %s, work area %ld,%ld-%ld,%ld\n",
@@ -278,9 +277,14 @@ bool write_display_diag() {
     }
 
     fclose(file);
-    printf("Wrote oilp_display_diag.txt\n");
+    printf("Appended the display diagnostics to oilp_diag.txt\n");
     return true;
 }
+}
+
+// Appends the display pipeline section to the file the game diagnostics just wrote
+void present_diag_write_into_game_diag() {
+    write_display_diag();
 }
 
 void present_diag_set_window(void* window) {
@@ -324,8 +328,4 @@ void present_diag_mark_presentation(uint64_t qpc) {
     if (record_count < present_diag_max_records)
         ++record_count;
 
-    const bool down = (GetAsyncKeyState('U') & 0x8000) != 0;
-    if (down && !hotkey_down)
-        write_display_diag();
-    hotkey_down = down;
 }

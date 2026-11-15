@@ -306,6 +306,450 @@ static void th7_install_display_fixes() {
 // explains what a frame is made of)
 static void th7_install_interpolation();
 
+// ---------------------------------------------------------------------------
+// Bullet pixel snapping
+// ---------------------------------------------------------------------------
+//
+// DrawInner rounds the four quad vertices to whole pixels when bit 0 of its drawFlags is set, and
+// DrawNoRotation passes 1 - so every sprite without a rotation, the round bullets among them, lands
+// on the pixel grid. The fractional positions the interpolation extrapolates to are thrown away
+// there, and consecutive extra presentations show the same pixel.
+//
+// The rounding is skipped for the bullet sprites alone. The bullet manager keeps the templates its
+// sprites come from in bulletTypeTemplates, and those name the atlases; DrawInner leaves the atlases
+// alone and keeps rounding everything else.
+
+// The four frndint inside that block are turned into NOPs, so what is left of it is the half-pixel
+// shift and the copies: every quad comes out at its fractional position, already shifted by the
+// amount the pixel centre needs. Sprites that are not bullets get the rounding done for them at the
+// entry of DrawInner, which leaves their quad where the original block put it.
+
+static int th7_vm_is_bullet(unsigned char* vm) {
+    // Every vmn the bullet manager draws lives inside the manager itself
+    // Only the bullets array. The manager also holds the laser vms, and those must keep drawing the
+    // way the game draws them
+    static const unsigned int base = 0x0062F958;          // g_BulletManager
+    static const unsigned int bullets_start = 0xB8C0;     // after bulletTypeTemplates[16]
+    static const unsigned int bullets_bytes = 0x35AA68;   // 1025 * sizeof(Bullet)
+    static const unsigned int bullet_size = 0xD68;        // sizeof(Bullet)
+    static const unsigned int vm_stride = 0x24C;          // sizeof(AnmVm)
+    const unsigned int address = (unsigned int)vm;
+    if (address < base + bullets_start || address >= base + bullets_start + bullets_bytes)
+        return 0;
+
+    // A bullet carries five vms: the bullet itself at the head, then the four spawn effects. The
+    // effects fade their vertex colour out, and a premultiplied copy of a fading sprite comes out
+    // brighter by exactly that fade - ONE puts colour * alpha in the target, and SRCALPHA used to
+    // put colour * alpha * vertexAlpha there. Only the head of a bullet is the bullet
+    if ((address - (base + bullets_start)) % bullet_size >= vm_stride)
+        return 0;
+
+    // Slots the manager never activated still carry a sprite pointer left over from an earlier
+    // round; their AnmLoadedSprite was never filled in, so the index gives them away
+    unsigned char* sprite = *(unsigned char**)(vm + 0x1E4);
+    if (sprite == nullptr)
+        return 0;
+    const int texture_index = *(int*)sprite;
+    if (texture_index < 0 || (unsigned int)texture_index >= 264)
+        return 0;
+    return 1;
+}
+
+// Same rounding the block used to do: x87 frndint, not the CRT's rintf, so the result matches the
+// original instruction for instruction (and the FPU control word the game leaves behind applies)
+static void th7_round_vertices() {
+    // x of vertices 0 and 1, y of vertices 0 and 2 - the four values the block rounds
+    static const unsigned int values[] = { 0x004B9FA8, 0x004B9FC4, 0x004B9FAC, 0x004B9FE4 };
+    for (unsigned int i = 0; i < 4; i++) {
+        float value = *(float*)values[i];
+        __asm {
+            fld value
+            frndint
+            fstp value
+        }
+        *(float*)values[i] = value;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Subpixel bullets: move the drawn picture, not the sample
+// ---------------------------------------------------------------------------
+//
+// Rounding the position away was the only way to get a quad on a fraction, and a quad on a fraction
+// makes the sampler reach past the sprite's rectangle into the one next to it in the atlas: a thin
+// line across the large bullets, a ring bullet paler than the game draws it. Wrapping a copy of the
+// sprite's own edge around it hides the neighbours, yet the ring bullet comes out short of an edge
+// that way, because a stretched edge is not the picture the game would have drawn.
+//
+// So the sprite is never sampled at a fraction. Its rectangle is copied into a texture of ours,
+// premultiplied, with transparent texels around it, and the whole fractional offset lives in the
+// texture coordinate. Past the edge the sampler blends the sprite against nothing, which is what
+// moving an already drawn picture by a fraction of a pixel does: the picture the game would have
+// drawn at a whole position, shifted, its edge alpha spread over the two pixels it covers.
+//
+// Premultiplied is what makes that exact. Blending colour and alpha apart along an edge hands the
+// target a colour that was never in the sprite. Premultiplied, the shift is a linear combination of
+// (colour * alpha, alpha), and ONE / INVSRCALPHA puts exactly that in the target. The source blend
+// has to be ONE while these sprites go out, so th7_set_src_blend brackets the bullet draws.
+static const unsigned int th7_anm_textures = 0x282AC;  // IDirect3DTexture8 *textures[264]
+static const unsigned int th7_sprite_size = 0x40;      // sizeof(AnmLoadedSprite)
+static const unsigned int th7_sprite_cache_max = 64;
+static const unsigned int th7_texture_count_anm = 264; // MAX_TEXTURES
+
+// One entry per sprite that got a copy: the structure the game hands the vms, and the one that
+// points at the packed texture
+struct Th7BulletSprite {
+    unsigned char* original;
+    unsigned char* copy;
+};
+
+static Th7BulletSprite th7_bullet_sprites[th7_sprite_cache_max];
+static unsigned int th7_bullet_sprite_count;
+static int th7_bullet_sprite_failure; // why the last creation gave up, for the diagnostics
+static int th7_bullet_atlas_format;  // D3DFORMAT of the atlas the sprites come from
+
+// Take a slot that the anm manager is not already using: writing over one of the game's own would
+// hand the sprite somebody else's picture
+static unsigned int th7_take_texture_slot(unsigned char* anm) {
+    for (unsigned int i = th7_texture_count_anm; i-- > 0;) {
+        if (*(IDirect3DTexture8**)(anm + th7_anm_textures + i * 4) == nullptr)
+            return i;
+    }
+    return 0;
+}
+
+// One texture holds every bullet sprite, shelved. A texture per sprite would break the batch at
+// each sprite that is not the same as the one before it; one texture keeps the whole run of bullet
+// draws in a single batch, the way the atlas did
+static const int th7_pack_width = 1024;
+static const int th7_pack_height = 1024;
+static IDirect3DTexture8* th7_pack_texture;
+static unsigned int th7_pack_slot; // the textures[] entry the copies point at
+static int th7_pack_x, th7_pack_y, th7_pack_row;
+
+static int th7_create_pack(unsigned char* anm) {
+    if (th7_pack_texture != nullptr)
+        return 1;
+    IDirect3DDevice8* device = CEngine::Instance->d3d8_device;
+    if (device == nullptr)
+        return 0;
+    if (device->CreateTexture(th7_pack_width, th7_pack_height, 1, 0, D3DFMT_A8R8G8B8,
+                              D3DPOOL_MANAGED, &th7_pack_texture) != D3D_OK) {
+        th7_pack_texture = nullptr;
+        th7_bullet_sprite_failure = 7;
+        return 0;
+    }
+    // Cleared once: the border around a copy has to stay nothing, so a shift blends the sprite
+    // against no colour at all. Nothing writes outside its own block afterwards
+    D3DLOCKED_RECT target;
+    if (th7_pack_texture->LockRect(0, &target, nullptr, 0) == D3D_OK) {
+        for (int y = 0; y < th7_pack_height; y++)
+            memset((unsigned char*)target.pBits + y * target.Pitch, 0, (size_t)th7_pack_width * 4);
+        th7_pack_texture->UnlockRect(0);
+    }
+    th7_pack_slot = th7_take_texture_slot(anm);
+    *(IDirect3DTexture8**)(anm + th7_anm_textures + th7_pack_slot * 4) = th7_pack_texture;
+    return 1;
+}
+
+// One atlas row as eight bit channels with the alpha folded in: (channel / 15) * (alpha / 15) * 255,
+// which stays exact in integers
+static void th7_premultiply_row(unsigned char* dst, const unsigned char* src, int pixels, int format) {
+    if (format == D3DFMT_A4R4G4B4) {
+        for (int i = 0; i < pixels; i++) {
+            const unsigned int v = *(const unsigned short*)(src + i * 2);
+            const unsigned int a = (v >> 12) & 0xF;
+            unsigned char* out = dst + i * 4;
+            out[0] = (unsigned char)(((v & 0xF) * a * 17 + 7) / 15);
+            out[1] = (unsigned char)((((v >> 4) & 0xF) * a * 17 + 7) / 15);
+            out[2] = (unsigned char)((((v >> 8) & 0xF) * a * 17 + 7) / 15);
+            out[3] = (unsigned char)(a * 17);
+        }
+        return;
+    }
+    for (int i = 0; i < pixels; i++) {
+        const unsigned int v = *(const unsigned int*)(src + i * 4);
+        const unsigned int a = (v >> 24) & 0xFF;
+        unsigned char* out = dst + i * 4;
+        out[0] = (unsigned char)(((v & 0xFF) * a + 127) / 255);
+        out[1] = (unsigned char)((((v >> 8) & 0xFF) * a + 127) / 255);
+        out[2] = (unsigned char)((((v >> 16) & 0xFF) * a + 127) / 255);
+        out[3] = (unsigned char)a;
+    }
+}
+
+static unsigned char* th7_build_bullet_sprite(unsigned char* anm, unsigned char* sprite) {
+    const int texture_index = *(int*)sprite;
+    if (texture_index < 0 || (unsigned int)texture_index >= 264) {
+        th7_bullet_sprite_failure = 1;
+        return nullptr;
+    }
+
+    IDirect3DTexture8* atlas = *(IDirect3DTexture8**)(anm + th7_anm_textures + texture_index * 4);
+    if (atlas == nullptr) {
+        th7_bullet_sprite_failure = 2;
+        return nullptr;
+    }
+
+    // The rectangle the sprite's UV actually covers, rather than widthPx/heightPx: those are one
+    // cell of a sheet, so a sprite whose cols or rows is not 1 would be copied only partly
+    const float texture_width = *(float*)(sprite + 0x18);
+    const float texture_height = *(float*)(sprite + 0x14);
+    const int width = (int)((*(float*)(sprite + 0x24) - *(float*)(sprite + 0x1C)) * texture_width + 0.5f);
+    const int height = (int)((*(float*)(sprite + 0x28) - *(float*)(sprite + 0x20)) * texture_height + 0.5f);
+    // The rectangle the UV starts at, so the copy lines up with the samples the draw will take
+    const int left = (int)(*(float*)(sprite + 0x1C) * texture_width + 0.5f);
+    const int top = (int)(*(float*)(sprite + 0x20) * texture_height + 0.5f);
+    if (width <= 0 || height <= 0 || width > 256 || height > 256) {
+        th7_bullet_sprite_failure = 3;
+        return nullptr;
+    }
+
+    D3DSURFACE_DESC description;
+    if (atlas->GetLevelDesc(0, &description) != D3D_OK)
+        return nullptr;
+    th7_bullet_atlas_format = (int)description.Format;
+
+    unsigned int bpp;
+    switch (description.Format) {
+    case D3DFMT_A8R8G8B8:
+    case D3DFMT_X8R8G8B8:
+        bpp = 4;
+        break;
+    case D3DFMT_A4R4G4B4:
+    case D3DFMT_A1R5G5B5:
+    case D3DFMT_R5G6B5:
+        bpp = 2;
+        break;
+    default:
+        th7_bullet_sprite_failure = 4;
+        return nullptr;
+    }
+
+    D3DLOCKED_RECT source;
+    if (atlas->LockRect(0, &source, nullptr, D3DLOCK_READONLY) != D3D_OK)
+        return nullptr;
+
+    // Premultiplied needs eight bit channels: four bit alpha would round the edge away before the
+    // sampler filters it. Two texels of nothing around the copy, more than the one LINEAR reads
+    const int padding = 2;
+    const int block_w = width + padding * 2;
+    const int block_h = height + padding * 2;
+    if (!th7_create_pack(anm)) {
+        atlas->UnlockRect(0);
+        return nullptr;
+    }
+    // Shelf it: left to right along a row, and a new row once this one runs out
+    if (th7_pack_x + block_w > th7_pack_width) {
+        th7_pack_x = 0;
+        th7_pack_y += th7_pack_row;
+        th7_pack_row = 0;
+    }
+    if (th7_pack_y + block_h > th7_pack_height) {
+        atlas->UnlockRect(0);
+        th7_bullet_sprite_failure = 6;
+        return nullptr;
+    }
+    const int packed_x = th7_pack_x;
+    const int packed_y = th7_pack_y;
+    th7_pack_x += block_w;
+    if (block_h > th7_pack_row)
+        th7_pack_row = block_h;
+
+    D3DLOCKED_RECT target;
+    if (th7_pack_texture->LockRect(0, &target, nullptr, 0) != D3D_OK) {
+        atlas->UnlockRect(0);
+        th7_bullet_sprite_failure = 5;
+        return nullptr;
+    }
+    for (int y = 0; y < height; y++) {
+        const int sy = top + y;
+        unsigned char* target_row = (unsigned char*)target.pBits +
+                                    (packed_y + padding + y) * target.Pitch +
+                                    (packed_x + padding) * 4;
+        if (sy < 0 || sy >= (int)description.Height)
+            continue;
+        const unsigned char* source_row = (const unsigned char*)source.pBits + sy * source.Pitch;
+        const int first = left < 0 ? -left : 0;
+        int count = (int)description.Width - left - first;
+        if (count > width)
+            count = width;
+        if (count > 0)
+            th7_premultiply_row(target_row + first * 4, source_row + (left + first) * bpp, count,
+                                (int)description.Format);
+    }
+    atlas->UnlockRect(0);
+    th7_pack_texture->UnlockRect(0);
+
+    unsigned char* copy = (unsigned char*)malloc(th7_sprite_size);
+    if (copy == nullptr) {
+        th7_bullet_sprite_failure = 8;
+        return nullptr;
+    }
+    memcpy(copy, sprite, th7_sprite_size);
+    // The UV covers the copy edge to edge inside its shelf: a whole position lands the samples on
+    // texel centres, a fractional one blends against the cleared border
+    *(int*)copy = (int)th7_pack_slot;
+    *(float*)(copy + 0x14) = (float)th7_pack_height;
+    *(float*)(copy + 0x18) = (float)th7_pack_width;
+    *(float*)(copy + 0x1C) = (float)(packed_x + padding) / (float)th7_pack_width;
+    *(float*)(copy + 0x20) = (float)(packed_y + padding) / (float)th7_pack_height;
+    *(float*)(copy + 0x24) = (float)(packed_x + padding + width) / (float)th7_pack_width;
+    *(float*)(copy + 0x28) = (float)(packed_y + padding + height) / (float)th7_pack_height;
+
+    th7_bullet_sprites[th7_bullet_sprite_count].original = sprite;
+    th7_bullet_sprites[th7_bullet_sprite_count].copy = copy;
+    th7_bullet_sprite_count++;
+    return copy;
+}
+
+static int th7_bullet_blend_one; // the source blend is ONE while this is set
+
+static unsigned char* th7_bullet_sprite(unsigned char* anm, unsigned char* sprite) {
+    for (unsigned int i = 0; i < th7_bullet_sprite_count; i++) {
+        if (th7_bullet_sprites[i].original == sprite)
+            return th7_bullet_sprites[i].copy;
+        // The sprite the vm carries after the first replacement is the copy itself
+        if (th7_bullet_sprites[i].copy == sprite)
+            return sprite;
+    }
+    if (th7_bullet_sprite_count >= th7_sprite_cache_max) {
+        th7_bullet_sprite_failure = 9;
+        return nullptr;
+    }
+    return th7_build_bullet_sprite(anm, sprite);
+}
+
+// AnmManager::Flush, so whatever the batch already holds goes out under the blend it was built with
+typedef void (__thiscall* Th7AnmFlush)(unsigned char* anm);
+
+// Premultiplied copies are drawn with the source blend at ONE. Flushing before the switch keeps the
+// two blends apart, and the pair of calls brackets the bullet draws rather than every sprite
+static void th7_set_src_blend(unsigned char* anm, int one) {
+    if (th7_bullet_blend_one == one)
+        return;
+    IDirect3DDevice8* device = CEngine::Instance->d3d8_device;
+    if (device == nullptr)
+        return;
+    ((Th7AnmFlush)0x0044F5C0)(anm);
+    device->SetRenderState(D3DRS_SRCBLEND, one ? D3DBLEND_ONE : D3DBLEND_SRCALPHA);
+    th7_bullet_blend_one = one;
+}
+
+// The copy carries colour * alpha, so the vertex colour has to carry the same alpha in its own
+// channels. MODULATE multiplies both, and ONE / INVSRCALPHA then puts colour * alpha * vertexAlpha
+// in the target, which is what SRCALPHA put there before the copy existed
+static void th7_premultiply_vertex_color(unsigned char* vm) {
+    const unsigned int flags = *(unsigned int*)(vm + 0x1C0);
+    unsigned int* color = (unsigned int*)(vm + ((flags & 0x10000) ? 0x1BC : 0x1B8));
+    const unsigned int value = *color;
+    const unsigned int a = value >> 24;
+    if (a == 0xFF)
+        return;
+    const unsigned int r = (value >> 16) & 0xFF;
+    const unsigned int g = (value >> 8) & 0xFF;
+    const unsigned int b = value & 0xFF;
+    // A bullet's own draw sets the colour to white and keeps the alpha, so a colour that already
+    // matches the alpha is one this function made on an earlier frame
+    if (r == a && g == a && b == a)
+        return;
+    *color = (a << 24) | (((r * a + 127) / 255) << 16) | (((g * a + 127) / 255) << 8) |
+             ((b * a + 127) / 255);
+}
+
+static __declspec(naked) void th7_drawinner_rounding_hook() {
+    __asm {
+        pushad
+        mov eax, [ebp + 8]
+        push eax
+        call th7_vm_is_bullet
+        add esp, 4
+        test eax, eax
+        jnz is_bullet
+        // Not a bullet: the batch goes back to the straight alpha the rest of the game is drawn
+        // with. Only the no-rotation path rounds at all; the rotating one asks for drawFlags 0 and
+        // the quads it produces are meant to stay fractional
+        mov ecx, [ebp - 28h]
+        push 0
+        push ecx
+        call th7_set_src_blend
+        add esp, 8
+        test byte ptr [ebp + 0Ch], 1
+        jz done
+        call th7_round_vertices
+        jmp done
+    is_bullet:
+        // Only the no-rotation path is the one the game rounds. A rotating bullet has always drawn
+        // its quad on a fraction, so it keeps the atlas: a copy would put a transparent border
+        // where the game has the neighbouring sprite, and its edge would thin out by that much
+        test byte ptr [ebp + 0Ch], 1
+        jz bullet_as_is
+        mov eax, [ebp + 8]
+        mov ecx, [eax + 1E4h]
+        // th7_bullet_sprite(anm, sprite): the rightmost argument goes on the stack first
+        push ecx
+        push dword ptr [ebp - 28h]
+        call th7_bullet_sprite
+        add esp, 8
+        test eax, eax
+        jz bullet_as_is
+        mov ecx, [ebp + 8]
+        mov dword ptr [ecx + 1E4h], eax
+        push ecx
+        call th7_premultiply_vertex_color
+        add esp, 4
+        mov ecx, [ebp - 28h]
+        push 1
+        push ecx
+        call th7_set_src_blend
+        add esp, 8
+        jmp done
+    bullet_as_is:
+        // A rotating bullet, or one no copy could be made for: drawn straight from the atlas, so
+        // the straight alpha comes with it
+        mov ecx, [ebp - 28h]
+        push 0
+        push ecx
+        call th7_set_src_blend
+        add esp, 8
+    done:
+        popad
+        // The two instructions the jump displaced, then on with the shift and the copies
+        mov edx, [ebp + 0Ch]
+        and edx, 1
+        mov eax, 0044F04Fh
+        jmp eax
+    }
+}
+
+static void th7_install_bullet_pixel_snapping() {
+    // mov edx,[ebp+0Ch]; and edx,1
+    static const BYTE site[] = { 0x8B, 0x55, 0x0C, 0x83, 0xE2, 0x01 };
+    if (memcmp((void*)0x0044F049, site, sizeof(site)) != 0) {
+        printf("th07 DrawInner rounding at 0x44F049 doesn't look like a known one, skipping!\n");
+        return;
+    }
+
+    // frndint, the four of them: the shift and the copies that follow stay as they are
+    static const unsigned int rounding[] = { 0x0044F059, 0x0044F067, 0x0044F075, 0x0044F083 };
+    for (unsigned int i = 0; i < 4; i++) {
+        if (*(BYTE*)rounding[i] != 0xD9 || *(BYTE*)(rounding[i] + 1) != 0xFC) {
+            printf("th07 DrawInner frndint at 0x%08X doesn't look like a known one, skipping!\n",
+                   rounding[i]);
+            return;
+        }
+    }
+
+    for (unsigned int i = 0; i < 4; i++) {
+        BYTE nop[2] = { 0x90, 0x90 };
+        patch_bytes(rounding[i], nop, sizeof(nop));
+    }
+    patch_jmp(0x0044F049, th7_drawinner_rounding_hook);
+    // The address mode stays at the game's WRAP: it only matters for a sample outside the copy, and
+    // the cleared border catches every one of those
+    printf("th07 bullet sprites drawn at their fractional position (premultiplied copies)\n");
+}
+
 void th7_install_patches() {
     {
         // Skip the original frame limiter
@@ -355,6 +799,8 @@ void th7_install_patches() {
         // Replace the frame rate the game measures for itself (see the comment above)
         th7_install_fps_measurement();
     }
+    if (Config::FixBulletPixelSnapping)
+        th7_install_bullet_pixel_snapping();
     if (Config::Interpolation != 0 || Config::InterpolationFPS != 0)
         th7_install_interpolation();
 }
@@ -1277,10 +1723,9 @@ struct Th7DiagFrame {
 };
 static Th7DiagFrame th7_diag_frames[th7_diag_frames_max];
 static unsigned int th7_diag_count;
-static bool th7_diag_key_down;
 static LARGE_INTEGER th7_diag_perf_freq;
 
-static void th7_diag_dump() {
+void th7_diag_dump() {
     wchar_t path[1024] = {};
     if (!GetModuleFileNameW(NULL, path, MAX_PATH))
         return;
@@ -1335,6 +1780,12 @@ static void th7_diag_dump() {
     fprintf(file, "lasers: %u in play, %u projected forward, %u scripted angle jump(s) "
                   "ignored (last presentation)\n",
             th7_lasers_in_play, th7_lasers_projected, th7_lasers_angle_jumps);
+    // The bullet sprite cache behind FixBulletPixelSnapping: how many sprites got a copy, why the
+    // last attempt gave up (0 when it did not), and how far the packed texture has been filled
+    fprintf(file, "bullet sprites: %u cached, %d last failure, atlas format %d, pack slot %u, "
+                  "packed %d,%d of %dx%d\n",
+            th7_bullet_sprite_count, th7_bullet_sprite_failure, th7_bullet_atlas_format,
+            th7_pack_slot, th7_pack_x, th7_pack_y, th7_pack_width, th7_pack_height);
     double presents = 0.0;
     double first = 0.0;
     double last = 0.0;
@@ -1409,7 +1860,7 @@ static void th7_take_pending_screenshot() {
 // plain calls to the static GameWindow::Present (0x4345C0), which takes no arguments.
 static void th7_present_hook() {
     th7_last_extra_presentations = 0;
-    if (th7_diag_perf_freq.QuadPart == 0)
+    // The bullet templates point at the atlases their sprites live in; they are set up by the time
         QueryPerformanceFrequency(&th7_diag_perf_freq);
 
     LARGE_INTEGER base;
@@ -1497,16 +1948,8 @@ static void th7_present_hook() {
         ++th7_diag_count;
     }
 
-    // U dumps the diagnostics
-    if (GetAsyncKeyState('U') & 0x8000) {
-        if (!th7_diag_key_down) {
-            th7_diag_key_down = true;
-            th7_diag_dump();
-        }
-    } else {
-        th7_diag_key_down = false;
-    }
-}
+}    
+
 
 // Takes over the two present calls the frame ends with
 static void th7_install_interpolation() {

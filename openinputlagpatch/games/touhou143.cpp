@@ -1084,10 +1084,9 @@ struct Th143DiagFrame {
 };
 static Th143DiagFrame th143_diag_frames[th143_diag_frames_max];
 static unsigned int th143_diag_count;
-static bool th143_diag_key_down;
 static LARGE_INTEGER th143_perf_freq;
 
-static void th143_diag_dump() {
+void th143_diag_dump() {
 	wchar_t path[1024] = {};
 	if (!GetModuleFileNameW(NULL, path, MAX_PATH))
 		return;
@@ -1219,15 +1218,6 @@ static HRESULT th143_present_hook() {
 	for (unsigned int p = 0; p < th143_diag_presents_max; ++p)
 		frame.present_time[p] = p < presents ? present_time[p] : base;
 	++th143_diag_count;
-
-	if (GetAsyncKeyState('U') & 0x8000) {
-		if (!th143_diag_key_down) {
-			th143_diag_key_down = true;
-			th143_diag_dump();
-		}
-	} else {
-		th143_diag_key_down = false;
-	}
 
 	return result;
 }

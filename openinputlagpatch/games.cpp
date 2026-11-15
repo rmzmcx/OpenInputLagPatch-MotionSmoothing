@@ -1,4 +1,4 @@
-﻿// Game detection
+// Game detection
 
 #include <Windows.h>
 #include <vector>
@@ -88,4 +88,29 @@ GamePatchFunction get_patch_function(TouhouGame game) {
 // If replay detection is unimplemented, this will return null
 ReplayCallback get_replay_callback(TouhouGame game) {
 	return game_to_replay_callback[(size_t)game];
+}
+
+// Get the diagnostics writer for a specified game
+// Games whose diagnostics are unimplemented return null
+DiagDumpFunction get_diag_dump_function(TouhouGame game) {
+	switch (game) {
+	case TouhouGame::Th6: return th6_diag_dump;
+	case TouhouGame::Th7: return th7_diag_dump;
+	case TouhouGame::Th8: return th8_diag_dump;
+	case TouhouGame::Th10: return th10_diag_dump;
+	case TouhouGame::Th11: return th11_diag_dump;
+	case TouhouGame::Th12: return th12_diag_dump;
+	case TouhouGame::Th125: return th125_diag_dump;
+	case TouhouGame::Th13: return th13_diag_dump;
+	case TouhouGame::Th143: return th143_diag_dump;
+	case TouhouGame::Th14: return th14_diag_dump;
+	case TouhouGame::Th15: return th15_diag_dump;
+	case TouhouGame::Th16: return th16_diag_dump;
+	case TouhouGame::Th17: return th17_diag_dump;
+	case TouhouGame::Th18: return th18_diag_dump;
+	case TouhouGame::Th185: return th185_diag_dump;
+	case TouhouGame::Th19: return th19_diag_dump;
+	case TouhouGame::Th20: return th20_diag_dump;
+	default: return nullptr;
+	}
 }

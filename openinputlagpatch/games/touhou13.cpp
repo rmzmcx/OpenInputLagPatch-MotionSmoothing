@@ -281,11 +281,10 @@ struct Th13DiagFrame {
 };
 static Th13DiagFrame th13_diag_frames[th13_diag_frames_max];
 static unsigned int th13_diag_count;
-static bool th13_diag_key_down;
 
 static LARGE_INTEGER th13_perf_freq;
 
-static void th13_diag_dump() {
+void th13_diag_dump() {
 	wchar_t path[1024] = {};
 	if (!GetModuleFileNameW(NULL, path, MAX_PATH))
 		return;
@@ -1087,15 +1086,6 @@ static HRESULT th13_present_hook() {
 		for (unsigned int p = 0; p < th13_diag_presents_max; ++p)
 			frame.present_time[p] = p < presents ? present_time[p] : base;
 		++th13_diag_count;
-	}
-
-	if (GetAsyncKeyState('U') & 0x8000) {
-		if (!th13_diag_key_down) {
-			th13_diag_key_down = true;
-			th13_diag_dump();
-		}
-	} else {
-		th13_diag_key_down = false;
 	}
 
 	replay_practice_present_tick();

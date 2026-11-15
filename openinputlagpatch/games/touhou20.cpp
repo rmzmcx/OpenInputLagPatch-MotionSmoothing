@@ -1463,7 +1463,6 @@ struct Th20DiagFrame {
 };
 static Th20DiagFrame th20_diag_frames[th20_diag_frames_max];
 static unsigned int th20_diag_count;
-static bool th20_diag_key_down;
 
 static LARGE_INTEGER th20_perf_freq;
 
@@ -1475,7 +1474,7 @@ static const unsigned int th20_render_sites = 3;
 static unsigned int th20_present_patched;
 static const unsigned int th20_present_sites = 3;
 
-static void th20_diag_dump() {
+void th20_diag_dump() {
 	wchar_t path[1024] = {};
 	if (!GetModuleFileNameW(NULL, path, MAX_PATH))
 		return;
@@ -1779,15 +1778,6 @@ static HRESULT th20_present_hook() {
 	}
 
 	// U dumps the diagnostics
-	if (GetAsyncKeyState('U') & 0x8000) {
-		if (!th20_diag_key_down) {
-			th20_diag_key_down = true;
-			th20_diag_dump();
-		}
-	} else {
-		th20_diag_key_down = false;
-	}
-
 	return result;
 }
 

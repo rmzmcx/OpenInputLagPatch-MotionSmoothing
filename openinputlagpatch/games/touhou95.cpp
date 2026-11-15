@@ -701,7 +701,6 @@ struct Th95DiagFrame {
 
 static Th95DiagFrame th95_diag_frames[th95_diag_frames_max];
 static unsigned int th95_diag_count;
-static bool th95_diag_key_down;
 static LARGE_INTEGER th95_diag_perf_freq;
 
 static unsigned int th95_backbuffer_identity() {
@@ -1414,15 +1413,6 @@ static int th95_present_hook() {
         for (unsigned int p = 0; p < th95_diag_presents_max; ++p)
             frame.present_time[p] = p < presents ? present_time[p] : present_time[0];
         ++th95_diag_count;
-    }
-
-    if (GetAsyncKeyState('U') & 0x8000) {
-        if (!th95_diag_key_down) {
-            th95_diag_key_down = true;
-            th95_diag_dump();
-        }
-    } else {
-        th95_diag_key_down = false;
     }
 
     return result;

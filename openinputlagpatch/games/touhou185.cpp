@@ -863,10 +863,9 @@ struct Th185DiagFrame {
 
 static Th185DiagFrame th185_diag_frames[th185_diag_frames_max];
 static unsigned int th185_diag_count;
-static bool th185_diag_key_down;
 static LARGE_INTEGER th185_perf_freq;
 
-static void th185_diag_dump() {
+void th185_diag_dump() {
 	wchar_t path[1024] = {};
 	if (!GetModuleFileNameW(NULL, path, MAX_PATH))
 		return;
@@ -1051,14 +1050,6 @@ static HRESULT th185_present_hook() {
 		frame.present_time[p] = p < presents ? present_time[p] : base;
 	++th185_diag_count;
 
-	if (GetAsyncKeyState('U') & 0x8000) {
-		if (!th185_diag_key_down) {
-			th185_diag_key_down = true;
-			th185_diag_dump();
-		}
-	} else {
-		th185_diag_key_down = false;
-	}
 	return result;
 }
 

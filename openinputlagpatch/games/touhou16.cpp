@@ -925,11 +925,10 @@ struct Th16DiagFrame {
 };
 static Th16DiagFrame th16_diag_frames[th16_diag_frames_max];
 static unsigned int th16_diag_count;
-static bool th16_diag_key_down;
 
 static LARGE_INTEGER th16_perf_freq;
 
-static void th16_diag_dump() {
+void th16_diag_dump() {
 	wchar_t path[1024] = {};
 	if (!GetModuleFileNameW(NULL, path, MAX_PATH))
 		return;
@@ -1156,15 +1155,6 @@ static HRESULT th16_present_hook() {
 	}
 
 	// U dumps the diagnostics
-	if (GetAsyncKeyState('U') & 0x8000) {
-		if (!th16_diag_key_down) {
-			th16_diag_key_down = true;
-			th16_diag_dump();
-		}
-	} else {
-		th16_diag_key_down = false;
-	}
-
 	replay_practice_present_tick();
 	return result;
 }

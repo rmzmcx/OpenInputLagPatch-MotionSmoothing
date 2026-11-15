@@ -4,6 +4,9 @@
 
 void present_diag_set_window(void* window);
 
+// Appends the display pipeline section to oilp_diag.txt, after a game wrote its own diagnostics
+void present_diag_write_into_game_diag();
+
 // Records one completed presentation at a QPC timestamp. This is called from
 // overlay_mark_presentation so every D3D8 and D3D9 game uses the same timing source.
 void present_diag_mark_presentation(uint64_t qpc);

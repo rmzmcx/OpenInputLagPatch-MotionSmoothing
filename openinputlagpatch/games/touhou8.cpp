@@ -1190,7 +1190,6 @@ struct Th8DiagFrame {
 };
 static Th8DiagFrame th8_diag_frames[th8_diag_frames_max];
 static unsigned int th8_diag_count;
-static bool th8_diag_key_down;
 static LARGE_INTEGER th8_diag_perf_freq;
 
 // The game's own processing rate measurement over time (see Th8FpsState): what the two halves of
@@ -1230,7 +1229,7 @@ static void th8_lag_sample() {
                              : 0;
 }
 
-static void th8_diag_dump() {
+void th8_diag_dump() {
     wchar_t path[1024] = {};
     if (!GetModuleFileNameW(NULL, path, MAX_PATH))
         return;
@@ -1443,16 +1442,8 @@ static void __fastcall th8_present_hook(void* self) {
             th8_lag_sample();
     }
 
-    // U dumps the diagnostics
-    if (GetAsyncKeyState('U') & 0x8000) {
-        if (!th8_diag_key_down) {
-            th8_diag_key_down = true;
-            th8_diag_dump();
-        }
-    } else {
-        th8_diag_key_down = false;
-    }
-}
+}    
+
 
 // Takes over the draw chain call (to watch what the scene is drawn with and where the tool's frame
 // is) and the present call that follows it

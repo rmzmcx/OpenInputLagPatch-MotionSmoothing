@@ -302,7 +302,6 @@ struct Th12DiagFrame {
 };
 static Th12DiagFrame th12_diag_frames[th12_diag_frames_max];
 static unsigned int th12_diag_count;
-static bool th12_diag_key_down;
 
 static LARGE_INTEGER th12_perf_freq;
 
@@ -310,7 +309,7 @@ static LARGE_INTEGER th12_perf_freq;
 // sprites are
 static void th12_options_dump(FILE* file);
 
-static void th12_diag_dump() {
+void th12_diag_dump() {
 	wchar_t path[1024] = {};
 	if (!GetModuleFileNameW(NULL, path, MAX_PATH))
 		return;
@@ -1172,15 +1171,6 @@ static HRESULT th12_present_hook() {
 		for (unsigned int p = 0; p < th12_diag_presents_max; ++p)
 			frame.present_time[p] = p < presents ? present_time[p] : base;
 		++th12_diag_count;
-	}
-
-	if (GetAsyncKeyState('U') & 0x8000) {
-		if (!th12_diag_key_down) {
-			th12_diag_key_down = true;
-			th12_diag_dump();
-		}
-	} else {
-		th12_diag_key_down = false;
 	}
 
 	return result;

@@ -264,10 +264,26 @@ static bool render_force_ratio_4_3(IDirect3DDevice9* device) {
 	return target_changed;
 }
 
+// The diagnostics file is written from here rather than from a game's own present hook: this runs
+// for every presented frame, so the hotkey works whether or not frame interpolation is on.
+static void check_diag_hotkey() {
+	static bool down = false;
+	const bool pressed = (GetAsyncKeyState('U') & 0x8000) != 0;
+	if (pressed && !down) {
+		DiagDumpFunction dump = get_diag_dump_function(detect_game());
+		if (dump != nullptr) {
+			dump();
+			present_diag_write_into_game_diag();
+		}
+	}
+	down = pressed;
+}
+
 static HRESULT __stdcall Present9_hook(IDirect3DDevice9* device, const RECT* source_rect,
 	const RECT* dest_rect, HWND dest_window, const RGNDATA* dirty_region) {
 	if (!suppress_force_ratio_for_present)
 		render_force_ratio_4_3(device);
+	check_diag_hotkey();
 	return present_unhooked(device, source_rect, dest_rect, dest_window, dirty_region);
 }
 

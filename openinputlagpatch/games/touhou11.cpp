@@ -921,11 +921,10 @@ struct Th11DiagFrame {
 };
 static Th11DiagFrame th11_diag_frames[th11_diag_frames_max];
 static unsigned int th11_diag_count;
-static bool th11_diag_key_down;
 
 static LARGE_INTEGER th11_perf_freq;
 
-static void th11_diag_dump() {
+void th11_diag_dump() {
 	wchar_t path[1024] = {};
 	if (!GetModuleFileNameW(NULL, path, MAX_PATH))
 		return;
@@ -1120,15 +1119,6 @@ static HRESULT th11_present_hook() {
 		for (unsigned int p = 0; p < th11_diag_presents_max; ++p)
 			frame.present_time[p] = p < presents ? present_time[p] : base;
 		++th11_diag_count;
-	}
-
-	if (GetAsyncKeyState('U') & 0x8000) {
-		if (!th11_diag_key_down) {
-			th11_diag_key_down = true;
-			th11_diag_dump();
-		}
-	} else {
-		th11_diag_key_down = false;
 	}
 
 	return result;
