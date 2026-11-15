@@ -45,13 +45,14 @@ is also the record of what has actually been verified rather than just what was 
   The atlas measures as `D3DFMT_A4R4G4B4` (`atlas format 26` in the diagnostic), so the copies use
   eight bit channels.
 
-  Confirmed in game: visually correct, with no bleeding from the neighbouring sprites, no colour
-  shift and nothing missing. `bullet sprites: 2 cached, 0 last failure, atlas format 26` says the
-  copies were made and nothing fell back to the atlas.
+  Confirmed in game: correct in both configurations, with interpolation off and on (60/180Hz, three
+  presentations per frame) - no bleeding from the neighbouring sprites, no colour shift, nothing
+  missing. Two saturated bullet runs with interpolation on (1519 bullets of 2 sprites, 603 bullets of
+  8 sprites) each projected every bullet forward, reported `0 last failure` and `atlas format 26`,
+  and put all 300 frames on three presentations (`average 3.000`, `effective 180.004 presents/s`,
+  `interval max 7.66ms`). The processing rate stayed at 1.0000 throughout.
 
-  Not covered yet: interpolation was off for this run (`Interpolation = 0`, `frames recorded: 0`), so
-  what was verified is that the copies introduce no error of their own; how smooth it looks with the
-  extra presentations still wants one more run. The thinner edge is the same geometry th07 ran into.
+  Not covered yet: the thinner edge is the same geometry th07 ran into.
 
 ## 2026-11-14
 
