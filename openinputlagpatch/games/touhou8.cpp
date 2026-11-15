@@ -105,6 +105,8 @@ spend:
 static void th8_install_interpolation();
 // Replaces the frame rate the game measures for itself (see the comment at its definition)
 static void th8_install_fps_measurement();
+// Draws the bullets at their fractional position (see the comment at its definition)
+static void th8_install_bullet_pixel_snapping();
 
 void th8_install_patches() {
     {
@@ -148,6 +150,8 @@ void th8_install_patches() {
         th8_install_interpolation();
     if (Config::CalcFPS)
         th8_install_fps_measurement();
+    if (Config::FixBulletPixelSnapping)
+        th8_install_bullet_pixel_snapping();
 }
 
 // ---------------------------------------------------------------------------
@@ -1028,6 +1032,464 @@ static void th8_bullets_undo() {
     th8_projected_count = 0;
 }
 
+// ---------------------------------------------------------------------------
+// Bullet pixel snapping
+// ---------------------------------------------------------------------------
+//
+// AnmManager::DrawInner (0x4628B0) rounds its four quad vertices to whole pixels when bit 0 of its
+// drawFlags is set: 0x462949 tests that bit, the four frndint at 0x462959, 0x462967, 0x462975 and
+// 0x462983 round the four values, and 0x46298B..0x4629B5 write them back. DrawNoRotation (0x462FF0)
+// is the entry that passes 1, so every sprite drawn through it lands on the pixel grid.
+//
+// The bullets are among them. BulletManager::DrawSingleBullet (0x432F20) copies the bullet's own
+// position into the VM it is about to draw (0x432F8F..0x432FE3) and hands that VM to
+// AnmManager::Draw2D (0x433057 calls 0x463210); Draw2D takes the DrawNoRotation branch (0x463233)
+// whenever the VM's rotation.z (+0x08) is zero, which is every bullet that does not spin. The two
+// entries that do pass 0 - Draw2DNoRound (0x463470) and DrawNoRotationNoRound (0x463800) - are not
+// on any path the bullet manager takes.
+//
+// So the position the interpolation extrapolates to is thrown away in exactly the place th07's was,
+// and the fix is th07's: the four frndint become NOPs, DrawInner's entry does the rounding for
+// every sprite that is not a bullet, and the bullet sprites are drawn from a premultiplied copy of
+// their own rectangle (see th8_bullet_sprite for why that copy is what keeps the edges right).
+
+static const unsigned int th8_anm_flush = 0x00462E40; // AnmManager::FlushVertexBuffer
+
+// The four values the block rounds, in the order it loads them: x of vertices 0 and 1, y of
+// vertices 0 and 2 (g_QuadVertices is at 0x18BDC98, four vertices of 0x1C bytes)
+static const unsigned int th8_quad_rounded[4] = { 0x018BDC98, 0x018BDCB4, 0x018BDC9C, 0x018BDCD4 };
+
+// AnmVm: pos (+0x208), loadedSprite (+0x224), color1 (+0x1F0), color2 (+0x1F4) and the flags word
+// (+0x1F8, whose bit 17 picks color2 over color1 - 0x462D3F..0x462D60). AnmLoadedSprite: anmIdx
+// (+0x00), texture (+0x04), uvStart (+0x20/+0x24) and uvEnd (+0x28/+0x2C).
+static const unsigned int th8_vm_sprite = 0x224;
+static const unsigned int th8_vm_color1 = 0x1F0;
+static const unsigned int th8_vm_color2 = 0x1F4;
+static const unsigned int th8_vm_flags = 0x1F8;
+static const unsigned int th8_vm_flag_color2 = 0x20000;
+static const unsigned int th8_sprite_size = 0x44;
+
+// The manager's own bullet array: g_BulletManager + 0x1A880 is BulletManager::bullets, 0x601 slots
+// of 0x10B8 bytes, right behind the 32 bullet type templates (32 * 0xD44). A slot holds five AnmVms
+// - the bullet itself at the head, then the four spawn effects at +0x2A4, +0x548, +0x7EC and +0xA90
+// (DrawSingleBullet picks one of them by the bullet's state, 0x432F36..0x432F89) - and only the head
+// is the bullet. A spawn effect fades its vertex colour out, and a premultiplied copy of a fading
+// sprite comes out brighter by exactly that fade, since ONE puts colour * alpha in the target where
+// SRCALPHA put colour * alpha * vertexAlpha.
+static unsigned char* const th8_bullet_manager_base = (unsigned char*)0x00F54E90;
+static const unsigned int th8_bullets_start = 0x1A880;
+static const unsigned int th8_bullets_bytes = 0x6460B8; // 0x601 * sizeof(Bullet)
+static const unsigned int th8_bullet_slot_size = 0x10B8; // sizeof(Bullet)
+static const unsigned int th8_vm_size = 0x2A4;           // sizeof(AnmVm)
+
+static int th8_vm_is_bullet(unsigned char* vm) {
+    const unsigned int offset = (unsigned int)(vm - th8_bullet_manager_base);
+    if (offset < th8_bullets_start || offset >= th8_bullets_start + th8_bullets_bytes)
+        return 0;
+    if ((offset - th8_bullets_start) % th8_bullet_slot_size >= th8_vm_size)
+        return 0;
+
+    // Slots the manager never activated still carry a sprite pointer left over from an earlier
+    // round; the anm index inside it is the one thing a filled-in AnmLoadedSprite always has
+    unsigned char* sprite = *(unsigned char**)(vm + th8_vm_sprite);
+    if (sprite == nullptr)
+        return 0;
+    const int anm_index = *(int*)sprite;
+    if (anm_index < 0 || anm_index >= 256)
+        return 0;
+    return 1;
+}
+
+// The same rounding the block used to do: x87 frndint, not the CRT's rintf, so the result matches
+// the original instruction for instruction (and the FPU control word the game leaves behind
+// applies)
+static void th8_round_vertices() {
+    for (unsigned int i = 0; i < 4; ++i) {
+        float value = *(float*)th8_quad_rounded[i];
+        __asm {
+            fld value
+            frndint
+            fstp value
+        }
+        *(float*)th8_quad_rounded[i] = value;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Subpixel bullets: move the drawn picture, not the sample
+// ---------------------------------------------------------------------------
+//
+// A quad on a fraction makes the sampler reach past the sprite's rectangle into the one next to it
+// in the atlas: a thin line across the large bullets, a ring bullet paler than the game draws it.
+// Wrapping a copy of the sprite's own edge around it hides the neighbours, yet the ring bullet then
+// comes out short of an edge, because a stretched edge is not the picture the game would have drawn.
+//
+// So the sprite is never sampled at a fraction. Its rectangle is copied into a texture of ours,
+// premultiplied, with transparent texels around it, and the whole fractional offset lives in the
+// texture coordinate. Past the edge the sampler blends the sprite against nothing, which is what
+// moving an already drawn picture by a fraction of a pixel does: the picture the game would have
+// drawn at a whole position, shifted, its edge alpha spread over the two pixels it covers.
+//
+// Premultiplied is what makes that exact. Blending colour and alpha apart along an edge hands the
+// target a colour that was never in the sprite. Premultiplied, the shift is a linear combination of
+// (colour * alpha, alpha), and ONE / INVSRCALPHA puts exactly that in the target. The source blend
+// has to be ONE while these sprites go out, so th8_set_src_blend brackets the bullet draws.
+struct Th8BulletSprite {
+    unsigned char* original;
+    unsigned char* copy;
+    void* atlas; // the texture the copy was taken from, so a reloaded anm rebuilds it
+};
+
+static const unsigned int th8_bullet_sprites_max = 128;
+static Th8BulletSprite th8_bullet_sprites[th8_bullet_sprites_max];
+static unsigned int th8_bullet_sprite_count;
+static int th8_bullet_sprite_failure; // why the last creation gave up, for the diagnostics
+static int th8_bullet_atlas_format;   // D3DFORMAT of the atlas the sprites come from
+
+// One texture holds every bullet sprite, shelved. A texture per sprite would break the batch at
+// each sprite that is not the same as the one before it; one texture keeps the whole run of bullet
+// draws in a single batch, the way the atlas did
+static const int th8_pack_width = 1024;
+static const int th8_pack_height = 1024;
+static IDirect3DTexture8* th8_pack_texture;
+static int th8_pack_x, th8_pack_y, th8_pack_row;
+
+static int th8_create_pack() {
+    if (th8_pack_texture != nullptr)
+        return 1;
+    IDirect3DDevice8* device = th8_device();
+    if (device == nullptr)
+        return 0;
+    if (device->CreateTexture(th8_pack_width, th8_pack_height, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED,
+                              &th8_pack_texture) != D3D_OK) {
+        th8_pack_texture = nullptr;
+        th8_bullet_sprite_failure = 7;
+        return 0;
+    }
+    // Cleared once: the border around a copy has to stay nothing, so a shift blends the sprite
+    // against no colour at all. Nothing writes outside its own block afterwards
+    D3DLOCKED_RECT target;
+    if (th8_pack_texture->LockRect(0, &target, nullptr, 0) == D3D_OK) {
+        for (int y = 0; y < th8_pack_height; y++)
+            memset((unsigned char*)target.pBits + y * target.Pitch, 0, (size_t)th8_pack_width * 4);
+        th8_pack_texture->UnlockRect(0);
+    }
+    return 1;
+}
+
+// One atlas row as eight bit channels with the alpha folded in: (channel / 15) * (alpha / 15) * 255,
+// which stays exact in integers
+static void th8_premultiply_row(unsigned char* dst, const unsigned char* src, int pixels, int format) {
+    if (format == D3DFMT_A4R4G4B4) {
+        for (int i = 0; i < pixels; i++) {
+            const unsigned int v = *(const unsigned short*)(src + i * 2);
+            const unsigned int a = (v >> 12) & 0xF;
+            unsigned char* out = dst + i * 4;
+            out[0] = (unsigned char)(((v & 0xF) * a * 17 + 7) / 15);
+            out[1] = (unsigned char)((((v >> 4) & 0xF) * a * 17 + 7) / 15);
+            out[2] = (unsigned char)((((v >> 8) & 0xF) * a * 17 + 7) / 15);
+            out[3] = (unsigned char)(a * 17);
+        }
+        return;
+    }
+    for (int i = 0; i < pixels; i++) {
+        const unsigned int v = *(const unsigned int*)(src + i * 4);
+        const unsigned int a = (v >> 24) & 0xFF;
+        unsigned char* out = dst + i * 4;
+        out[0] = (unsigned char)(((v & 0xFF) * a + 127) / 255);
+        out[1] = (unsigned char)((((v >> 8) & 0xFF) * a + 127) / 255);
+        out[2] = (unsigned char)((((v >> 16) & 0xFF) * a + 127) / 255);
+        out[3] = (unsigned char)a;
+    }
+}
+
+static unsigned char* th8_build_bullet_sprite(unsigned char* sprite) {
+    const int anm_index = *(int*)sprite;
+    if (anm_index < 0 || anm_index >= 256) {
+        th8_bullet_sprite_failure = 1;
+        return nullptr;
+    }
+
+    // The sprite carries the texture it belongs to itself (AnmLoadedSprite+0x04, filled in from
+    // AnmLoaded::textures[entryNumber] by LoadTextureData)
+    IDirect3DTexture8* atlas = *(IDirect3DTexture8**)(sprite + 0x04);
+    if (atlas == nullptr) {
+        th8_bullet_sprite_failure = 2;
+        return nullptr;
+    }
+
+    D3DSURFACE_DESC description;
+    if (atlas->GetLevelDesc(0, &description) != D3D_OK) {
+        th8_bullet_sprite_failure = 10;
+        return nullptr;
+    }
+    th8_bullet_atlas_format = (int)description.Format;
+
+    // The rectangle the sprite's UV covers, taken from the UV and the atlas itself: LoadSprite
+    // divides the pixel rectangle by the texture's size to get the UV, so this is that division
+    // undone. Not widthPx/heightPx, which are one cell of a sheet for a sprite with cols or rows
+    const float atlas_width = (float)description.Width;
+    const float atlas_height = (float)description.Height;
+    const int left = (int)(*(float*)(sprite + 0x20) * atlas_width + 0.5f);
+    const int top = (int)(*(float*)(sprite + 0x24) * atlas_height + 0.5f);
+    const int width = (int)((*(float*)(sprite + 0x28) - *(float*)(sprite + 0x20)) * atlas_width + 0.5f);
+    const int height = (int)((*(float*)(sprite + 0x2C) - *(float*)(sprite + 0x24)) * atlas_height + 0.5f);
+    if (width <= 0 || height <= 0 || width > 256 || height > 256) {
+        th8_bullet_sprite_failure = 3;
+        return nullptr;
+    }
+
+    unsigned int bpp;
+    switch (description.Format) {
+    case D3DFMT_A8R8G8B8:
+    case D3DFMT_X8R8G8B8:
+        bpp = 4;
+        break;
+    case D3DFMT_A4R4G4B4:
+    case D3DFMT_A1R5G5B5:
+    case D3DFMT_R5G6B5:
+        bpp = 2;
+        break;
+    default:
+        th8_bullet_sprite_failure = 4;
+        return nullptr;
+    }
+
+    D3DLOCKED_RECT source;
+    if (atlas->LockRect(0, &source, nullptr, D3DLOCK_READONLY) != D3D_OK)
+        return nullptr;
+
+    // Premultiplied needs eight bit channels: four bit alpha would round the edge away before the
+    // sampler filters it. Two texels of nothing around the copy, more than the one LINEAR reads
+    const int padding = 2;
+    const int block_w = width + padding * 2;
+    const int block_h = height + padding * 2;
+    if (!th8_create_pack()) {
+        atlas->UnlockRect(0);
+        return nullptr;
+    }
+    // Shelf it: left to right along a row, and a new row once this one runs out
+    if (th8_pack_x + block_w > th8_pack_width) {
+        th8_pack_x = 0;
+        th8_pack_y += th8_pack_row;
+        th8_pack_row = 0;
+    }
+    if (th8_pack_y + block_h > th8_pack_height) {
+        atlas->UnlockRect(0);
+        th8_bullet_sprite_failure = 6;
+        return nullptr;
+    }
+    const int packed_x = th8_pack_x;
+    const int packed_y = th8_pack_y;
+    th8_pack_x += block_w;
+    if (block_h > th8_pack_row)
+        th8_pack_row = block_h;
+
+    D3DLOCKED_RECT target;
+    if (th8_pack_texture->LockRect(0, &target, nullptr, 0) != D3D_OK) {
+        atlas->UnlockRect(0);
+        th8_bullet_sprite_failure = 5;
+        return nullptr;
+    }
+    for (int y = 0; y < height; y++) {
+        const int sy = top + y;
+        if (sy < 0 || sy >= (int)description.Height)
+            continue;
+        unsigned char* target_row = (unsigned char*)target.pBits + (packed_y + padding + y) * target.Pitch +
+                                    (packed_x + padding) * 4;
+        const unsigned char* source_row = (const unsigned char*)source.pBits + sy * source.Pitch;
+        const int first = left < 0 ? -left : 0;
+        int count = (int)description.Width - left - first;
+        if (count > width)
+            count = width;
+        if (count > 0)
+            th8_premultiply_row(target_row + first * 4, source_row + (left + first) * bpp, count,
+                                (int)description.Format);
+    }
+    atlas->UnlockRect(0);
+    th8_pack_texture->UnlockRect(0);
+
+    unsigned char* copy = (unsigned char*)malloc(th8_sprite_size);
+    if (copy == nullptr) {
+        th8_bullet_sprite_failure = 8;
+        return nullptr;
+    }
+    memcpy(copy, sprite, th8_sprite_size);
+    // The UV covers the copy edge to edge inside its shelf: a whole position lands the samples on
+    // texel centres, a fractional one blends against the cleared border
+    *(IDirect3DTexture8**)(copy + 0x04) = th8_pack_texture;
+    *(float*)(copy + 0x20) = (float)(packed_x + padding) / (float)th8_pack_width;
+    *(float*)(copy + 0x24) = (float)(packed_y + padding) / (float)th8_pack_height;
+    *(float*)(copy + 0x28) = (float)(packed_x + padding + width) / (float)th8_pack_width;
+    *(float*)(copy + 0x2C) = (float)(packed_y + padding + height) / (float)th8_pack_height;
+
+    th8_bullet_sprites[th8_bullet_sprite_count].original = sprite;
+    th8_bullet_sprites[th8_bullet_sprite_count].copy = copy;
+    th8_bullet_sprites[th8_bullet_sprite_count].atlas = atlas;
+    th8_bullet_sprite_count++;
+    return copy;
+}
+
+static unsigned char* th8_bullet_sprite(unsigned char* sprite) {
+    for (unsigned int i = 0; i < th8_bullet_sprite_count; i++) {
+        // The sprite the vm carries after the first replacement is the copy itself
+        if (th8_bullet_sprites[i].copy == sprite)
+            return sprite;
+        if (th8_bullet_sprites[i].original == sprite) {
+            // The anm manager frees and reloads its sprite arrays on a stage change, and a reloaded
+            // array can land on the address an old one had. Its texture is what says whether this
+            // is still the sprite the copy was taken from
+            if (th8_bullet_sprites[i].atlas == *(void**)(sprite + 0x04))
+                return th8_bullet_sprites[i].copy;
+            memset(&th8_bullet_sprites[i], 0, sizeof(th8_bullet_sprites[i]));
+            break;
+        }
+    }
+    if (th8_bullet_sprite_count >= th8_bullet_sprites_max) {
+        th8_bullet_sprite_failure = 9;
+        return nullptr;
+    }
+    return th8_build_bullet_sprite(sprite);
+}
+
+static int th8_bullet_blend_one; // the source blend is ONE while this is set
+static unsigned int th8_base_src_blend = D3DBLEND_SRCALPHA;
+
+// AnmManager::FlushVertexBuffer, so whatever the batch already holds goes out under the blend it was
+// built with
+typedef void (__thiscall* Th8AnmFlush)(unsigned char* anm);
+
+// Premultiplied copies are drawn with the source blend at ONE. Flushing before the switch keeps the
+// two blends apart, and the pair of calls brackets the bullet draws rather than every sprite. What
+// the game had is read off the device rather than assumed, so putting it back cannot be wrong
+static void th8_set_src_blend(unsigned char* anm, int one) {
+    if (th8_bullet_blend_one == one)
+        return;
+    IDirect3DDevice8* device = th8_device();
+    if (device == nullptr)
+        return;
+    if (one) {
+        DWORD previous = D3DBLEND_SRCALPHA;
+        device->GetRenderState(D3DRS_SRCBLEND, &previous);
+        th8_base_src_blend = previous;
+    }
+    ((Th8AnmFlush)th8_anm_flush)(anm);
+    device->SetRenderState(D3DRS_SRCBLEND, one ? D3DBLEND_ONE : th8_base_src_blend);
+    th8_bullet_blend_one = one;
+}
+
+// The copy carries colour * alpha, so the vertex colour has to carry the same alpha in its own
+// channels. MODULATE multiplies both, and ONE / INVSRCALPHA then puts colour * alpha * vertexAlpha
+// in the target, which is what SRCALPHA put there before the copy existed
+static void th8_premultiply_vertex_color(unsigned char* vm) {
+    const unsigned int flags = *(unsigned int*)(vm + th8_vm_flags);
+    unsigned int* color = (unsigned int*)(vm + ((flags & th8_vm_flag_color2) ? th8_vm_color2 : th8_vm_color1));
+    const unsigned int value = *color;
+    const unsigned int a = value >> 24;
+    if (a == 0xFF)
+        return;
+    const unsigned int r = (value >> 16) & 0xFF;
+    const unsigned int g = (value >> 8) & 0xFF;
+    const unsigned int b = value & 0xFF;
+    // DrawSingleBullet sets a bullet's colour to white and keeps the alpha every frame
+    // (0x433004..0x433013), so a colour that already matches the alpha is one this function made
+    if (r == a && g == a && b == a)
+        return;
+    *color = (a << 24) | (((r * a + 127) / 255) << 16) | (((g * a + 127) / 255) << 8) | ((b * a + 127) / 255);
+}
+
+static __declspec(naked) void th8_drawinner_rounding_hook() {
+    __asm {
+        pushad
+        mov eax, [ebp + 8]
+        push eax
+        call th8_vm_is_bullet
+        add esp, 4
+        test eax, eax
+        jnz is_bullet
+        // Not a bullet: the batch goes back to the straight alpha the rest of the game is drawn
+        // with, and the rounding this block no longer does is done here instead. Only the
+        // no-rotation path rounds at all; the rotating one asks for drawFlags 0 and the quads it
+        // produces are meant to stay fractional
+        mov ecx, [ebp - 18h]
+        push 0
+        push ecx
+        call th8_set_src_blend
+        add esp, 8
+        test byte ptr [ebp + 0Ch], 1
+        jz done
+        call th8_round_vertices
+        jmp done
+    is_bullet:
+        // Only the no-rotation path is the one the game rounds. A rotating bullet has always drawn
+        // its quad on a fraction, so it keeps the atlas: a copy would put a transparent border
+        // where the game has the neighbouring sprite, and its edge would thin out by that much
+        test byte ptr [ebp + 0Ch], 1
+        jz bullet_as_is
+        mov eax, [ebp + 8]
+        mov ecx, [eax + 224h]
+        // th8_bullet_sprite(sprite): the rightmost argument goes on the stack first
+        push ecx
+        call th8_bullet_sprite
+        add esp, 4
+        test eax, eax
+        jz bullet_as_is
+        mov ecx, [ebp + 8]
+        mov dword ptr [ecx + 224h], eax
+        push ecx
+        call th8_premultiply_vertex_color
+        add esp, 4
+        mov ecx, [ebp - 18h]
+        push 1
+        push ecx
+        call th8_set_src_blend
+        add esp, 8
+        jmp done
+    bullet_as_is:
+        // A rotating bullet, or one no copy could be made for: drawn straight from the atlas, so
+        // the straight alpha comes with it
+        mov ecx, [ebp - 18h]
+        push 0
+        push ecx
+        call th8_set_src_blend
+        add esp, 8
+    done:
+        popad
+        // The two instructions the jump displaced, then on with the shift and the copies
+        mov edx, [ebp + 0Ch]
+        and edx, 1
+        mov eax, 0046294Fh
+        jmp eax
+    }
+}
+
+static void th8_install_bullet_pixel_snapping() {
+    // mov edx,[ebp+0Ch]; and edx,1
+    static const BYTE site[] = { 0x8B, 0x55, 0x0C, 0x83, 0xE2, 0x01 };
+    if (memcmp((void*)0x00462949, site, sizeof(site)) != 0) {
+        printf("th08 DrawInner rounding at 0x462949 doesn't look like a known one, skipping!\n");
+        return;
+    }
+
+    // frndint, the four of them: the shift and the copies that follow stay as they are
+    static const unsigned int rounding[] = { 0x00462959, 0x00462967, 0x00462975, 0x00462983 };
+    for (unsigned int i = 0; i < 4; i++) {
+        if (*(BYTE*)rounding[i] != 0xD9 || *(BYTE*)(rounding[i] + 1) != 0xFC) {
+            printf("th08 DrawInner frndint at 0x%08X doesn't look like a known one, skipping!\n", rounding[i]);
+            return;
+        }
+    }
+
+    for (unsigned int i = 0; i < 4; i++) {
+        BYTE nop[2] = { 0x90, 0x90 };
+        patch_bytes(rounding[i], nop, sizeof(nop));
+    }
+    patch_jmp(0x00462949, th8_drawinner_rounding_hook);
+    // The address mode stays at the game's WRAP: it only matters for a sample outside the copy, and
+    // the cleared border catches every one of those
+    printf("th08 bullet sprites drawn at their fractional position (premultiplied copies)\n");
+}
+
 // The background's colour tint: g_Background is at 0x4E4030, its tint colour at +0x6468 and the
 // "enabled" word at +0x646C. The draw pass applies the tint the ECL set and then resets the colour
 // to 0x80808080 (0x4093be..0x4093dc), so an extra pass would apply the default grey instead of the
@@ -1298,6 +1760,11 @@ void th8_diag_dump() {
             th8_bullets_in_play, th8_bullets_projected);
     fprintf(file, "bullets: the manager's own count says %u (the update's count, taken before it "
                   "turns the finished ones off)\n", th8_bullets_managers_say);
+    // The bullet sprite cache behind FixBulletPixelSnapping: how many sprites got a copy, why the
+    // last attempt gave up (0 when it did not), and how far the packed texture has been filled
+    fprintf(file, "bullet sprites: %u cached, %d last failure, atlas format %d, packed %d,%d of %dx%d\n",
+            th8_bullet_sprite_count, th8_bullet_sprite_failure, th8_bullet_atlas_format, th8_pack_x,
+            th8_pack_y, th8_pack_width, th8_pack_height);
     // The lasers (see their stage 1 comment above): their slots are in the same manager as the
     // bullets, and the flag that says a slot is in use is the game's own
     fprintf(file, "lasers: %u in play, %u projected forward (last presentation)\n", th8_lasers_in_play,
