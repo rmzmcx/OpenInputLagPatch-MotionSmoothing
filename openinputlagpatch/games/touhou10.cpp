@@ -839,10 +839,7 @@ static float th10_player_movement;
 static void th10_player_measure() {
 	++th10_motion_frame;
 	th10_sprites_untracked = 0;
-	th10_body_sprites = 0;
-	th10_option_sprites_moved = 0;
 	th10_options_held = 0;
-	th10_shot_sprites_moved = 0;
 	th10_shots_in_flight = 0;
 
 	// The shots, from the pool the player keeps them in (see th10_player_shots above)
@@ -980,7 +977,9 @@ static PlayerInterpolation::Step th10_player_predicted_step() {
 }
 
 // Moves the player and everything it put on screen t frames ahead of the state the game is in, and
-// remembers what it changed
+// remembers what it changed. The three counters below are reset here rather than in the measurement
+// pass: this is where they are filled in, and the dump reads whatever the last extra presentation
+// left, so that is the run it has to describe.
 static void th10_player_advance(float t) {
 	th10_body_sprites = 0;
 	th10_option_sprites_moved = 0;
@@ -1054,6 +1053,71 @@ static void th10_player_advance(float t) {
 			++th10_shot_sprites_moved;
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Bullet pixel snapping
+// ---------------------------------------------------------------------------
+//
+// The sprite submit every 2D sprite goes through, sub_442670 (0x442670), rounds its four vertices to
+// whole pixels when bit 0 of its draw flags is set: the block at 0x4426FC rounds x of vertices 0 and
+// 1 and y of vertices 0 and 2 with four frndint at 0x442702, 0x442710, 0x44271E and 0x44272C, each
+// followed by fsub 0.5 (0x4700EC) before the four results are written to their pairs. The bullet
+// manager's type 0 sprites go through sub_443080, which passes 1, so a bullet's quad is quantised
+// every frame and the fractional position the extra presentations work out is thrown away there.
+//
+// This does what eagler-touhou's th10 port does (ports/th10/web/cpp/game/AnmRenderer.cpp, `submit`,
+// the `aligned` lambda): the rounding goes, the half-pixel shift and the four stores stay. No copy of
+// the sprite, no second texture, no blend change - the quad keeps the fractional position the game
+// worked out, which is what it would have drawn had it never rounded.
+//
+// The trade is th06's: where a quad edge lands between two texels the linear filter reads past the
+// sprite's own rectangle into its neighbour in the atlas. th07 and th08 pay for a premultiplied copy
+// with a border of its own to keep that out; th10 starts without one, to see the plain port first.
+// 0 until the install runs, then the number of frndint it replaced (4 when it worked), or negative
+// when a site did not look like the known instruction - which the diagnostic reports, so a run that
+// looks unchanged says whether the patch is in at all
+static int th10_pixel_snapping_patched;
+
+static void th10_install_bullet_pixel_snapping() {
+	// sub_443080 - the draw function type 0 sprites go through, the bullets among them - floors the
+	// centre-minus-half-extent itself, before sub_442670 ever sees the quad: 0x443146 and 0x443213
+	// store the value to the stack and 0x443149 / 0x443216 call the CRT's floor (0x452FF0), whose
+	// result becomes the quad's left and top edge. That is where a bullet's position is really
+	// quantised. By the time sub_442670 runs, the vertices are already whole numbers, so removing
+	// its four frndint changes nothing at all - which is exactly what a run with only that patch
+	// showed. Each call is replaced by loading the same value straight back off the stack
+	// (`fld qword ptr [esp]`, three bytes plus two NOPs), which leaves the edge on its fraction.
+	static const unsigned int floor_sites[] = { 0x00443149, 0x00443216 };
+	static BYTE drop_floor[] = { 0xDD, 0x04, 0x24, 0x90, 0x90 }; // fld qword ptr [esp]; nop; nop
+	th10_pixel_snapping_patched = -1;
+	for (unsigned int i = 0; i < 2; i++) {
+		const BYTE* site = (const BYTE*)floor_sites[i];
+		if (site[0] != 0xE8 || *(const DWORD*)(site + 1) != 0x00452FF0 - floor_sites[i] - 5) {
+			printf("th10 floor call at 0x%08X doesn't look like a known one, skipping!\n", floor_sites[i]);
+			return;
+		}
+	}
+
+	// The four frndint of sub_442670, which round what those edges came out as. Kept: they are what
+	// the other anchors (1 and 2, which never floored) still go through, and with the floor gone they
+	// now keep the fraction too.
+	static const unsigned int rounding[] = { 0x00442702, 0x00442710, 0x0044271E, 0x0044272C };
+	for (unsigned int i = 0; i < 4; i++) {
+		if (*(BYTE*)rounding[i] != 0xD9 || *(BYTE*)(rounding[i] + 1) != 0xFC) {
+			printf("th10 sprite rounding at 0x%08X doesn't look like a known one, skipping!\n", rounding[i]);
+			return;
+		}
+	}
+
+	for (unsigned int i = 0; i < 2; i++)
+		patch_bytes(floor_sites[i], drop_floor, sizeof(drop_floor));
+	for (unsigned int i = 0; i < 4; i++) {
+		BYTE nop[2] = { 0x90, 0x90 };
+		patch_bytes(rounding[i], nop, sizeof(nop));
+	}
+	th10_pixel_snapping_patched = 4;
+	printf("th10 sprites drawn at their fractional position (two floor calls and four frndint dropped)\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -1305,6 +1369,43 @@ void th10_diag_dump() {
 	fprintf(file, "frames recorded: %u\n", count);
 	fprintf(file, "bullets: %u in play, %u projected forward (last game frame)\n",
 		th10_bullets_in_play, th10_bullets_moved);
+	// Whether the rounding was dropped, and what the first site holds right now: 4 with two NOPs
+	// there means the sprite submit really is drawing at the fractional position. 0 means the
+	// install never ran, -1 means a site did not look like the known instruction.
+	fprintf(file, "pixel snapping: %d of 4 frndint replaced, 0x442702 now holds %02X %02X, floor at "
+				  "0x443149 now holds %02X %02X %02X\n",
+		th10_pixel_snapping_patched, *(unsigned char*)0x00442702, *(unsigned char*)0x00442703,
+		*(unsigned char*)0x00443149, *(unsigned char*)0x0044314A, *(unsigned char*)0x0044314B);
+	// Which draw function the bullets on the chains are dispatched to: sub_4451C0 picks one of ten
+	// by ([sprite+0x35C] >> 22) & 0xF, and only type 0 ends in `push 1; call sub_442670`, the one the
+	// rounding above belongs to. Alongside it, how many bullets are on a fraction at all - with whole
+	// positions there is nothing for the rounding to take away, and nothing for the patch to fix.
+	{
+		unsigned int types[10] = {};
+		unsigned int live = 0;
+		unsigned int fractional = 0;
+		unsigned char* manager = *(unsigned char**)th10_bullet_manager;
+		if (manager != nullptr) {
+			for (size_t column = 0; column < th10_bullet_columns; ++column) {
+				for (unsigned char* bullet =
+						 *(unsigned char**)((char*)manager + th10_bullet_lists + column * 4);
+					 bullet != nullptr; bullet = *(unsigned char**)(bullet + th10_bullet_next)) {
+					const unsigned int flags = *(unsigned int*)(bullet + 8 + 0x35C);
+					const unsigned int type = (flags >> 22) & 0xF;
+					if (type < 10)
+						types[type]++;
+					const float x = *(float*)(bullet + th10_bullet_position);
+					if (x != (float)(int)x)
+						++fractional;
+					++live;
+				}
+			}
+		}
+		fprintf(file, "bullets: %u on the chains (draw type 0:%u 1:%u 2:%u 3:%u 4:%u 5:%u 6:%u 7:%u "
+					  "8:%u 9:%u), %u on a fraction\n",
+			live, types[0], types[1], types[2], types[3], types[4], types[5], types[6], types[7],
+			types[8], types[9], fractional);
+	}
 	fprintf(file, "lasers: %u in play, %u projected forward (last game frame)\n",
 		th10_lasers_in_play, th10_lasers_projected);
 	fprintf(file, "player: %u body, %u option and %u shot sprite(s) projected (last game frame, %u shot(s) in flight)\n",
@@ -1702,6 +1803,8 @@ void th10_install_patches() {
 		// (the overlay readouts are Config::ShowOverlay's business; see Limiter::Initialize)
 		overlay_set_present_rate_follow_text(true);
 	}
+	if (Config::FixBulletPixelSnapping)
+		th10_install_bullet_pixel_snapping();
 }
 
 FPSTarget th10_replay_callback() {

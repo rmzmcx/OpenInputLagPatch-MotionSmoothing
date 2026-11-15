@@ -365,9 +365,6 @@ static float th11_player_movement;
 static void th11_player_measure() {
 	++th11_motion_frame;
 	th11_sprites_untracked = 0;
-	th11_body_sprites = 0;
-	th11_option_sprites_moved = 0;
-	th11_shot_sprites_moved = 0;
 
 	void* player = *th11_player;
 	if (player == nullptr)

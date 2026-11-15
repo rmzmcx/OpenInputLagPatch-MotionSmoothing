@@ -714,9 +714,6 @@ static void th12_options_dump(FILE* file) {
 static void th12_player_measure() {
 	++th12_motion_frame;
 	th12_sprites_untracked = 0;
-	th12_body_sprites = 0;
-	th12_option_sprites = 0;
-	th12_shot_sprites = 0;
 
 	void* player = *th12_player;
 	if (player == nullptr)
