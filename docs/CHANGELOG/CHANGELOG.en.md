@@ -42,6 +42,46 @@ is also the record of what has actually been verified rather than just what was 
   Not covered yet: the rotating bullets go through `Draw3`, and `BIG_BALL` with the larger bullet
   sprites still draws from the atlas.
 
+- **th07's bullets are drawn at their real position** (`35bece9`)
+
+  Perfect Cherry Blossom's `AnmManager::DrawInner` quantises the same way: four `frndint` at
+  `0x0044F059`, `0x0044F067`, `0x0044F075` and `0x0044F083`, each followed by `fsub 0.5`. Only the
+  `drawFlags & 1` path (`DrawNoRotation`) reaches it; the rotating path never rounded.
+
+  The four `frndint` become NOPs, the half-pixel shift and the vertex copies stay, and a jump at the
+  head of `DrawInner` puts the rounding back for everything that is not a bullet. The bullet atlas
+  packs its rectangles edge to edge as well, so a fractional position reaches into its neighbour: a
+  thin line across the large bullets, a paler ring bullet with a nick out of its edge.
+
+  The edge-copy ring used for th06 is not the answer here. Once the rounding is gone the edge samples
+  against nothing rather than against the neighbour, and stretching the sprite's own edge around it
+  only pulls that edge thin. Instead each bullet sprite's rectangle is premultiplied and copied into
+  one shared 1024×1024 `A8R8G8B8` texture, with two cleared texels around it, and the whole
+  fractional offset goes into the UV. What the sampler blends past the edge is transparent, which is
+  what shifting an already drawn picture by a fraction of a pixel does. Premultiplied makes that
+  exact: `ONE / INVSRCALPHA` puts `colour * alpha` in the target, which is what `SRCALPHA` put there,
+  and the vertex colour carries its own alpha so `vertexAlpha` is not lost.
+
+  The source atlas is `D3DFMT_A4R4G4B4`; four bit alpha premultiplied would round the edge away
+  before it is filtered, so the copies use eight bit channels. The blend changes once on the way into
+  the bullet run and once on the way out, each time after `AnmManager::Flush`, so the two blends
+  never share a batch.
+
+  The test is built on structure sizes rather than guessed addresses: `bullets[]` starts at
+  `g_BulletManager + 0xB8C0`, `sizeof(Bullet) = 0xD68`, `sizeof(AnmVm) = 0x24C`. A bullet carries five
+  vms: the bullet itself at the head and four spawn effects behind it. The effects fade their vertex
+  colour out, and a premultiplied copy of a fading sprite comes out brighter by exactly that fade, so
+  only the head vm is replaced. Vms that rotate are left alone as well; they were never rounded.
+
+  Confirmed in game at 60/180Hz: the ring and large bullets move smoothly, with no lines and no pale
+  edges, the spawn effects keep the brightness the game gives them, and the hit box stops jittering.
+
+  Not covered: a shifted edge pixel really covers a fraction of a pixel, where the original always
+  covered all of one because its position had been quantised, so a side-by-side comparison shows the
+  edge one shade thinner. Alpha test, the rotating path and the spawn effects are ruled out; what is
+  left comes from the geometry itself, and raising the copy resolution would trade it for a different
+  look.
+
 ### Changed
 
 - **The draw-side settings move to `[Rendering]`, with a new `FixBulletPixelSnapping`** (`01085b8`)
@@ -56,6 +96,20 @@ is also the record of what has actually been verified rather than just what was 
   `README.ja.md` had been left at a much older revision and was missing `FixTH12ScoreDisplay`,
   `FixPracModeReplayCrash`, the interpolation sub-switches and this option, and `README.en.md` was
   missing `FixTH07Cherry&BonusDisplay`.
+
+- **The `U` diagnostic export no longer depends on interpolation, and writes one `oilp_diag.txt`** (`35bece9`)
+
+  The `U` key used to be read inside each of the eighteen games, on paths that only run when
+  interpolation is on, so with interpolation off the key did nothing. What people want to look into
+  is usually exactly "why is interpolation not taking effect", and the export depended on the very
+  thing under question.
+
+  The key is now read in the D3D8 and D3D9 Present hooks, which are installed either way. Pressing
+  it calls the game's own diagnostic dump first and then appends the presentation pipeline's own
+  record.
+
+  That record used to go to a separate `oilp_display_diag.txt`. It now follows the game's dump in
+  `oilp_diag.txt`, so one press gives one file instead of two to read side by side.
 
 ## 2026-11-12
 
