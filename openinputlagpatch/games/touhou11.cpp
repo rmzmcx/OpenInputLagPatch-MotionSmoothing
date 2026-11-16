@@ -921,6 +921,10 @@ static unsigned int th11_diag_count;
 
 static LARGE_INTEGER th11_perf_freq;
 
+// Set by th11_install_bullet_pixel_snapping (defined further down): 4 when the four frndint were
+// replaced, -1 when a site did not match. Only the dump reads it.
+static int th11_pixel_snapping_patched;
+
 void th11_diag_dump() {
 	wchar_t path[1024] = {};
 	if (!GetModuleFileNameW(NULL, path, MAX_PATH))
@@ -943,6 +947,13 @@ void th11_diag_dump() {
 	fprintf(file, "frames recorded: %u\n", count);
 	fprintf(file, "bullets: %u in play, %u projected forward (last game frame)\n",
 		th11_bullets_in_play, th11_bullets_moved);
+	// Whether the rounding was dropped, and what the first site holds right now: 4 with two NOPs
+	// there means the sprite submit really is drawing at the fractional position. 0 means the
+	// install never ran, -1 means a site did not look like the known instruction.
+	fprintf(file, "pixel snapping: %d of 4 frndint replaced, 0x44F92A now holds %02X %02X, "
+				  "floor at 0x4520D2 now holds %02X %02X %02X\n",
+		th11_pixel_snapping_patched, *(unsigned char*)0x0044F92A, *(unsigned char*)0x0044F92B,
+		*(unsigned char*)0x004520D2, *(unsigned char*)0x004520D3, *(unsigned char*)0x004520D4);
 	fprintf(file, "player: %u body, %u option and %u shot sprite(s) projected (last game frame)\n",
 		th11_body_sprites, th11_option_sprites_moved, th11_shot_sprites_moved);
 	fprintf(file, "player: %u sprite(s) this frame had no movement record (should stay 0)\n",
@@ -1132,6 +1143,57 @@ static void th11_skip_present_setup(DWORD address, size_t size) {
 	patch_bytes(address, patch, size);
 }
 
+// ---------------------------------------------------------------------------
+// Bullet pixel snapping
+// ---------------------------------------------------------------------------
+//
+// sub_44F880 draws a sprite's four quad vertices and rounds them to whole pixels when bit 0 of its
+// flags argument is set: 0x44F91F tests that bit, 0x44F922 jumps past the block, and the four
+// frndint at 0x44F92A, 0x44F938, 0x44F946 and 0x44F954 each feed an fsub 0.5 that turns the
+// rounded value into a pixel boundary. A bullet reaches this function through sub_4500B0 as draw
+// type 0 (sub_451EF0 picks the draw function by (flags >> 22) & 0xF), and nothing else rounds it:
+// the callers of sub_44F880 never call the CRT's floor, so there is no second layer like th10's.
+//
+// The four frndint become NOPs and the fsub 0.5 stays, so what used to be round(v) - 0.5 becomes
+// v - 0.5, the same quad at its fractional position.
+//
+// No copy of the sprite and no blend change: bullet.anm's main atlas is A8R8G8B8 with an 8-bit
+// antialiased edge (182 alpha levels, a third of them partial), so a sample that crosses the
+// sprite rectangle mixes into that gradient instead of into the neighbour. th07 and th08 needed a
+// premultiplied copy for the same reason th10 and this one do not.
+static void th11_install_bullet_pixel_snapping() {
+	// sub_4520C0 is a floor wrapper: it loads its argument, calls the CRT's floor (0x486590) and
+	// returns the result. sub_44FE30 calls it twice, once for the left edge of the quad and once
+	// for its top edge, which is where a bullet's position is really quantised - by the time the
+	// four frndint below run, the vertices are already whole numbers. Its only two callers are
+	// those, so dropping the call leaves the edges on their fraction everywhere else untouched.
+	// `fld qword ptr [esp]` reloads the value the same code has just stored there.
+	static const unsigned int floor_site = 0x004520D2;
+	static BYTE drop_floor[] = { 0xDD, 0x04, 0x24, 0x90, 0x90 };
+	static const unsigned int rounding[] = { 0x0044F92A, 0x0044F938, 0x0044F946, 0x0044F954 };
+	th11_pixel_snapping_patched = -1;
+	{
+		const BYTE* site = (const BYTE*)floor_site;
+		if (site[0] != 0xE8 || *(const DWORD*)(site + 1) != 0x00486590 - floor_site - 5) {
+			printf("th11 floor call at 0x%08X doesn't look like a known one, skipping!\n", floor_site);
+			return;
+		}
+	}
+	for (unsigned int i = 0; i < 4; i++) {
+		if (*(BYTE*)rounding[i] != 0xD9 || *(BYTE*)(rounding[i] + 1) != 0xFC) {
+			printf("th11 sprite rounding at 0x%08X doesn't look like a known one, skipping!\n", rounding[i]);
+			return;
+		}
+	}
+	patch_bytes(floor_site, drop_floor, sizeof(drop_floor));
+	for (unsigned int i = 0; i < 4; i++) {
+		BYTE nop[2] = { 0x90, 0x90 };
+		patch_bytes(rounding[i], nop, sizeof(nop));
+	}
+	th11_pixel_snapping_patched = 4;
+	printf("th11 sprites drawn at their fractional position (floor wrapper and four frndint dropped)\n");
+}
+
 void th11_install_patches() {
 	{
 		// Skip the original frame limiter
@@ -1209,6 +1271,8 @@ void th11_install_patches() {
 		// (the overlay readouts are Config::ShowOverlay's business; see Limiter::Initialize)
 		overlay_set_present_rate_follow_text(true);
 	}
+	if (Config::FixBulletPixelSnapping)
+		th11_install_bullet_pixel_snapping();
 }
 
 FPSTarget th11_replay_callback() {
