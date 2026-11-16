@@ -305,6 +305,10 @@ static unsigned int th12_diag_count;
 
 static LARGE_INTEGER th12_perf_freq;
 
+// Set by th12_install_bullet_pixel_snapping (defined further down): 4 when the four frndint were
+// replaced, -1 when a site did not match. Only the dump reads it.
+static int th12_pixel_snapping_patched;
+
 // Defined with the player's own state below; the dump reports what each option slot thinks its
 // sprites are
 static void th12_options_dump(FILE* file);
@@ -331,6 +335,13 @@ void th12_diag_dump() {
 	fprintf(file, "frames recorded: %u\n", count);
 	fprintf(file, "bullets: %u in play, %u projected forward (last game frame)\n",
 		th12_bullets_in_play, th12_bullets_moved);
+	// Whether both layers were dropped, and what the first site of each holds now: 90 90 and
+	// DD 04 24 mean the sprite submit really draws at the fractional position. 0 means the install
+	// never ran, -1 means a site did not look like the known instruction.
+	fprintf(file, "pixel snapping: %d of 4 frndint replaced, 0x459EFA now holds %02X %02X, "
+				  "floor at 0x45A6A9 now holds %02X %02X %02X\n",
+		th12_pixel_snapping_patched, *(unsigned char*)0x00459EFA, *(unsigned char*)0x00459EFB,
+		*(unsigned char*)0x0045A6A9, *(unsigned char*)0x0045A6AA, *(unsigned char*)0x0045A6AB);
 	fprintf(file, "player: %u body, %u option and %u shot sprite(s) projected (last game frame)\n",
 		th12_body_sprites, th12_option_sprites, th12_shot_sprites);
 	fprintf(file, "player: %u sprite(s) this frame had no movement record (should stay 0)\n",
@@ -1184,6 +1195,52 @@ static void th12_skip_present_setup(DWORD address, size_t size) {
 	patch_bytes(address, patch, size);
 }
 
+// ---------------------------------------------------------------------------
+// Bullet pixel snapping
+// ---------------------------------------------------------------------------
+//
+// Two places round a bullet's quad to whole pixels. sub_45A570 builds the four vertices and calls
+// the CRT's floor (0x493290) twice - 0x45A6A9 for the left edge, 0x45A7AD for the top edge - and
+// sub_459E50 then rounds what came out, with the four frndint at 0x459EFA, 0x459F08, 0x459F16 and
+// 0x459F24, each followed by an fsub 0.5 and gated on test bl, 1. Every draw function reaches them
+// the way th11's do: compute the vertices, then push 1 and commit.
+//
+// Both layers have to go. NOPing only the frndint leaves the vertices whole, which is what th11
+// showed; dropping only the floor would leave the frndint putting them back. The two calls become
+// fld qword ptr [esp] (the value the same code has just stored there) plus two NOPs, so the edges
+// keep their fraction, and the four frndint become NOPs, turning round(v) - 0.5 into v - 0.5.
+//
+// No copy of the sprite: bullet.anm's main atlas is A8R8G8B8 with an 8-bit antialiased edge, the
+// same measurement th10 and th11 give, so a sample crossing the sprite rectangle mixes into that
+// gradient instead of into the neighbour.
+static void th12_install_bullet_pixel_snapping() {
+	static const unsigned int floor_sites[] = { 0x0045A6A9, 0x0045A7AD };
+	static BYTE drop_floor[] = { 0xDD, 0x04, 0x24, 0x90, 0x90 };
+	static const unsigned int rounding[] = { 0x00459EFA, 0x00459F08, 0x00459F16, 0x00459F24 };
+	th12_pixel_snapping_patched = -1;
+	for (unsigned int i = 0; i < 2; i++) {
+		const BYTE* site = (const BYTE*)floor_sites[i];
+		if (site[0] != 0xE8 || *(const DWORD*)(site + 1) != 0x00493290 - floor_sites[i] - 5) {
+			printf("th12 floor call at 0x%08X doesn't look like a known one, skipping!\n", floor_sites[i]);
+			return;
+		}
+	}
+	for (unsigned int i = 0; i < 4; i++) {
+		if (*(BYTE*)rounding[i] != 0xD9 || *(BYTE*)(rounding[i] + 1) != 0xFC) {
+			printf("th12 sprite rounding at 0x%08X doesn't look like a known one, skipping!\n", rounding[i]);
+			return;
+		}
+	}
+	for (unsigned int i = 0; i < 2; i++)
+		patch_bytes(floor_sites[i], drop_floor, sizeof(drop_floor));
+	for (unsigned int i = 0; i < 4; i++) {
+		BYTE nop[2] = { 0x90, 0x90 };
+		patch_bytes(rounding[i], nop, sizeof(nop));
+	}
+	th12_pixel_snapping_patched = 4;
+	printf("th12 sprites drawn at their fractional position (two floor calls and four frndint dropped)\n");
+}
+
 void th12_install_patches() {
 	{
 		// Skip the original frame limiter
@@ -1263,6 +1320,8 @@ void th12_install_patches() {
 		// (the overlay readouts are Config::ShowOverlay's business; see Limiter::Initialize)
 		overlay_set_present_rate_follow_text(true);
 	}
+	if (Config::FixBulletPixelSnapping)
+		th12_install_bullet_pixel_snapping();
 }
 
 FPSTarget th12_replay_callback() {
