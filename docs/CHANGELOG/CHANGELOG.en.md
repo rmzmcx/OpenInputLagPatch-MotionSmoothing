@@ -65,6 +65,26 @@ is also the record of what has actually been verified rather than just what was 
 
   Confirmed in game: bullets move at sub-pixel positions.
 
+- **th12's bullets are drawn at their real position** (`4465f31`)
+
+  Undefined Fantastic Object has the same two layers. The commit side is `sub_459E50`'s four
+  `frndint` (`0x459EFA`, `0x459F08`, `0x459F16`, `0x459F24`), each followed by an `fsub 0.5` and
+  gated on `test bl, 1`.
+
+  The vertex side is `sub_45A570`, whose signature (`a1@ebx, a2@edi, a3@esi, a4, a5`) matches th11's
+  `sub_44FE30` word for word. It calls the CRT's `floor` (`0x493290`) once for the left edge at
+  `0x45A6A9` and once for the top edge at `0x45A7AD`, each preceded by `fstp qword [esp]`, so
+  replacing the call with `fld qword [esp]` reloads the same value.
+
+  Both layers go: dropping only the `frndint` is not enough, as th11 showed, and dropping only the
+  `floor` would leave the `frndint` putting the rounding back. Every draw function computes the
+  vertices with `sub_45A570`, then pushes 1 and commits.
+
+  The atlas is `A8R8G8B8` with an 8-bit antialiased edge, the same as th10 and th11, so no copy is
+  needed.
+
+  Confirmed in game: bullets move at sub-pixel positions.
+
 ### Fixed
 
 - **The player projection counters read as zero in th10, th11 and th12** (`8d97885`)
