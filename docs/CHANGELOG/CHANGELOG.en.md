@@ -39,6 +39,32 @@ is also the record of what has actually been verified rather than just what was 
   bullet - comes out of that trade and is left as it is; th07's and th08's copies are the answer if
   it matters.
 
+- **th11's bullets are drawn at their real position** (`f2f556f`)
+
+  Subterranean Animism is the same shape as Mountain of Faith. `sub_44F880` does carry the four
+  `frndint` (`0x44F92A`, `0x44F938`, `0x44F946`, `0x44F954`), each followed by an `fsub 0.5` and
+  gated on `test bl, 1`, and turning them into NOPs changed nothing on screen.
+
+  The quantising is one layer up. `sub_4500B0` calls `sub_44FE30` to build the four vertices, then
+  `sub_44F880` to round them and write the UVs. In the centred branch `sub_44FE30` calls
+  `sub_4520C0` for the left edge and again for the top edge, and that is a `floor` wrapper: it loads
+  its argument, calls the CRT's `floor` (`0x486590`) and returns. By the time the four `frndint` run
+  the vertices are whole numbers, so checking only the callers of `sub_44F880` reports "no second
+  layer" and is wrong.
+
+  The two patches match Mountain of Faith: the call at `0x4520D2` becomes `fld qword [esp]` plus two
+  NOPs, and the four `frndint` become NOPs. `sub_4520C0`'s only callers are the two sites inside
+  `sub_44FE30`, so nothing else sees the change.
+
+  No copy of the sprite: `bullet.anm`'s `etama.png` is `A8R8G8B8` with 256 sprites and an 8-bit
+  antialiased edge (182 alpha levels, a third of them partial), the same measurement Mountain of
+  Faith gives, so a sample crossing the sprite rectangle mixes into that gradient.
+
+  The dump reports both halves, which is what makes a patch that lands but changes nothing visible:
+  `pixel snapping: 4 of 4 frndint replaced ... floor at 0x4520D2 now holds DD 04 24`.
+
+  Confirmed in game: bullets move at sub-pixel positions.
+
 ### Fixed
 
 - **The player projection counters read as zero in th10, th11 and th12** (`8d97885`)
