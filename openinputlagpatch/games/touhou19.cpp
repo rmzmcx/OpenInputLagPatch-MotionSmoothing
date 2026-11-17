@@ -1505,10 +1505,20 @@ static int __fastcall th19_fade_create_extra_guard(int a1, int a2, int a3, int a
 	return th19_fade_create(a1, a2, a3, a4, a5, a6, a7);
 }
 
+// The device the game draws with. The patch's own D3D9 hook only exists when Config::D3D9Ex
+// installed it, so with that off the game's own pointer is what there is to present with
+// (same as th20_device in touhou20.cpp).
+static IDirect3DDevice9* th19_device() {
+	IDirect3DDevice9* device = d3d9_hooked_device();
+	if (device == nullptr)
+		device = *(IDirect3DDevice9**)rebase(0x0062BB48);
+	return device;
+}
+
 // Remembers what the scene is about to be drawn with, then lets the game's own render run exactly
 // as it always did
 static void th19_render_hook() {
-	IDirect3DDevice9* device = d3d9_hooked_device();
+	IDirect3DDevice9* device = th19_device();
 	if (device != nullptr) {
 		device->GetViewport(&th19_scene_viewport);
 		th19_scene_transforms = SUCCEEDED(device->GetTransform(D3DTS_VIEW, &th19_scene_view)) &&
@@ -1677,7 +1687,7 @@ void th19_diag_dump() {
 // t is where this presentation sits between the game's own one and the next one, i.e. how far the
 // objects it draws are moved forward; t = 0 is the state the game's own presentation showed.
 static void th19_extra_presentation(float t) {
-	IDirect3DDevice9* device = d3d9_hooked_device();
+	IDirect3DDevice9* device = th19_device();
 	if (device == nullptr)
 		return;
 
@@ -1748,7 +1758,7 @@ static void th19_extra_presentation(float t) {
 // is skipped over, so the game ends up right after its own present call again, with the result in
 // eax where its code expects it.
 static HRESULT th19_present_hook() {
-	IDirect3DDevice9* device = d3d9_hooked_device();
+	IDirect3DDevice9* device = th19_device();
 	if (device == nullptr)
 		return E_FAIL;
 
@@ -1893,15 +1903,36 @@ static HRESULT th19_present_hook() {
 	return result;
 }
 
+// Presents the frame the game just drew, and refreshes the frame rate target, for when the
+// interpolation is off. th19 only reaches Limiter::TickUntil() while its clock still says the next
+// frame is ahead of it, so a game that has been pushed to a rate it can't keep up with never looks
+// at the target again and stays at that rate after it is lowered - a present is reached once per
+// frame whatever the pacing does. Nothing of the interpolation runs here.
+static HRESULT th19_present_poll_hook() {
+	Limiter::PollTargetFPS();
+	return d3d9_present_frame(th19_device());
+}
+
 // The present the game sets up at each present call site: the device load, the arguments and the
-// call itself, 20 bytes in all (see th19_install_patches)
+// call itself, 20 bytes in all (see the comment at the top of the file)
 static const size_t th19_present_setup_size = 20;
+
+// Every present call site. Only the two in the live frame functions are ever reached; the other
+// three sit in dead code and in the game's own limiter, which is a ret by now, so they are taken
+// over with the rest but never run.
+static const DWORD th19_present_call_sites[] = {
+	0x004B5EFF, // FUN_004B5D70
+	0x004B61C4, // FUN_004B5FE0
+	0x004B5D0C, // FUN_004B5C70 (dead code)
+	0x004B5F86, // the function at 0x4B5F80 (dead code)
+	0x004B642E, // FUN_004B6240 (the limiter, disabled above)
+};
 
 // Takes over one of the game's Present calls. The device load at its start is 6 bytes, one byte
 // more than the hook's call needs, so the hook goes over those 6 bytes (and a nop), and the 14
 // bytes of setup that follow it are jumped over - all five arguments are pushed inside those 14
 // bytes, so skipping them leaves the stack the way the game expects.
-static bool th19_hook_present(DWORD address) {
+static bool th19_hook_present(DWORD address, DWORD hook_address) {
 	BYTE* site = (BYTE*)rebase(address);
 	DWORD device = rebase(0x0062BB48);
 
@@ -1926,7 +1957,7 @@ static bool th19_hook_present(DWORD address) {
 	{
 		// The hook's call, and a nop where the device load used to end
 		BYTE patch[6] = { 0xE8, 0x00, 0x00, 0x00, 0x00, 0x90 };
-		*(DWORD*)(patch + 1) = (DWORD)&th19_present_hook - ((DWORD)site + 5);
+		*(DWORD*)(patch + 1) = hook_address - ((DWORD)site + 5);
 		patch_bytes(site, patch, sizeof(patch));
 	}
 	{
@@ -1940,6 +1971,16 @@ static bool th19_hook_present(DWORD address) {
 		patch_bytes(site + 6, patch, sizeof(patch));
 	}
 	return true;
+}
+
+// Takes over every present call site with the given hook, and returns how many matched
+static unsigned int th19_take_over_presents(DWORD hook_address) {
+	unsigned int patched = 0;
+	for (DWORD address : th19_present_call_sites) {
+		if (th19_hook_present(address, hook_address))
+			++patched;
+	}
+	return patched;
 }
 
 // ---------------------------------------------------------------------------
@@ -1971,6 +2012,14 @@ static void th19_install_bullet_pixel_snapping() {
 	}
 	th19_pixel_snapping_patched = 4;
 	printf("th19 sprites drawn at their fractional position (rounding dropped, half-pixel kept)\n");
+}
+
+// The target has to be refreshed from every rendered frame even with the interpolation off (see
+// th19_present_poll_hook). The game presents once per frame, so its presents are where that
+// happens.
+static void th19_install_present_polling() {
+	unsigned int present_patched = th19_take_over_presents((DWORD)&th19_present_poll_hook);
+	printf("Frame rate polling: %u present call(s) taken over\n", present_patched);
 }
 
 void th19_install_patches() {
@@ -2037,18 +2086,7 @@ void th19_install_patches() {
 		}
 
 		// Take over the presents in the frame functions (see th19_hook_present)
-		static const DWORD present_sites[] = {
-			0x004B5EFF, // FUN_004B5D70
-			0x004B61C4, // FUN_004B5FE0
-			0x004B5D0C, // FUN_004B5C70 (dead code)
-			0x004B5F86, // the function at 0x4B5F80 (dead code)
-			0x004B642E, // FUN_004B6240 (the limiter, disabled above)
-		};
-		unsigned int present_patched = 0;
-		for (DWORD address : present_sites) {
-			if (th19_hook_present(address))
-				++present_patched;
-		}
+		unsigned int present_patched = th19_take_over_presents((DWORD)&th19_present_hook);
 		printf("Frame interpolation: %u render call(s) and %u present call(s) taken over (setting %d)\n",
 			render_patched, present_patched,
 			Config::InterpolationFPS ? (int)Config::InterpolationFPS : Config::Interpolation);
@@ -2061,6 +2099,8 @@ void th19_install_patches() {
 		// rather than at the bottom right corner of the window where it would sit on top of the
 		// frame rate and slowdown readout thprac draws there (see overlay.h)
 		overlay_set_present_rate_follow_text(true);
+	} else {
+		th19_install_present_polling();
 	}
 	if (Config::FixBulletPixelSnapping)
 		th19_install_bullet_pixel_snapping();
