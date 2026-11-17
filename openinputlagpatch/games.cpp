@@ -98,6 +98,7 @@ DiagDumpFunction get_diag_dump_function(TouhouGame game) {
 	case TouhouGame::Th7: return th7_diag_dump;
 	case TouhouGame::Th8: return th8_diag_dump;
 	case TouhouGame::Th9: return th9_diag_dump;
+	case TouhouGame::Th95: return th95_diag_dump;
 	case TouhouGame::Th10: return th10_diag_dump;
 	case TouhouGame::Th11: return th11_diag_dump;
 	case TouhouGame::Th12: return th12_diag_dump;

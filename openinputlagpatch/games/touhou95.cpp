@@ -101,6 +101,10 @@ static int th95_last_window_update_result;
 static unsigned int th95_window_update_nonzero;
 static unsigned int th95_window_update_calls;
 
+// Set by th95_install_bullet_pixel_snapping: 4 when the four frndint were replaced, -1 when a site
+// did not match. Only the dump reads it.
+static int th95_pixel_snapping_patched;
+
 static bool th95_interpolation_install_attempted;
 static void th95_capture_game_draw_state();
 static void th95_bullets_measure();
@@ -1187,7 +1191,7 @@ static bool th95_has_interpolated_objects() {
            (th95_bullets_in_play != 0 || th95_lasers_in_play != 0);
 }
 
-static void th95_diag_dump() {
+void th95_diag_dump() {
     wchar_t path[1024] = {};
     if (!GetModuleFileNameW(NULL, path, MAX_PATH))
         return;
@@ -1213,6 +1217,13 @@ static void th95_diag_dump() {
     fprintf(file, "configured game frame rate: %u, BltPrepareTime %u, sleep %d\n",
             Config::GameFPS, Config::BltPrepareTime, (int)Config::Sleep);
     fprintf(file, "frames recorded: %u\n", count);
+    // Whether the rounding was dropped: 90 90 and DD 04 24 mean the draw really runs at the
+    // fractional position. 0 means the install never ran, -1 means a site did not match.
+    fprintf(file, "pixel snapping: %d of 4 frndint replaced, 0x43ED77 now holds %02X %02X, "
+                  "floor at 0x43F576 now holds %02X %02X %02X\n",
+            th95_pixel_snapping_patched,
+            *(unsigned char*)0x0043ED77, *(unsigned char*)0x0043ED78,
+            *(unsigned char*)0x0043F576, *(unsigned char*)0x0043F577, *(unsigned char*)0x0043F578);
 
     // There is no persistent FPS string in this game: 423790 formats directly into a local text
     // object. Rebuild the same text with the format string at 0x495E24 for comparison.
@@ -1476,6 +1487,52 @@ int __fastcall th95_window_update_hook(void* self) {
     return th95_last_window_update_result;
 }
 
+// ---------------------------------------------------------------------------
+// Bullet pixel snapping
+// ---------------------------------------------------------------------------
+//
+// Two layers, the shape th11, th12, th125 and th128 have. sub_43F4A0 builds the four vertices and
+// calls the CRT's floor (0x4865C0) twice - 0x43F576 for the left edge and 0x43F68C for the top,
+// both preceded by fstp qword [esp] (DD 1C 24) - then reaches sub_43ECD0, which rounds what came out
+// with the four frndint at 0x43ED77, 0x43ED85, 0x43ED93 and 0x43EDA1.
+//
+// Both layers go. Dropping only the frndint leaves the vertices whole, and dropping only the floor
+// would leave the frndint putting the rounding back. The two calls become fld qword ptr [esp] plus
+// two NOPs, and the four frndint become NOPs.
+//
+// No copy of the sprite. Most of the bullet atlas is already 32-bit - etama.png (229 sprites) and
+// etama6.png (52) are A8R8G8B8, and their 8-bit antialiased edge absorbs a sample that crosses the
+// sprite rectangle. The two 16-bit sheets, etama2.png (30 sprites) and etama3.png (7), keep the
+// hard edge this game was drawn with; they are a small enough part of the drawing that the copy
+// was left out, the same call th10 through th128 make.
+static void th95_install_bullet_pixel_snapping() {
+    static const unsigned int floor_sites[] = { 0x0043F576, 0x0043F68C };
+    static BYTE drop_floor[] = { 0xDD, 0x04, 0x24, 0x90, 0x90 };
+    static const unsigned int rounding[] = { 0x0043ED77, 0x0043ED85, 0x0043ED93, 0x0043EDA1 };
+    th95_pixel_snapping_patched = -1;
+    for (unsigned int i = 0; i < 2; i++) {
+        const BYTE* site = (const BYTE*)floor_sites[i];
+        if (site[0] != 0xE8 || *(const DWORD*)(site + 1) != 0x004865C0 - (DWORD)floor_sites[i] - 5) {
+            printf("th095 floor call at 0x%08X doesn't look like a known one, skipping!\n", floor_sites[i]);
+            return;
+        }
+    }
+    for (unsigned int i = 0; i < 4; i++) {
+        if (*(BYTE*)rounding[i] != 0xD9 || *(BYTE*)(rounding[i] + 1) != 0xFC) {
+            printf("th095 sprite rounding at 0x%08X doesn't look like a known one, skipping!\n", rounding[i]);
+            return;
+        }
+    }
+    for (unsigned int i = 0; i < 2; i++)
+        patch_bytes(floor_sites[i], drop_floor, sizeof(drop_floor));
+    for (unsigned int i = 0; i < 4; i++) {
+        BYTE nop[2] = { 0x90, 0x90 };
+        patch_bytes(rounding[i], nop, sizeof(nop));
+    }
+    th95_pixel_snapping_patched = 4;
+    printf("th095 sprites drawn at their fractional position (two floor calls and four frndint dropped)\n");
+}
+
 void th95_install_patches() {
     D3D8Hook::SetDeviceResetCallback(th95_on_device_reset);
     D3D8Hook::SetDirect3DCreateCallback(th95_before_direct3d_create);
@@ -1506,6 +1563,8 @@ void th95_install_patches() {
         // Hook window update
         patch_call(0x0042046F, th95_window_update_hook);
     }
+    if (Config::FixBulletPixelSnapping)
+        th95_install_bullet_pixel_snapping();
 }
 
 FPSTarget th95_replay_callback() {
