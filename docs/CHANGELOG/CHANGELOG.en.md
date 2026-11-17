@@ -7,6 +7,45 @@ Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/O
 Only changes that have been tested in-game and confirmed working are listed here, so this file
 is also the record of what has actually been verified rather than just what was attempted.
 
+## 2026-11-18
+
+### Added
+
+- **th09's bullets are drawn at their real position** (`b84ff75`)
+
+  Phantasmagoria of Flower View needs more than dropping the rounding. The atlas is `A4R4G4B4` with
+  16 alpha levels and the sprites sit edge to edge, measuring the same as th07/th08's `etama.png`
+  (168 sprites, 16 levels, 13.8% mid, 10 clear / 142 semi / 16 opaque), so a sample at a fractional
+  position reaches into its neighbour.
+
+  The vertex side is `sub_43A0F0`: four `frndint` (`0x43A180`, `0x43A18E`, `0x43A19C`, `0x43A1AA`)
+  each followed by an `fsub 0.5`, gated on `0x43A106`'s `test al, 1`. One layer only.
+
+  The edges get th06's treatment rather than th07/th08's premultiplied copy, because `sub_43A030`
+  sets `SRCBLEND` to `ONE` or `INVSRCALPHA` from `vm+0x1F8` bits 4-5, and a premultiplied copy
+  drawn with `ONE` would come out brighter. Each sprite instead gets a texture of its own with the
+  UV over the whole of it and the address mode set to `CLAMP`.
+
+  Three patches carry that: the `frndint` become NOPs, the 6-byte prologue at `0x43A0F0` becomes a
+  jump, and `0x43A504`'s `push offset` is hooked to set the address mode between the blend and the
+  quad submission.
+
+  The game had neither a diagnostic module nor a D3D8 Present hook, so the key produced nothing;
+  both are wired up here.
+
+  Confirmed in game: 128 sprites got their own texture, edges intact.
+
+- **th165's bullets are drawn at their real position** (`4b6a70f`)
+
+  Violet Detector keeps the single layer: four `frndint` in `sub_46B6C0` (`0x46B799`, `0x46B7A7`,
+  `0x46B7B5`, `0x46B7C3`), with the callers building the vertices from the sprite's own float
+  position and never calling `floor`.
+
+  Every entry of `bullet.anm` is `A8R8G8B8`, whose antialiased edge absorbs a sample that crosses
+  the sprite rectangle, so no copy is needed. The dump module is added the same way as for th09.
+
+  Confirmed in game: 4 of 4 with `90 90`.
+
 ## 2026-11-17
 
 ### Added
