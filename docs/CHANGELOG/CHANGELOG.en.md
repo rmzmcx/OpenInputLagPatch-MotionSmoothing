@@ -86,6 +86,23 @@ is also the record of what has actually been verified rather than just what was 
   Confirmed in game: raising and lowering the frame rate recovers immediately with the
   interpolation on and off. v1.00a has no present table, so this covers v1.10c.
 
+- **th10 no longer doubles the per-stage frame counts of a replay saved again** (`20ff925`)
+
+  A replay save sums each stage's frame count into its stage header, and unlike the packed length
+  next to it, the count is not cleared before the sum. A second save of the same run therefore
+  writes twice the real count, a third three times. The number is not just a readout: the loader
+  stores `end = frame_data + 6 * count`, so playback runs past the real end of the stage's data and
+  takes the next stage's header and inputs as this stage's keys, and the run stops reproducing from
+  the end of the first stage. The frame rate readout in the bottom right jumps with it.
+
+  From th11 on, the save function gates the sum on a "saved once" bit on the replay manager
+  (`+0x1D8` and `+0x1DC`). th10 has no such field, so the count is cleared before the sum the way
+  the length already is: every save computes what the first one did, and the second, third and
+  later files match it. A first save is untouched because the count is still zero then.
+
+  Confirmed in game: four saves of one run, all with correct counts, playing back as recorded and
+  with a steady readout.
+
 ## 2026-11-17
 
 ### Added
