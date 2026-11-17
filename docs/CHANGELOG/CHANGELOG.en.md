@@ -85,6 +85,22 @@ is also the record of what has actually been verified rather than just what was 
 
   Confirmed in game: bullets move at sub-pixel positions.
 
+- **th125's bullets are drawn at their real position** (`62ecb1f`)
+
+  Double Spoiler has the same two layers. The commit side is `sub_458850`'s four `frndint`
+  (`0x4588FA`, `0x458908`, `0x458916`, `0x458924`), each followed by an `fsub 0.5` and gated on
+  `test bl, 1`.
+
+  The vertex side is `sub_459080`, which calls the CRT's `floor` (`0x48CEC0`) once for the left edge
+  at `0x4591D1` and once for the top edge at `0x4592D5`, each preceded by `fstp qword [esp]`, so
+  replacing the call with `fld qword [esp]` reloads the same value. Draw functions compute the
+  vertices with `sub_459080`, then push 1 and commit, the same shape as th11 and th12.
+
+  The atlas is `A8R8G8B8` with an 8-bit antialiased edge, so no copy is needed. The dump reports
+  both layers; that run had 253 bullets in play, all 253 projected forward.
+
+  Confirmed in game: bullets move at sub-pixel positions.
+
 ### Fixed
 
 - **The player projection counters read as zero in th10, th11 and th12** (`8d97885`)
