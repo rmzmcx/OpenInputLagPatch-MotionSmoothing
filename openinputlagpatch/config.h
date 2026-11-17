@@ -50,9 +50,9 @@ public:
 	// rounding is why the extra presentations can move a sprite only from one pixel to the next: the
 	// fractional positions they extrapolate to are thrown away again when the sprite is drawn.
 	//
-	// EoSD's version of this is AnmManager::Draw2, which the round bullets, the player's shots and
+	// EoSD's version of this is AnmManager::Draw3D, which the round bullets, the player's shots and
 	// whatever else an Anm script draws without SET_AUTO_ROTATE go through; text, the HUD, the
-	// player and the rotating bullets use Draw, DrawNoRotation or Draw3 and keep their alignment.
+	// player and the rotating bullets use Draw2DRotated, Draw2D or Draw3DRotated and keep their alignment.
 	// Later games are meant to take the same switch. Currently implemented for th06.
 	static BOOL FixBulletPixelSnapping;
 

@@ -107,19 +107,19 @@ static __declspec(naked) void th6_fps_hook() {
     __asm { jmp eax }
 }
 
-// AnmManager::Draw2 (0x433590) takes the sprite's position from the AnmVm - a float - and rounds
+// AnmManager::Draw3D (0x433590) takes the sprite's position from the AnmVm - a float - and rounds
 // it to whole pixels on the way to the world matrix: x is loaded, frndint'd and stored back, and
 // the rounded value becomes the matrix's translation (x - 0.5f, and -y + 0.5f for D3D's y axis).
-// Every sprite drawn through Draw2 lands on that grid: the round bullets, the player's own shots,
+// Every sprite drawn through Draw3D lands on that grid: the round bullets, the player's own shots,
 // anything an Anm script draws without SET_AUTO_ROTATE.
 //
 // The rounding is one instruction per axis (0x433658 for x, 0x433693 for y, both `frndint`), and
 // the half-pixel shift after it is what puts a sprite's centre on a pixel centre. Replacing those
 // two instructions with NOPs leaves the value they loaded alone, so the matrix gets the float
-// position with the same half-pixel shift. Nothing else in Draw2 turns a coordinate into an
+// position with the same half-pixel shift. Nothing else in Draw3D turns a coordinate into an
 // integer (the vertices are computed from the matrix), so the whole path follows the float.
 //
-// Draw (0x432CC0), DrawNoRotation (0x432AD0) and Draw3 (0x433150) stay as they are. Draw3 rounds
+// Draw2DRotated (0x432CC0), Draw2D (0x432AD0) and Draw3DRotated (0x433150) stay as they are. Draw3DRotated rounds
 // the sprite's centre and its half sizes too, and then rotates the corners off that centre, so its
 // corners are fractional either way.
 static void th6_install_subpixel_sprites() {
@@ -140,7 +140,7 @@ static void th6_install_subpixel_sprites() {
         const BYTE *site = (const BYTE *)sites[i].address;
         if (memcmp(site - sizeof(sites[i].loaded), sites[i].loaded, sizeof(sites[i].loaded)) != 0 ||
             memcmp(site, frndint, sizeof(frndint)) != 0) {
-            printf("th06 Draw2 %s rounding at 0x%x doesn't look like a known one, skipping!\n",
+            printf("th06 Draw3D %s rounding at 0x%x doesn't look like a known one, skipping!\n",
                 sites[i].axis, sites[i].address);
             return;
         }
@@ -149,7 +149,7 @@ static void th6_install_subpixel_sprites() {
     BYTE nop[] = { 0x90, 0x90 };
     for (unsigned int i = 0; i < sizeof(sites) / sizeof(sites[0]); i++)
         patch_bytes(sites[i].address, nop, sizeof(nop));
-    printf("th06 subpixel sprite positions installed (Draw2 keeps the fractional centre)\n");
+    printf("th06 subpixel sprite positions installed (Draw3D keeps the fractional centre)\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -356,7 +356,7 @@ static __declspec(naked) void th6_bullet_texture_hook() {
 static void th6_install_bullet_textures() {
     static const BYTE site[] = { 0x8B, 0x8D, 0x2C, 0xFF, 0xFF, 0xFF };
     if (memcmp((void*)0x00433875, site, sizeof(site)) != 0) {
-        printf("th06 Draw2 sprite branch at 0x433875 doesn't look like a known one, skipping!\n");
+        printf("th06 Draw3D sprite branch at 0x433875 doesn't look like a known one, skipping!\n");
         return;
     }
 
@@ -371,7 +371,7 @@ static void th6_install_bullet_textures() {
     printf("th06 bullet sprites given their own clamped textures\n");
 }
 
-// Draw2 rounds the sprite's centre before it builds the world matrix, and the subpixel patch removes
+// Draw3D rounds the sprite's centre before it builds the world matrix, and the subpixel patch removes
 // that rounding. Text, the HUD, the player and everything else that is not a bullet still wants it:
 // their positions are whole pixels by design, and letting them drift makes their edges sample
 // outside their own rectangle. The rounding is put back at the entry for every sprite whose atlas
@@ -394,7 +394,7 @@ static void th6_apply_pixel_centres(unsigned char* vm) {
     pos[1] = rintf(pos[1]);
 }
 
-static __declspec(naked) void th6_draw2_entry_hook() {
+static __declspec(naked) void th6_draw3d_entry_hook() {
     __asm {
         pushad
         mov eax, [ebp + 8]
@@ -412,11 +412,11 @@ static __declspec(naked) void th6_draw2_entry_hook() {
 static void th6_install_pixel_centre_restore() {
     static const BYTE original[] = { 0x81, 0xEC, 0xD4, 0x00, 0x00, 0x00 }; // sub esp, 0D4h
     if (memcmp((void*)0x00433593, original, sizeof(original)) != 0) {
-        printf("th06 Draw2 prologue at 0x433593 doesn't look like a known one, skipping!\n");
+        printf("th06 Draw3D prologue at 0x433593 doesn't look like a known one, skipping!\n");
         return;
     }
 
-    patch_jmp(0x00433593, th6_draw2_entry_hook);
+    patch_jmp(0x00433593, th6_draw3d_entry_hook);
     printf("th06 pixel centres restored outside the bullet atlases\n");
 }
 
@@ -650,7 +650,7 @@ static void th6_clear_depth_buffer(IDirect3DDevice8* device) {
 // what it draws with, the way the game's own pass does when it starts a frame.
 //
 // The one that matters most in this game is the sprite cache. The texture bind sits *inside* the
-// "the sprite changed" branch here (AnmManager::DrawInner, AnmManager.cpp:538-554 = 0x43288E..0x4328E8:
+// "the sprite changed" branch here (AnmManager::DrawSprite, AnmManager.cpp:538-554 = 0x43288E..0x4328E8:
 // `cmp currentSprite, vm->sprite` and only then `cmp currentTexture, textures[sourceFileIndex]`), so a
 // sprite whose pointer is the same as the one that was drawn last skips the bind as well - and since
 // the game's own pass ends with SetTexture(0, NULL), that leaves those sprites drawn with no texture
@@ -827,13 +827,13 @@ static void th6_bullets_undo() {
 //   - The player. Player_OnDrawHighPrio (0x429930) writes the sprite's position from the player's own
 //     positionCenter (Player+0x440, two floats; the corner of the play field, which GameManager keeps
 //     at 0x69D6DC/0x69D6E0, is added at 0x42996D..0x429994) and draws it with
-//     AnmManager::DrawNoRotation, then does the same for the orbs out of orbsPosition[0] and [1]
-//     (Player+0x4A0 and +0x4AC, 0x4299F9..0x429AEB, drawn with AnmManager::Draw, z = 0.491f). The
+//     AnmManager::Draw2D, then does the same for the orbs out of orbsPosition[0] and [1]
+//     (Player+0x4A0 and +0x4AC, 0x4299F9..0x429AEB, drawn with AnmManager::Draw2DRotated, z = 0.491f). The
 //     player moves with the input, the shot type's speed (and a bomb multiplier) and is clamped to
 //     the movement area, and a death or a stage transition puts it somewhere else outright, so what
 //     one frame moved it by is measured rather than read out of a velocity - the same thing th07 and
 //     th08 do for theirs.
-//   - The orbs are this game's familiars: two of them, drawn while the player has power 8 or more
+//   - The orbs are this game's familiars: two of them, drawn while the player has LEVEL_1 (power 8) or more
 //     (Player.cpp:704: below that the game hides them, orbState = ORB_HIDDEN, and from 8 on it runs
 //     ORB_UNFOCUSED / FOCUSING / FOCUSED / UNFOCUSING with focusMovementTimer) and placed from the
 //     player's position with an offset that swings between 24 and 8 pixels out and 32 up as the focus
@@ -843,7 +843,7 @@ static void th6_bullets_undo() {
 //   - The player's own shots. DrawBullets (0x429B00) walks the 80 slots of Player::bullets
 //     (Player+0xA28, sizeof(PlayerBullet) == 0x158) and draws the ones whose bulletState
 //     (bullet+0x14E, 16 bit) is PLAYER_BULLET_STATE_FIRED, out of the slot's own sprite (the AnmVm at
-//     the start of the slot, drawn with AnmManager::Draw2); Player_OnDrawLowPrio (0x429B90) draws the
+//     the start of the slot, drawn with AnmManager::Draw3D); Player_OnDrawLowPrio (0x429B90) draws the
 //     ones that have collided (state 2) the same way, as their explosion, out of the same sprite
 //     (DrawBulletExplosions, 0x429BB0). What is drawn is therefore the sprite's own position
 //     (slot+0x90), not the bullet's logical one (slot+0x110) - and that is what the extras move, so
