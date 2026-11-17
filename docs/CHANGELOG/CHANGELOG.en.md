@@ -46,6 +46,22 @@ is also the record of what has actually been verified rather than just what was 
 
   Confirmed in game: 4 of 4 with `90 90`.
 
+- **th095's bullets are drawn at their real position** (`29d6761`)
+
+  Shoot the Bullet has two layers, the shape th11, th12, th125 and th128 have: `sub_43F4A0` both
+  calls the submit function `sub_43ECD0` and calls the CRT's `floor` (0x4865C0) once for the left
+  edge at `0x43F576` and once for the top at `0x43F68C`. The submit side has the four `frndint` at
+  `0x43ED77`, `0x43ED85`, `0x43ED93` and `0x43EDA1`. Both layers go.
+
+  The atlas is mixed, but 281 of 318 sprites are `A8R8G8B8` (`etama.png` 229 plus `etama6.png` 52),
+  whose antialiased edge is enough, so no copy is made. The remaining 37 sixteen-bit sprites live in
+  `etama2` and `etama3` and are left alone, the same trade th10 through th128 make.
+
+  The game's diagnostic had been written long ago but declared static and never registered, so the
+  key produced nothing; it is wired up here.
+
+  Confirmed in game: 4 of 4 with `90 90` and `DD 04 24`, 837 bullets on the draw chains.
+
 ## 2026-11-17
 
 ### Added
