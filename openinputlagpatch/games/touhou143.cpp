@@ -1086,6 +1086,10 @@ static Th143DiagFrame th143_diag_frames[th143_diag_frames_max];
 static unsigned int th143_diag_count;
 static LARGE_INTEGER th143_perf_freq;
 
+// Set by th143_install_bullet_pixel_snapping (defined further down): 4 when the four frndint were
+// replaced, -1 when a site did not match. Only the dump reads it.
+static int th143_pixel_snapping_patched;
+
 void th143_diag_dump() {
 	wchar_t path[1024] = {};
 	if (!GetModuleFileNameW(NULL, path, MAX_PATH))
@@ -1119,6 +1123,10 @@ void th143_diag_dump() {
 	fprintf(file, "player movement: up to %.2f px per frame since the last dump\n",
 		th143_player_movement);
 	th143_player_movement = 0.0f;
+	// Whether the rounding was dropped: 90 90 means the submit really draws at the
+	// fractional position. 0 means the install never ran, -1 means a site did not match.
+	fprintf(file, "pixel snapping: %d of 4 frndint replaced, 0x0047A189 now holds %02X %02X\n",
+		th143_pixel_snapping_patched, *(unsigned char*)0x0047A189, *(unsigned char*)(0x0047A189 + 1));
 	fprintf(file, "lasers: %u Line/Infinite in play, %u projected forward "
 		"(Curve and Beam are left alone)\n",
 		th143_lasers_seen, th143_lasers_projected);
@@ -1232,6 +1240,37 @@ static void th143_skip_present_setup(DWORD address) {
 	patch_bytes(address, patch, sizeof(patch));
 }
 
+// ---------------------------------------------------------------------------
+// Bullet pixel snapping
+//
+// th143 rounds a sprite's four quad vertices to whole pixels when bit 0 of its flags
+// argument is set, which is where a bullet's position stops being fractional. The four
+// frndint below each feed an fsub 0.5: turning the rounding off leaves the subtraction,
+// so what used to be round(v) - 0.5 becomes v - 0.5 - the same quad on its fraction.
+//
+// This game has no second layer: the submit function builds the vertices itself from the
+// sprite's own float position and nothing on that path calls the CRT's floor, unlike th10
+// through th125 where a separate vertex function floored the edges first.
+//
+// No copy of the sprite: bullet.anm's main atlas is A8R8G8B8 with an 8-bit antialiased
+// edge, so a sample crossing the sprite rectangle mixes into that gradient.
+static void th143_install_bullet_pixel_snapping() {
+	static const unsigned int rounding[] = { 0x0047A189, 0x0047A197, 0x0047A1A5, 0x0047A1B3 };
+	th143_pixel_snapping_patched = -1;
+	for (unsigned int i = 0; i < 4; i++) {
+		if (*(BYTE*)rounding[i] != 0xD9 || *(BYTE*)(rounding[i] + 1) != 0xFC) {
+			printf("th143 sprite rounding at 0x%08X doesn't look like a known one, skipping!\n", rounding[i]);
+			return;
+		}
+	}
+	for (unsigned int i = 0; i < 4; i++) {
+		BYTE nop[2] = { 0x90, 0x90 };
+		patch_bytes(rounding[i], nop, sizeof(nop));
+	}
+	th143_pixel_snapping_patched = 4;
+	printf("th143 sprites drawn at their fractional position (rounding dropped, half-pixel kept)\n");
+}
+
 void th143_install_patches() {
 	{
 		// Skip the original frame limiter
@@ -1300,6 +1339,8 @@ void th143_install_patches() {
 			Config::InterpolationFPS ? (int)Config::InterpolationFPS : Config::Interpolation);
 		overlay_set_present_rate_follow_text(true);
 	}
+	if (Config::FixBulletPixelSnapping)
+		th143_install_bullet_pixel_snapping();
 }
 
 FPSTarget th143_replay_callback() {

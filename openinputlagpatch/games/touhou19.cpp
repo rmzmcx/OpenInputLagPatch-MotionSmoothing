@@ -1540,6 +1540,10 @@ static unsigned int th19_diag_count;
 
 static LARGE_INTEGER th19_perf_freq;
 
+// Set by th19_install_bullet_pixel_snapping (defined further down): 4 when the four frndint were
+// replaced, -1 when a site did not match. Only the dump reads it.
+static int th19_pixel_snapping_patched;
+
 void th19_diag_dump() {
 	wchar_t path[1024] = {};
 	if (!GetModuleFileNameW(NULL, path, MAX_PATH))
@@ -1623,6 +1627,14 @@ void th19_diag_dump() {
 	// side - out of each manager's own counter rather than by walking its list - so a walk that
 	// stopped finding lasers would say so right here: the only difference the two can have is a
 	// laser the draw walk itself leaves out, which is not on screen to project for
+	// Whether the rounding was dropped: 90 90 means the submit really draws at the
+	// fractional position. 0 means the install never ran, -1 means a site did not match.
+	{
+		const DWORD site = rebase(0x004C94F1);
+		fprintf(file, "pixel snapping: %d of 4 frndint replaced, 0x%08X now holds %02X %02X\n",
+			th19_pixel_snapping_patched, site,
+			*(unsigned char*)site, *(unsigned char*)(site + 1));
+	}
 	fprintf(file, "lasers: %u in play, %u projected forward, %u line and %u endless (both sides)\n",
 		th19_lasers_in_play, th19_lasers_projected, th19_lasers_line, th19_lasers_infinite);
 	fprintf(file, "lasers: the managers' own count says %u\n", th19_lasers_managers_say);
@@ -1930,6 +1942,37 @@ static bool th19_hook_present(DWORD address) {
 	return true;
 }
 
+// ---------------------------------------------------------------------------
+// Bullet pixel snapping
+//
+// th19 rounds a sprite's four quad vertices to whole pixels when bit 0 of its flags
+// argument is set, which is where a bullet's position stops being fractional. The four
+// frndint below each feed an fsub 0.5: turning the rounding off leaves the subtraction,
+// so what used to be round(v) - 0.5 becomes v - 0.5 - the same quad on its fraction.
+//
+// This game has no second layer: the submit function builds the vertices itself from the
+// sprite's own float position and nothing on that path calls the CRT's floor, unlike th10
+// through th125 where a separate vertex function floored the edges first.
+//
+// No copy of the sprite: bullet.anm's main atlas is A8R8G8B8 with an 8-bit antialiased
+// edge, so a sample crossing the sprite rectangle mixes into that gradient.
+static void th19_install_bullet_pixel_snapping() {
+	static const unsigned int rounding[] = { rebase(0x004C94F1), rebase(0x004C94FF), rebase(0x004C950D), rebase(0x004C951B) };
+	th19_pixel_snapping_patched = -1;
+	for (unsigned int i = 0; i < 4; i++) {
+		if (*(BYTE*)rounding[i] != 0xD9 || *(BYTE*)(rounding[i] + 1) != 0xFC) {
+			printf("th19 sprite rounding at 0x%08X doesn't look like a known one, skipping!\n", rounding[i]);
+			return;
+		}
+	}
+	for (unsigned int i = 0; i < 4; i++) {
+		BYTE nop[2] = { 0x90, 0x90 };
+		patch_bytes(rounding[i], nop, sizeof(nop));
+	}
+	th19_pixel_snapping_patched = 4;
+	printf("th19 sprites drawn at their fractional position (rounding dropped, half-pixel kept)\n");
+}
+
 void th19_install_patches() {
 	th19_force_fast_input_method_v110c();
 	th19_install_config_persistence_v110c();
@@ -2019,6 +2062,8 @@ void th19_install_patches() {
 		// frame rate and slowdown readout thprac draws there (see overlay.h)
 		overlay_set_present_rate_follow_text(true);
 	}
+	if (Config::FixBulletPixelSnapping)
+		th19_install_bullet_pixel_snapping();
 }
 
 // ---------------------------------------------------------------------------

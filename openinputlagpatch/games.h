@@ -107,6 +107,7 @@ void th125_install_patches();
 FPSTarget th125_replay_callback();
 void th128_install_patches();
 FPSTarget th128_replay_callback();
+void th128_diag_dump();
 void th143_install_patches();
 FPSTarget th143_replay_callback();
 void th165_install_patches();
