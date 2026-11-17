@@ -1859,6 +1859,10 @@ static Th125DiagFrame th125_diag_frames[th125_diag_frames_max];
 static unsigned int th125_diag_count;
 static LARGE_INTEGER th125_perf_freq;
 
+// Set by th125_install_bullet_pixel_snapping (defined further down): 4 when the four frndint were
+// replaced, -1 when a site did not match. Only the dump reads it.
+static int th125_pixel_snapping_patched;
+
 void th125_diag_dump() {
 	wchar_t path[1024] = {};
 	if (!GetModuleFileNameW(NULL, path, MAX_PATH))
@@ -1906,6 +1910,13 @@ void th125_diag_dump() {
 		"(th12.5 special case)\n",
 		th125_bullets_in_play, th125_bullets_projected,
 		th125_bullets_fast_excluded);
+	// Whether both layers were dropped, and what the first site of each holds now: 90 90 and
+	// DD 04 24 mean the sprite submit really draws at the fractional position. 0 means the install
+	// never ran, -1 means a site did not look like the known instruction.
+	fprintf(file, "pixel snapping: %d of 4 frndint replaced, 0x4588FA now holds %02X %02X, "
+				  "floor at 0x4591D1 now holds %02X %02X %02X\n",
+		th125_pixel_snapping_patched, *(unsigned char*)0x004588FA, *(unsigned char*)0x004588FB,
+		*(unsigned char*)0x004591D1, *(unsigned char*)0x004591D2, *(unsigned char*)0x004591D3);
 	unsigned char* player = (unsigned char*)*th125_player_manager;
 	const int photo_state = player != nullptr
 		? *(int*)(player + th125_player_camera + th125_player_camera_state)
@@ -2089,6 +2100,53 @@ int __stdcall th125_window_update_hook(void* self) {
 	return CWindowManager__UpdateFast(self);
 }
 
+// ---------------------------------------------------------------------------
+// Bullet pixel snapping
+// ---------------------------------------------------------------------------
+//
+// The same two layers as th11 and th12. sub_459080 builds the four vertices and calls the CRT's
+// floor (0x48CEC0) twice - 0x4591D1 for the left edge, 0x4592D5 for the top edge, both preceded by
+// fstp qword [esp] (DD 1C 24) - and sub_458850 then rounds what came out, with the four frndint at
+// 0x4588FA, 0x458908, 0x458916 and 0x458924, each followed by an fsub 0.5 and gated on test bl, 1.
+// Every draw function reaches them the way th11's and th12's do: compute the vertices with
+// sub_459080, then push 1 and commit with sub_458850.
+//
+// Both layers have to go. Dropping only the frndint leaves the vertices whole, and dropping only
+// the floor would leave the frndint putting the rounding back. The two calls become
+// fld qword ptr [esp] (the value the same code has just stored) plus two NOPs, and the four frndint
+// become NOPs, turning round(v) - 0.5 into v - 0.5.
+//
+// No copy of the sprite: bullet.anm's main atlas is A8R8G8B8 at 256x256, the same measurement th10
+// through th12 give, so a sample crossing the sprite rectangle mixes into the 8-bit antialiased edge
+// rather than into its neighbour.
+static void th125_install_bullet_pixel_snapping() {
+	static const unsigned int floor_sites[] = { 0x004591D1, 0x004592D5 };
+	static BYTE drop_floor[] = { 0xDD, 0x04, 0x24, 0x90, 0x90 };
+	static const unsigned int rounding[] = { 0x004588FA, 0x00458908, 0x00458916, 0x00458924 };
+	th125_pixel_snapping_patched = -1;
+	for (unsigned int i = 0; i < 2; i++) {
+		const BYTE* site = (const BYTE*)floor_sites[i];
+		if (site[0] != 0xE8 || *(const DWORD*)(site + 1) != 0x0048CEC0 - floor_sites[i] - 5) {
+			printf("th125 floor call at 0x%08X doesn't look like a known one, skipping!\n", floor_sites[i]);
+			return;
+		}
+	}
+	for (unsigned int i = 0; i < 4; i++) {
+		if (*(BYTE*)rounding[i] != 0xD9 || *(BYTE*)(rounding[i] + 1) != 0xFC) {
+			printf("th125 sprite rounding at 0x%08X doesn't look like a known one, skipping!\n", rounding[i]);
+			return;
+		}
+	}
+	for (unsigned int i = 0; i < 2; i++)
+		patch_bytes(floor_sites[i], drop_floor, sizeof(drop_floor));
+	for (unsigned int i = 0; i < 4; i++) {
+		BYTE nop[2] = { 0x90, 0x90 };
+		patch_bytes(rounding[i], nop, sizeof(nop));
+	}
+	th125_pixel_snapping_patched = 4;
+	printf("th125 sprites drawn at their fractional position (two floor calls and four frndint dropped)\n");
+}
+
 void th125_install_patches() {
 	{
 		// Skip the original frame limiter
@@ -2166,6 +2224,8 @@ void th125_install_patches() {
 			Config::InterpolationFPS ? (int)Config::InterpolationFPS : Config::Interpolation);
 		overlay_set_present_rate_follow_text(true);
 	}
+	if (Config::FixBulletPixelSnapping)
+		th125_install_bullet_pixel_snapping();
 }
 
 FPSTarget th125_replay_callback() {
