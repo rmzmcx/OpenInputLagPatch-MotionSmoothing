@@ -7,6 +7,58 @@ Changes made on top of upstream [OpenInputLagPatch](https://github.com/khang06/O
 Only changes that have been tested in-game and confirmed working are listed here, so this file
 is also the record of what has actually been verified rather than just what was attempted.
 
+## 2026-11-17
+
+### Added
+
+- **th128 and th13 through th19 draw their bullets at the real position** (`cc29764`)
+
+  This batch splits in two. th128 has the shape th10 through th125 had: `sub_45F110` calls the CRT's
+  `floor` for the left and top edges (`0x45F25D` / `0x45F35D`), then `sub_45E920` rounds with four
+  `frndint` (`0x45E9C9`, `0x45E9D7`, `0x45E9E5`, `0x45E9F3`). Both layers go.
+
+  From th13 the engine changed. The submit function adds the sprite's own float position straight
+  into the quad (th13 reads `a2+0xD0` and `a2+0xD4`), and nothing on that path calls `floor` - the
+  few places that do belong to UI and camera code. So these nine only lose the four `frndint`, which
+  is what th07 and th08 needed:
+
+  | Game | Submit | Four `frndint` |
+  |---|---|---|
+  | th13 | `sub_467350` | `0x4673F9` / `0x467407` / `0x467415` / `0x467423` |
+  | th14 | `sub_4756E0` | `0x4757BA` / `0x4757C8` / `0x4757D6` / `0x4757E4` |
+  | th143 | `sub_47A0B0` | `0x47A189` / `0x47A197` / `0x47A1A5` / `0x47A1B3` |
+  | th15 | `sub_47DBA0` | `0x47DC79` / `0x47DC87` / `0x47DC95` / `0x47DCA3` |
+  | th16 | `sub_465280` | `0x465359` / `0x465367` / `0x465375` / `0x465383` |
+  | th17 | `sub_46C8B0` | `0x46C989` / `0x46C997` / `0x46C9A5` / `0x46C9B3` |
+  | th18 | `sub_47DCE0` | `0x47DE49` / `0x47DE57` / `0x47DE65` / `0x47DE73` |
+  | th185 | `sub_4803D0` | `0x480529` / `0x480537` / `0x480545` / `0x480553` |
+  | th19 | `sub_4C9380` | `0x4C94F1` / `0x4C94FF` / `0x4C950D` / `0x4C951B` |
+
+  th19 is the only executable here with `Dynamic base`, so its sites go through that game's
+  `rebase()`. On the run here it loaded at `0x00D10000` and the dump reported `0x00DD94F1`, which is
+  that base plus the RVA.
+
+  Every bullet atlas in the batch is Format 1 (`A8R8G8B8`) with an 8-bit antialiased edge - `etama.png`
+  for th128, `bullet1.png` from th13 on - so none of them needs a premultiplied copy. th17, th18,
+  th185 and th19 could not be unpacked because thtk stops at archive version 17; they are treated
+  like the seven that were checked.
+
+  th128 also gets its first diagnostic. `get_diag_dump_function` had no `Th128` case and
+  `touhou128.cpp` held only the limiter, input, D3D9Ex and replay patches, so the key produced
+  nothing there; it now writes `oilp_diag.txt` with both rounding sites.
+
+  Confirmed in game: all ten report 4 of 4 and `90 90` (th128 also `DD 04 24` for its floor), and
+  bullets move at sub-pixel positions.
+
+### Fixed
+
+- **th19 took the game down when the dump was exported** (`cc29764`)
+
+  The dump line used `%s` for the site address while passing a byte value (`0x90`), so `printf`
+  treated it as a string pointer and read `0x00000090`. The crash record says exactly that -
+  `read at 0x00000090` with `esi=0x90` - and its module list puts `th19.exe` at `0x00D10000`, which
+  also confirms the ASLR fired. The line now rebases once into a local and prints it with `%08X`.
+
 ## 2026-11-16
 
 ### Added
