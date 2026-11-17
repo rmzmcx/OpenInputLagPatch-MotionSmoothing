@@ -41,6 +41,18 @@ public:
 	static BOOL DebugConsole;
 	static BOOL DebugWait;
 	static BOOL FixTH07CherryBonusDisplay;
+
+	// Whether the patch should keep a th10 replay save from adding each stage's frame count to the
+	// one already in its stage header. The count is summed when a replay is written, and unlike the
+	// packed length next to it, it is never cleared before the sum: saving the same run a second
+	// time records twice the real count, a third time three times, and so on. The game reads each
+	// stage up to that count, so playback runs past the end of the stage's real data into the next
+	// stage's header and inputs, and stops reproducing the run from the end of the first stage.
+	// The patch clears the count before the sum the way the length already is, so every save writes
+	// the numbers the first one did. th11 and th12 keep a "saved once" flag on the replay manager
+	// and skip the sum after the first save; th10 predates that flag.
+	static BOOL FixTH10ReplayResave;
+
 	static BOOL FixTH12ScoreDisplay;
 	static BOOL FixPracModeReplayCrash;
 	static BOOL FixInputGlitching;

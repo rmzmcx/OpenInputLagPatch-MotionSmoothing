@@ -1665,6 +1665,42 @@ static void th10_skip_present_setup(DWORD address, size_t size) {
 	patch_bytes(address, patch, size);
 }
 
+// A replay save sums each stage's frame count into its stage header (0x429CAC) so the file records
+// how many frames that stage lasted. The packed length next to it is cleared before the sum
+// (0x429C0B); the frame count is not. Saving the same run a second time therefore writes twice the
+// real count, a third time three times, and the game reads each stage up to that count when playing
+// the replay back - past the real end of the stage's data, into the next stage's header and inputs.
+// th11 and th12 gate the whole sum on a "saved once" flag on the replay manager and leave the first
+// save's numbers alone after that; th10 predates that flag. Clearing the count the way the length
+// already is gives the same result without one, because every save then computes what the first one
+// did. The first save itself is untouched: the count is still zero when it runs.
+//
+// The site is the length's own clear, 7 bytes for 5 of a call plus two nops. eax has to survive -
+// the code right after it (0x429C12) stores eax into one of the function's locals.
+static void __declspec(naked) th10_replay_save_clear_stage() {
+	__asm {
+		push eax
+		mov dword ptr [ecx+4], 0
+		mov dword ptr [ecx+8], 0
+		pop eax
+		ret
+	}
+}
+
+static void th10_install_replay_resave_fix() {
+	// mov dword ptr [ecx+8], 0
+	static const BYTE expected[] = { 0xC7, 0x41, 0x08, 0x00, 0x00, 0x00, 0x00 };
+	BYTE* site = (BYTE*)0x00429C0B;
+	if (memcmp(site, expected, sizeof(expected)) != 0) {
+		printf("th10 replay stage clear at 0x429C0B doesn't look like the known one, skipping!\n");
+		return;
+	}
+	patch_call(0x00429C0B, (void*)th10_replay_save_clear_stage);
+	BYTE nops[2] = { 0x90, 0x90 };
+	patch_bytes(site + 5, nops, sizeof(nops));
+	printf("Replay save: th10 clears each stage's frame count before summing it\n");
+}
+
 void th10_install_patches() {
 	{
 		static const BYTE expected[] = {
@@ -1803,6 +1839,8 @@ void th10_install_patches() {
 		// (the overlay readouts are Config::ShowOverlay's business; see Limiter::Initialize)
 		overlay_set_present_rate_follow_text(true);
 	}
+	if (Config::FixTH10ReplayResave)
+		th10_install_replay_resave_fix();
 	if (Config::FixBulletPixelSnapping)
 		th10_install_bullet_pixel_snapping();
 }

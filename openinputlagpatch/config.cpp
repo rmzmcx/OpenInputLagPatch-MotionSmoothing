@@ -18,6 +18,7 @@ int Config::ShowOverlay = 1;
 BOOL Config::DebugConsole = FALSE;
 BOOL Config::DebugWait = FALSE;
 BOOL Config::FixTH07CherryBonusDisplay = TRUE;
+BOOL Config::FixTH10ReplayResave = TRUE;
 BOOL Config::FixTH12ScoreDisplay = TRUE;
 BOOL Config::FixPracModeReplayCrash = TRUE;
 BOOL Config::FixInputGlitching = TRUE;
@@ -72,6 +73,7 @@ static const char default_global_ini[] =
     "DebugConsole = 0\r\n"
     "DebugWait = 0\r\n"
     "FixTH07Cherry&BonusDisplay = 1\r\n"
+    "FixTH10ReplayResave = 1\r\n"
     "FixTH12ScoreDisplay = 1\r\n"
     "FixPracModeReplayCrash = 1\r\n"
     "FixInputGlitching = 1\r\n"
@@ -183,6 +185,7 @@ static void load_config_file(const wchar_t* config_path) {
 	Config::FixTH07CherryBonusDisplay = (BOOL)GetPrivateProfileInt(
 		TEXT("Option"), TEXT("FixTH07Cherry&BonusDisplay"),
 		(int)Config::FixTH07CherryBonusDisplay, config_path);
+	LOAD_SETTING(FixTH10ReplayResave);
 	LOAD_SETTING(FixTH12ScoreDisplay);
 	LOAD_SETTING(FixPracModeReplayCrash);
 	LOAD_SETTING(FixInputGlitching);
