@@ -62,6 +62,30 @@ is also the record of what has actually been verified rather than just what was 
 
   Confirmed in game: 4 of 4 with `90 90` and `DD 04 24`, 837 bullets on the draw chains.
 
+### Fixed
+
+- **th19 follows the frame rate target again with the interpolation off** (`d75b5fa`)
+
+  The logic frame rate used to be re-read only by `Limiter::TickUntil()`, which the frame function
+  reaches only while its own clock still says the next frame is ahead of it. Push the target above
+  what the game can keep up with and the value freezes: the game keeps running at a rate it can no
+  longer hold, and lowering it again changes nothing. thprac's FPS option goes through the same
+  channel (the variable at `0x4B6090`), so the value the player edits is the one that stopped
+  being read.
+
+  With the interpolation on, `th19_present_hook` polls it every frame; the problem only showed with
+  `Interpolation = 0`, where none of the five present call sites was taken over. Follow th20's
+  `04495d0` and install a present hook that only polls the target and presents the game's frame,
+  for whenever the interpolation is off.
+
+  The present sites and the hook address are parameters of `th19_hook_present` now, and the device
+  comes from `th19_device()`, which falls back to the game's own pointer at `[0x62BB48]` when the
+  patch's D3D9 hook isn't installed - otherwise every present would return a failure the game
+  reads as a lost device.
+
+  Confirmed in game: raising and lowering the frame rate recovers immediately with the
+  interpolation on and off. v1.00a has no present table, so this covers v1.10c.
+
 ## 2026-11-17
 
 ### Added
