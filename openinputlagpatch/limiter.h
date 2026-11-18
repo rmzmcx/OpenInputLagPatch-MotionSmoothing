@@ -105,6 +105,17 @@ public:
 	// throttling the logic, and extra presentations would undo it.
 	static bool PresentingEveryNthFrame();
 
+	// Whether the frame interpolation may add presentations this frame, i.e. whether the thinning
+	// above leaves it alone.
+	//
+	// A forced presentation rate ("*N") is not the case the thinning is for: it says how often the
+	// frames should be shown, whatever the logic runs at, so the extras keep running until the logic
+	// itself reaches that rate. With "*240" and 75fps logic on a 60hz display the frames are still
+	// presented 240 times a second; at 480fps logic the thinning takes over again. A plain
+	// multiplier, the display rate and the largest multiple of the logic rate all still stop at the
+	// thinning, because none of them names a rate the presents should reach on their own.
+	static bool InterpolationAllowed();
+
 	// Those same games are the ones external tools hook to change the frame rate: thprac, for
 	// example, points the engine's clock at a variable of its own. The per game code reports
 	// whatever frame rate is in use there through this, so the limiter follows it instead of

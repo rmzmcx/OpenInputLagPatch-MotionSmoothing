@@ -37,6 +37,16 @@ bool Limiter::PresentingEveryNthFrame() {
 	return present_every > 1;
 }
 
+// Whether the frame interpolation may add presentations this frame (see limiter.h)
+bool Limiter::InterpolationAllowed() {
+	if (!PresentingEveryNthFrame())
+		return true;
+
+	// A forced presentation rate keeps the interpolation running below its own rate; the thinning
+	// only comes back once the logic has caught up with it.
+	return Config::InterpolationFPS > 0 && (double)Config::InterpolationFPS > game_fps;
+}
+
 // The rate the frame interpolation should be presenting at (see limiter.h). This is what the games
 // that had interpolation before this worked out for themselves; the ones that come after call it.
 double Limiter::PresentRate() {
