@@ -38,6 +38,15 @@ int __fastcall th6_update_calc_chain_hook() {
     // The device only exists after the game initialises D3D, so install lazily (idempotent).
     D3D8Hook::Install(engine->d3d8_device);
     Limiter::Tick();
+    // The game scales every frame's logic by g_Supervisor.framerateMultiplier (0x6C6EC4). Its own
+    // refresh rate detection sets it to 60 / rate from the frame rate the menus measured, and the
+    // fullscreen branch replaces it with 0.8 whenever a frame took between 0.6 and 0.865 of a 60fps
+    // frame. With OilP pacing the frames, a logic rate above 60 therefore still moved at 60, and the
+    // menu history can leave a 0.857/0.8 behind even at 60 after a fast run - which also stops
+    // ReplayManager from registering (it refuses below 0.99). vpatch skips the whole window/
+    // fullscreen test at 0x420896 so the window branch's "framerateMultiplier = 1.0" runs in every
+    // mode; writing the field does the same and covers the 60 case too.
+    *(float*)0x006C6EC4 = 1.0f;
     // Notes which sprites the bullet manager draws, so only those get a texture of their own
     th6_collect_bullet_sprites();
 
@@ -1449,6 +1458,13 @@ void th6_diag_dump() {
     fprintf(file, "configured game frame rate: %u, BltPrepareTime %u, sleep %d\n",
             Config::GameFPS, Config::BltPrepareTime, (int)Config::Sleep);
     fprintf(file, "frames recorded: %u\n", count);
+    {
+        unsigned int gate_calls = 0;
+        D3D8Hook::PresentGateStats(&gate_calls);
+        fprintf(file, "interpolation gate: %u extra(s) asked, %u dropped; d3d8 presents %u call(s)\n",
+                Limiter::InterpolationExtrasAsked(), Limiter::InterpolationExtrasDropped(),
+                gate_calls);
+    }
     // The game's own frame rate accounting, from its own side (see Th6FpsState): the text it draws for
     // its frame rate, the pass count it is working on and the two accumulators its "processing rate"
     // comes out of. That count is added to once per draw pass, the extras included, and the two
@@ -1549,8 +1565,7 @@ static void th6_present_hook() {
     // The extras have nothing to draw in a frame the game didn't (see the frame skip note above), and
     // nothing to add while the presents are being thinned out - that is there to keep a frame rate above
     // the display's from being throttled by its presents, and extras would undo it
-    if (th6_interpolating && th6_drew_frame && !Limiter::PresentingEveryNthFrame() &&
-        Limiter::ShouldPresent()) {
+    if (th6_interpolating && th6_drew_frame && Limiter::InterpolationAllowed()) {
         double rate = Limiter::PresentRate();
         if (rate > 0.0) {
             static bool rate_printed = false;
@@ -1564,6 +1579,7 @@ static void th6_present_hook() {
         LARGE_INTEGER spacing;
         unsigned int extras = Limiter::ExtraPresentations(rate, spacing);
         th6_last_extra_presentations = extras;
+        unsigned int dropped = 0;
 
         // Where the game's own part of this frame started, so the extras can tell whether they still fit
         // before the next frame is due
@@ -1585,8 +1601,10 @@ static void th6_present_hook() {
             for (unsigned int k = 1; k <= extras; ++k) {
                 LARGE_INTEGER target;
                 target.QuadPart = base.QuadPart + spacing.QuadPart * (LONGLONG)k;
-                if (has_deadline && target.QuadPart + game_work.QuadPart > deadline.QuadPart)
+                if (has_deadline && target.QuadPart + game_work.QuadPart > deadline.QuadPart) {
+                    ++dropped;
                     continue;
+                }
 
                 Limiter::WaitUntil(target);
 
@@ -1600,6 +1618,7 @@ static void th6_present_hook() {
                 th6_extra_presentation((float)k / (float)(extras + 1));
             }
         }
+        Limiter::NoteInterpolationExtras(extras, dropped);
     }
 
     th6_drew_frame = false;
