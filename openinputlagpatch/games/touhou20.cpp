@@ -1715,7 +1715,7 @@ static HRESULT th20_present_hook() {
 	double rate = Limiter::PresentRate();
 	// Nothing more to present if the presentation that just happened failed (a lost device, for
 	// example) - the game's own code right after this handles that
-	if (SUCCEEDED(result) && rate > 0.0 && Limiter::game_fps > 0.0 && !Limiter::PresentingEveryNthFrame()) {
+	if (SUCCEEDED(result) && rate > 0.0 && Limiter::game_fps > 0.0 && Limiter::InterpolationAllowed()) {
 		static bool rate_printed = false;
 		if (!rate_printed) {
 			rate_printed = true;

@@ -1187,7 +1187,7 @@ static HRESULT th143_present_hook() {
 
 	double rate = Limiter::PresentRate();
 	if (SUCCEEDED(result) && rate > 0.0 && Limiter::game_fps > 0.0 &&
-		!Limiter::PresentingEveryNthFrame()) {
+		Limiter::InterpolationAllowed()) {
 		static bool rate_printed = false;
 		if (!rate_printed) {
 			rate_printed = true;

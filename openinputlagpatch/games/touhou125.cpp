@@ -2040,7 +2040,7 @@ static HRESULT th125_present_hook() {
 
 	double rate = Limiter::PresentRate();
 	if (SUCCEEDED(result) && th125_frame_ready && rate > 0.0 &&
-		Limiter::game_fps > 0.0 && !Limiter::PresentingEveryNthFrame()) {
+		Limiter::game_fps > 0.0 && Limiter::InterpolationAllowed()) {
 		static bool rate_printed = false;
 		if (!rate_printed) {
 			rate_printed = true;
