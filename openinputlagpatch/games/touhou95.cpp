@@ -1217,6 +1217,13 @@ void th95_diag_dump() {
     fprintf(file, "configured game frame rate: %u, BltPrepareTime %u, sleep %d\n",
             Config::GameFPS, Config::BltPrepareTime, (int)Config::Sleep);
     fprintf(file, "frames recorded: %u\n", count);
+    {
+        unsigned int gate_calls = 0;
+        D3D8Hook::PresentGateStats(&gate_calls);
+        fprintf(file, "interpolation gate: %u extra(s) asked, %u dropped; d3d8 presents %u call(s)\n",
+                Limiter::InterpolationExtrasAsked(), Limiter::InterpolationExtrasDropped(),
+                gate_calls);
+    }
     // Whether the rounding was dropped: 90 90 and DD 04 24 mean the draw really runs at the
     // fractional position. 0 means the install never ran, -1 means a site did not match.
     fprintf(file, "pixel snapping: %d of 4 frndint replaced, 0x43ED77 now holds %02X %02X, "
@@ -1379,10 +1386,11 @@ static int th95_present_hook() {
     unsigned int presents = 1;
     present_time[0] = base;
 
-    if (th95_drew_frame && !Limiter::PresentingEveryNthFrame() && Limiter::ShouldPresent()) {
+    if (th95_drew_frame && Limiter::InterpolationAllowed()) {
         const double rate = Limiter::PresentRate();
         LARGE_INTEGER spacing;
         const unsigned int extras = Limiter::ExtraPresentations(rate, spacing);
+        unsigned int dropped = 0;
 
         LARGE_INTEGER frame_start = Limiter::FrameStart();
         LARGE_INTEGER frame_wait = Limiter::FrameWait();
@@ -1397,8 +1405,10 @@ static int th95_present_hook() {
             for (unsigned int k = 1; k <= extras; ++k) {
                 LARGE_INTEGER target;
                 target.QuadPart = base.QuadPart + spacing.QuadPart * (LONGLONG)k;
-                if (has_deadline && target.QuadPart + game_work.QuadPart > deadline.QuadPart)
+                if (has_deadline && target.QuadPart + game_work.QuadPart > deadline.QuadPart) {
+                    ++dropped;
                     continue;
+                }
 
                 Limiter::WaitUntil(target);
                 if (presents < th95_diag_presents_max)
@@ -1409,6 +1419,7 @@ static int th95_present_hook() {
                 th95_extra_presentation((float)k / (float)(extras + 1));
             }
         }
+        Limiter::NoteInterpolationExtras(extras, dropped);
     }
 
     const unsigned int backbuffer_after_extras = th95_backbuffer_identity();

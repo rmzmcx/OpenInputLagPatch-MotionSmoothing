@@ -1713,6 +1713,13 @@ void th8_diag_dump() {
     fprintf(file, "configured game frame rate: %u, BltPrepareTime %u, sleep %d\n",
             Config::GameFPS, Config::BltPrepareTime, (int)Config::Sleep);
     fprintf(file, "frames recorded: %u\n", count);
+    {
+        unsigned int gate_calls = 0;
+        D3D8Hook::PresentGateStats(&gate_calls);
+        fprintf(file, "interpolation gate: %u extra(s) asked, %u dropped; d3d8 presents %u call(s)\n",
+                Limiter::InterpolationExtrasAsked(), Limiter::InterpolationExtrasDropped(),
+                gate_calls);
+    }
     // The game's own frame rate accounting, from its own side (see Th8FpsState): the rate it read
     // out of the last 500ms window, the text it draws for it, and the lag it compensates for. Those
     // are counted off the draw passes the extras add, so reading what the game itself makes of them
@@ -1841,7 +1848,7 @@ static void __fastcall th8_present_hook(void* self) {
     // The extras have nothing to draw in a frame the game didn't (see the frame skip note above),
     // and nothing to add while the presents are being thinned out - that is there to keep a frame
     // rate above the display's from being throttled by its presents, and extras would undo it
-    if (th8_drew_frame && !Limiter::PresentingEveryNthFrame() && Limiter::ShouldPresent()) {
+    if (th8_drew_frame && Limiter::InterpolationAllowed()) {
         double rate = Limiter::PresentRate();
         if (rate > 0.0) {
             static bool rate_printed = false;
@@ -1854,6 +1861,7 @@ static void __fastcall th8_present_hook(void* self) {
 
         LARGE_INTEGER spacing;
         unsigned int extras = Limiter::ExtraPresentations(rate, spacing);
+        unsigned int dropped = 0;
 
         // Where the game's own part of this frame started, so the extras can tell whether they
         // still fit before the next frame is due
@@ -1875,8 +1883,10 @@ static void __fastcall th8_present_hook(void* self) {
             for (unsigned int k = 1; k <= extras; ++k) {
                 LARGE_INTEGER target;
                 target.QuadPart = base.QuadPart + spacing.QuadPart * (LONGLONG)k;
-                if (has_deadline && target.QuadPart + game_work.QuadPart > deadline.QuadPart)
+                if (has_deadline && target.QuadPart + game_work.QuadPart > deadline.QuadPart) {
+                    ++dropped;
                     continue;
+                }
 
                 Limiter::WaitUntil(target);
 
@@ -1890,6 +1900,7 @@ static void __fastcall th8_present_hook(void* self) {
                 th8_extra_presentation((float)k / (float)(extras + 1));
             }
         }
+        Limiter::NoteInterpolationExtras(extras, dropped);
     }
 
     th8_drew_frame = false;

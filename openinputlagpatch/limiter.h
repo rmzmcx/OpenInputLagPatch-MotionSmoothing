@@ -67,11 +67,6 @@ public:
 
 	static bool SetGameFPS(int fps);
 
-	// Whether this frame's present should actually be submitted.
-	// True unless the current target framerate is above the display refresh rate,
-	// in which case we present every Nth frame so the present can't throttle the logic.
-	static bool ShouldPresent();
-
 	// Some games (th19) keep their own clock and compute how long a frame is from the frame
 	// rate. Those games read this value directly, so it has to follow the limiter's target -
 	// otherwise the game's clock keeps running at 60fps no matter what GameFPS is set to.
@@ -99,22 +94,18 @@ public:
 	// the presentations still average out ("*144" with 60fps logic presents 2 and 3 alternately).
 	static unsigned int ExtraPresentations(double rate, LARGE_INTEGER& spacing);
 
-	// Whether the patch is presenting every Nth frame instead of every one, because the target
-	// frame rate is above what the display can show (see ShouldPresent). The frame interpolation
-	// must not add presentations while it is: the thinning is what keeps the presents from
-	// throttling the logic, and extra presentations would undo it.
-	static bool PresentingEveryNthFrame();
-
-	// Whether the frame interpolation may add presentations this frame, i.e. whether the thinning
-	// above leaves it alone.
-	//
-	// A forced presentation rate ("*N") is not the case the thinning is for: it says how often the
-	// frames should be shown, whatever the logic runs at, so the extras keep running until the logic
-	// itself reaches that rate. With "*240" and 75fps logic on a 60hz display the frames are still
-	// presented 240 times a second; at 480fps logic the thinning takes over again. A plain
-	// multiplier, the display rate and the largest multiple of the logic rate all still stop at the
-	// thinning, because none of them names a rate the presents should reach on their own.
+	// Whether the frame interpolation may add presentations this frame. Only the replay fast
+	// forward turns it off: the extras would compete with the skip, which wants as many logic
+	// frames per second as it can get. Every other setting - a plain multiplier, the display
+	// rate, the largest multiple, a forced rate - keeps the interpolation running.
 	static bool InterpolationAllowed();
+
+	// Diagnostics for the games whose presents are thinned out: how many extra presentations the
+	// frames asked for and how many were dropped because they would have overrun the frame. The
+	// games call this once per frame, after working out what they managed to present.
+	static void NoteInterpolationExtras(unsigned int extras, unsigned int dropped);
+	static unsigned int InterpolationExtrasAsked();
+	static unsigned int InterpolationExtrasDropped();
 
 	// Those same games are the ones external tools hook to change the frame rate: thprac, for
 	// example, points the engine's clock at a variable of its own. The per game code reports
@@ -136,7 +127,7 @@ private:
 	static LARGE_INTEGER frame_start;
 	static LARGE_INTEGER frame_end;
 	static LARGE_INTEGER frame_work;
-	static unsigned int present_every; // 1 = present every frame
+	static bool replay_skipping;
 	static unsigned int display_refresh;
 	static bool refresh_queried;
 };

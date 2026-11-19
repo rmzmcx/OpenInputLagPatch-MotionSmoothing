@@ -21,30 +21,31 @@ ReplayCallback Limiter::replay_callback = nullptr;
 LARGE_INTEGER Limiter::frame_start;
 LARGE_INTEGER Limiter::frame_end;
 LARGE_INTEGER Limiter::frame_work;
-unsigned int Limiter::present_every = 1;
 unsigned int Limiter::display_refresh = 0;
 bool Limiter::refresh_queried = false;
+bool Limiter::replay_skipping = false;
 double Limiter::game_fps = 60.0;
 UINT (*Limiter::external_game_fps)() = nullptr;
 
-bool Limiter::ShouldPresent() {
-	if (present_every <= 1)
-		return true;
-	return (frame_num % present_every) == 0;
-}
-
-bool Limiter::PresentingEveryNthFrame() {
-	return present_every > 1;
-}
-
 // Whether the frame interpolation may add presentations this frame (see limiter.h)
 bool Limiter::InterpolationAllowed() {
-	if (!PresentingEveryNthFrame())
-		return true;
+	return !replay_skipping;
+}
 
-	// A forced presentation rate keeps the interpolation running below its own rate; the thinning
-	// only comes back once the logic has caught up with it.
-	return Config::InterpolationFPS > 0 && (double)Config::InterpolationFPS > game_fps;
+static unsigned int interpolation_extras_asked;
+static unsigned int interpolation_extras_dropped;
+
+void Limiter::NoteInterpolationExtras(unsigned int extras, unsigned int dropped) {
+	interpolation_extras_asked += extras;
+	interpolation_extras_dropped += dropped;
+}
+
+unsigned int Limiter::InterpolationExtrasAsked() {
+	return interpolation_extras_asked;
+}
+
+unsigned int Limiter::InterpolationExtrasDropped() {
+	return interpolation_extras_dropped;
 }
 
 // The rate the frame interpolation should be presenting at (see limiter.h). This is what the games
@@ -144,12 +145,14 @@ bool Limiter::UpdateTargetFPS() {
 	// Replay skipping/slowing always goes by the patch's own values, which is also what the
 	// oilp_set_replay_*_fps API writes to
 	UINT target = base_target;
+	replay_skipping = false;
 	if (Config::ReplaySpeedControl && replay_callback) {
 		switch (replay_callback()) {
 			case FPSTarget::Game:
 				break;
 			case FPSTarget::ReplaySkip:
 				target = Config::ReplaySkipFPS > 0 ? (UINT)Config::ReplaySkipFPS : 480;
+				replay_skipping = true;
 				break;
 			case FPSTarget::ReplaySlow:
 				target = Config::ReplaySlowFPS > 0 ? (UINT)Config::ReplaySlowFPS : 30;
@@ -167,7 +170,7 @@ bool Limiter::UpdateTargetFPS() {
 	// When the target framerate goes above the display refresh rate (replay skip, thprac
 	// speedup), presenting every frame would throttle the logic down to the refresh rate -
 	// which is exactly what happens under dgVoodoo2, where the present blocks on the
-	// D3D11 flip queue and nothing else can pace the game. Present every Nth frame instead.
+	// D3D11 flip queue and nothing else can pace the game.
 	if (!refresh_queried) {
 		refresh_queried = true;
 		DEVMODEA mode = {};
@@ -175,9 +178,6 @@ bool Limiter::UpdateTargetFPS() {
 		if (EnumDisplaySettingsA(NULL, ENUM_CURRENT_SETTINGS, &mode))
 			display_refresh = mode.dmDisplayFrequency;
 	}
-	present_every = 1;
-	if (display_refresh > 0 && target > display_refresh)
-		present_every = (target + display_refresh - 1) / display_refresh;
 
 	return target != base_target;
 }

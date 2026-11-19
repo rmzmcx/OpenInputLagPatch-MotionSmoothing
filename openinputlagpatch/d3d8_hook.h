@@ -25,9 +25,9 @@ namespace D3D8Hook {
 	// wrappers that never go through d3d9.dll (dgVoodoo2 in particular).
 	void HookDirect3DCreate8();
 
-	// Hooks IDirect3DDevice8::Present (vtable index 15) so frames can be skipped when the
-	// target framerate is above the display refresh rate (see Limiter::ShouldPresent), and
-	// IDirect3DDevice8::Reset (vtable index 14) so window mode survives a device reset.
+	// Hooks IDirect3DDevice8::Present (vtable index 15) so the patch can draw its overlay and
+	// count presentations, and IDirect3DDevice8::Reset (vtable index 14) so window mode survives
+	// a device reset.
 	// Safe to call every frame: it does nothing until a device is available, and only
 	// installs the hook once.
 	void Install(IDirect3DDevice8* device);
@@ -41,6 +41,9 @@ namespace D3D8Hook {
 	void SetDirect3DCreateCallback(Direct3DCreateCallback callback);
 
 	PresentInfo GetPresentInfo();
+
+	// How often the game asked for a present, for the diagnostics.
+	void PresentGateStats(unsigned int* calls);
 }
 
 // Presents with the Present that was in place when the device was created, i.e. without the hooks

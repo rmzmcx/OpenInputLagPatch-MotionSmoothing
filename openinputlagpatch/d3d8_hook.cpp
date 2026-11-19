@@ -497,10 +497,14 @@ namespace {
 		down = pressed;
 	}
 
+	static unsigned int present_calls;
+
 	HRESULT __stdcall Present_hook(IDirect3DDevice8* device, const RECT* src_rect, const RECT* dst_rect,
 	                               HWND dst_window, const RGNDATA* dirty_region) {
-		if (!Limiter::ShouldPresent())
-			return D3D_OK;
+		++present_calls;
+		// The presents follow the logic rate in every mode. With vsync off the present does not
+		// block, so the old thinning had nothing to protect the logic from and only held the
+		// presentation rate below the logic rate - the D3D9 games never had it.
 
 		draw_overlay();
 		// When the game is translated through D3D9, the final D3D9 Present applies the
@@ -654,6 +658,11 @@ namespace {
 
 		return d3d8;
 	}
+}
+
+void D3D8Hook::PresentGateStats(unsigned int* calls) {
+	if (calls)
+		*calls = present_calls;
 }
 
 void D3D8Hook::Install(IDirect3DDevice8* device) {
