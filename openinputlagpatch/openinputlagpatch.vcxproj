@@ -25,7 +25,7 @@
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
-    <IncludePath>$(ProjectDir);$(VC_IncludePath);$(WindowsSDK_IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir);$(ProjectDir)imgui;$(ProjectDir)freetype\include;$(VC_IncludePath);$(WindowsSDK_IncludePath)</IncludePath>
     <!-- Build output goes to build/ so that Release/ only holds release packages. The
          intermediate directory is per project because the patch and the loader compile
          some of the same files with different settings. -->
@@ -67,7 +67,8 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
-      <AdditionalDependencies>shlwapi.lib;d3d9.lib;winmm.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>shlwapi.lib;d3d9.lib;winmm.lib;version.lib;freetype.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)freetype;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <MinimumRequiredVersion>5.01</MinimumRequiredVersion>
       <ModuleDefinitionFile>openinputlagpatch.def</ModuleDefinitionFile>
     </Link>
@@ -132,6 +133,15 @@
     <ClCompile Include="games\touhou185.cpp" />
     <ClCompile Include="games\touhou19.cpp" />
     <ClCompile Include="games\touhou20.cpp" />
+    <ClCompile Include="imgui\imgui.cpp" />
+    <ClCompile Include="imgui\imgui_draw.cpp" />
+    <ClCompile Include="imgui\imgui_tables.cpp" />
+    <ClCompile Include="imgui\imgui_widgets.cpp" />
+    <ClCompile Include="imgui\imgui_impl_dx8.cpp" />
+    <ClCompile Include="imgui\imgui_impl_dx9.cpp" />
+    <ClCompile Include="imgui\imgui_impl_win32.cpp" />
+    <ClCompile Include="imgui\imgui_freetype.cpp" />
+    <ClCompile Include="imgui_overlay.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="common.h" />
@@ -177,6 +187,14 @@
     <ClInclude Include="games\touhou185.h" />
     <ClInclude Include="games\touhou19.h" />
     <ClInclude Include="games\touhou20.h" />
+    <ClInclude Include="imgui\imgui.h" />
+    <ClInclude Include="imgui\imgui_internal.h" />
+    <ClInclude Include="imgui\imconfig.h" />
+    <ClInclude Include="imgui\imgui_impl_dx8.h" />
+    <ClInclude Include="imgui\imgui_impl_dx9.h" />
+    <ClInclude Include="imgui\imgui_impl_win32.h" />
+    <ClInclude Include="imgui\imgui_freetype.h" />
+    <ClInclude Include="imgui_overlay.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="openinputlagpatch.def" />

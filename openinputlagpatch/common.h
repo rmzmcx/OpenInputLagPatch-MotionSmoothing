@@ -26,6 +26,7 @@ enum UiMessage {
 	UiMessage_Direct3DCreate9ExFailed,
 	UiMessage_Direct3DCreate9NotFound,
 	UiMessage_Direct3DCreate9Failed,
+	UiMessage_FullscreenModeUnavailable,
 	UiMessage_Count
 };
 

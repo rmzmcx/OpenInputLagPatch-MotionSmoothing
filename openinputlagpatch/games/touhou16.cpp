@@ -30,6 +30,7 @@ static const ReplayPracticeGuard th16_replay_practice_guard = {
 
 int __fastcall th16_window_update_hook(void* self) {
 	Limiter::Tick();
+	replay_practice_tick();
 	return CWindowManager__UpdateFast(self);
 }
 
@@ -1163,7 +1164,6 @@ static HRESULT th16_present_hook() {
 	}
 
 	// U dumps the diagnostics
-	replay_practice_present_tick();
 	return result;
 }
 

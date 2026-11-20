@@ -8,6 +8,9 @@
 #include "common.h"
 #include "config.h"
 #include "d3d9_overlay.h"
+#include "imgui/imgui.h"
+#include "imgui/imgui_impl_dx9.h"
+#include "imgui_overlay.h"
 #include "limiter.h"
 #include "overlay.h"
 #include "present_diag.h"
@@ -418,19 +421,34 @@ UINT get_target_refresh_rate(D3DPRESENT_PARAMETERS* present_params) {
 	}
 }
 
+// th11 and later keep a "Fast" input method in their own custom settings, which the patch forces
+// on. That mode already presents without waiting for the vertical blank, so the interval does not
+// need changing there.
+static bool game_has_fast_input_method_in_custom() {
+	static const bool result = [] {
+		switch (detect_game()) {
+		case TouhouGame::Th11: case TouhouGame::Th12: case TouhouGame::Th125:
+		case TouhouGame::Th128: case TouhouGame::Th13: case TouhouGame::Th143:
+		case TouhouGame::Th14: case TouhouGame::Th15: case TouhouGame::Th165:
+		case TouhouGame::Th16: case TouhouGame::Th17: case TouhouGame::Th18:
+		case TouhouGame::Th185: case TouhouGame::Th19: case TouhouGame::Th20:
+		case TouhouGame::Th19v100a:
+			return true;
+		default:
+			return false;
+		}
+	}();
+	return result;
+}
+
 // Modifies presentation parameters to work properly with Direct3D9Ex
 void modify_presentation_parameters(D3DPRESENT_PARAMETERS* params) {
-	// Window mode: force the mode that was picked on boot, if the question is enabled
-	switch (WindowMode::GetEffectiveOverride()) {
-	case WindowMode::Override::Windowed:
-		params->Windowed = TRUE;
-		break;
-	case WindowMode::Override::Fullscreen:
-		params->Windowed = FALSE;
-		break;
-	}
-
-	params->PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
+	// The window mode is handled where the game reads its own setting (WindowMode::OnD3DCreate),
+	// so these parameters already describe the window that exists. Rewriting Windowed here moved
+	// the back buffer away from that window, and D3D9 fullscreen requires the size to be a mode
+	// the adapter lists - virtual displays list very few of them.
+	if (!game_has_fast_input_method_in_custom())
+		params->PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
 	params->FullScreen_RefreshRateInHz = params->Windowed ? D3DPRESENT_RATE_DEFAULT : get_target_refresh_rate(params);
 	params->SwapEffect = D3DSWAPEFFECT_DISCARD;
 	params->BackBufferCount = 0;
@@ -453,6 +471,10 @@ HRESULT __stdcall Reset_hook(IDirect3DDevice9* self, D3DPRESENT_PARAMETERS* pPre
 	modify_presentation_parameters(pPresentationParameters);
 	capture_present_info(pPresentationParameters);
 	release_force_ratio_resources();
+	// The font texture and the vertex buffers belong to the device that is being reset; the next
+	// ImplDX9NewFrame builds them again for the new one
+	if (OilpImgui::Enabled())
+		OilpImgui::Gui::ImplDX9InvalidateDeviceObjects();
 
 	HRESULT ret;
 
@@ -524,6 +546,33 @@ auto EndScene_orig = (HRESULT(__stdcall*)(IDirect3DDevice9*))nullptr;
 HRESULT __stdcall EndScene_hook(IDirect3DDevice9* self) {
 	if (!suppress_end_scene_overlay && D3D9Overlay::Instance)
 		D3D9Overlay::Instance->Draw();
+	// The in-game ImGui overlay goes before the game's own EndScene is passed on, so thprac's
+	// overlay (which hooks further down the chain) draws above it
+	if (OilpImgui::Enabled()) {
+		static bool imgui_ready = false;
+		if (!imgui_ready) {
+			// The window the device was created for, rather than whatever happens to be in the
+			// foreground when the first frame is drawn
+			D3DDEVICE_CREATION_PARAMETERS params = {};
+			HWND hwnd = nullptr;
+			if (SUCCEEDED(self->GetCreationParameters(&params)))
+				hwnd = params.hFocusWindow;
+			if (OilpImgui::Install(hwnd)) {
+				imgui_ready = true;
+				OilpImgui::Gui::ImplDX9Init(self);
+			}
+		}
+		if (imgui_ready) {
+			// thprac's backend leaves the display size to the caller; without it ImGui sees a -1x-1
+			// canvas and draws nothing
+			OilpImgui::Gui::ImplDX9AdjustDispSize();
+			// Builds the font atlas on the first frame; NewFrame itself expects that to have happened
+			OilpImgui::Gui::ImplDX9NewFrame();
+			OilpImgui::NewFrame();
+			OilpImgui::Render();
+			OilpImgui::Gui::ImplDX9RenderDrawData(ImGui::GetDrawData());
+		}
+	}
 	return EndScene_orig(self);
 }
 
@@ -538,27 +587,61 @@ HRESULT __stdcall CreateDevice_hook(IDirect3D9* self, UINT Adapter, D3DDEVTYPE D
 	capture_native_output_size(hFocusWindow ? hFocusWindow : pPresentationParameters->hDeviceWindow);
 
 	// Disable vsync on the parameters
+	// Kept in case the patched parameters are refused; see the retry below
+	D3DPRESENT_PARAMETERS game_parameters = *pPresentationParameters;
 	modify_presentation_parameters(pPresentationParameters);
 	capture_present_info(pPresentationParameters);
 	
 	// Create the device
+	auto create_device = [&](IDirect3DDevice9** out) -> HRESULT {
+		if (using_d3d9ex) {
+			auto self_ex = (IDirect3D9Ex*)self;
+			if (pPresentationParameters->Windowed == FALSE) {
+				D3DDISPLAYMODEEX display_mode = {};
+				get_fullscreen_display_mode(pPresentationParameters, &display_mode);
+				return self_ex->CreateDeviceEx(Adapter, DeviceType, hFocusWindow, BehaviorFlags,
+					pPresentationParameters, &display_mode, (IDirect3DDevice9Ex**)out);
+			}
+			return self_ex->CreateDeviceEx(Adapter, DeviceType, hFocusWindow, BehaviorFlags,
+				pPresentationParameters, NULL, (IDirect3DDevice9Ex**)out);
+		}
+		return CreateDevice_orig(self, Adapter, DeviceType, hFocusWindow, BehaviorFlags,
+			pPresentationParameters, out);
+	};
+
 	IDirect3DDevice9* device = nullptr;
-	HRESULT res = 0;
+	HRESULT res = create_device(&device);
+	if (FAILED(res)) {
+		// A display that lists very few modes (virtual or remote ones) can refuse the patched
+		// parameters outright. Fall back to what the game asked for, so it still starts and only
+		// goes without the patched presentation settings.
+		*pPresentationParameters = game_parameters;
+		device = nullptr;
+		res = create_device(&device);
+		if (SUCCEEDED(res)) {
+			printf("CreateDevice: the patched parameters were refused, kept the game's own\n");
+			capture_present_info(pPresentationParameters);
+		}
+	}
+	if (FAILED(res)) {
+		// The display may not offer that fullscreen mode at all. Virtual and remote displays
+		// usually only list their own resolution, so the game's own request fails too. A window
+		// always works, which keeps the game startable there.
+		*pPresentationParameters = game_parameters;
+		pPresentationParameters->Windowed = TRUE;
+		pPresentationParameters->FullScreen_RefreshRateInHz = 0;
+		device = nullptr;
+		res = create_device(&device);
+		if (SUCCEEDED(res)) {
+			printf("CreateDevice: the fullscreen mode is not offered, started windowed\n");
+			capture_present_info(pPresentationParameters);
+			show_ui_message(UiMessage_FullscreenModeUnavailable, MB_ICONWARNING | MB_OK | MB_SETFOREGROUND);
+		}
+	}
+	if (FAILED(res))
+		panic_msgbox(using_d3d9ex ? UiMessage_CreateDeviceExFailed : UiMessage_CreateDeviceFailed, res);
 
 	if (using_d3d9ex) {
-		auto self_ex = (IDirect3D9Ex*)self;
-		if (pPresentationParameters->Windowed == FALSE) {
-			D3DDISPLAYMODEEX display_mode = {};
-			get_fullscreen_display_mode(pPresentationParameters, &display_mode);
-
-			res = self_ex->CreateDeviceEx(Adapter, DeviceType, hFocusWindow, BehaviorFlags, pPresentationParameters, &display_mode, (IDirect3DDevice9Ex**)&device);
-		}
-		else {
-			res = self_ex->CreateDeviceEx(Adapter, DeviceType, hFocusWindow, BehaviorFlags, pPresentationParameters, NULL, (IDirect3DDevice9Ex**)&device);
-		}
-		if (FAILED(res))
-			panic_msgbox(UiMessage_CreateDeviceExFailed, res);
-
 		auto device_ex = (IDirect3DDevice9Ex*)device;
 
 		// D3D9Ex breaks the window style for some reason
@@ -570,10 +653,6 @@ HRESULT __stdcall CreateDevice_hook(IDirect3D9* self, UINT Adapter, D3DDEVTYPE D
 
 		// Set the GPU thread to high priority
 		device_ex->SetGPUThreadPriority(7);
-	} else {
-		res = CreateDevice_orig(self, Adapter, DeviceType, hFocusWindow, BehaviorFlags, pPresentationParameters, &device);
-		if (FAILED(res))
-			panic_msgbox(UiMessage_CreateDeviceFailed, res);
 	}
 
 	*ppReturnedDeviceInterface = device;
@@ -606,7 +685,9 @@ HRESULT __stdcall CreateDevice_hook(IDirect3D9* self, UINT Adapter, D3DDEVTYPE D
 		patch_bytes(&device_vtbl[26], &patch_data, sizeof(DWORD));
 	}
 
-	if (Config::ShowOverlay) {
+	// Both the fps overlay and the in-game ImGui overlay draw from this hook, so it is installed
+	// when either one is wanted
+	if (Config::ShowOverlay || OilpImgui::Enabled()) {
 		EndScene_orig = (HRESULT(__stdcall*)(IDirect3DDevice9*))device_vtbl[42];
 		patch_data = (DWORD)EndScene_hook;
 		patch_bytes(&device_vtbl[42], &patch_data, sizeof(DWORD));

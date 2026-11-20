@@ -26,7 +26,7 @@ bool replay_practice_patch_late_stage_exit(const ReplayPracticeGuard* guard,
 	uintptr_t normal_resume, uintptr_t missing_target,
 	const unsigned char* expected, size_t expected_size);
 bool replay_practice_patch_finish_call(uintptr_t call_site, uintptr_t finish_replay);
-void replay_practice_present_tick();
+void replay_practice_tick();
 
 void replay_practice_late_stage_exit_thunk();
 

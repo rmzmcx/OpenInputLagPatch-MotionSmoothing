@@ -6,6 +6,9 @@
 #include "d3d8/d3d8.h"
 #include "config.h"
 #include "d3d8_overlay.h"
+#include "imgui/imgui.h"
+#include "imgui/imgui_impl_dx8.h"
+#include "imgui_overlay.h"
 #include "limiter.h"
 #include "overlay.h"
 #include "patch_util.h"
@@ -379,19 +382,6 @@ namespace {
 		return target_changed;
 	}
 
-	// Forces the presentation parameters into the mode that was picked on boot, if the
-	// window mode question is enabled
-	void apply_window_override(D3DPRESENT_PARAMETERS* params) {
-		switch (WindowMode::GetEffectiveOverride()) {
-		case WindowMode::Override::Windowed:
-			params->Windowed = TRUE;
-			break;
-		case WindowMode::Override::Fullscreen:
-			params->Windowed = FALSE;
-			break;
-		}
-	}
-
 	// Chooses the refresh rate a fullscreen device should use, the same way the D3D9 hook
 	// does it for the D3D9 games. D3D8 games only ever talk to D3D8, so without this the
 	// FullscreenRefreshRate option did nothing for them - the game asks for the current
@@ -450,7 +440,8 @@ namespace {
 	}
 
 	void apply_presentation_overrides(D3DPRESENT_PARAMETERS* params) {
-		apply_window_override(params);
+		// The window mode comes from the game's own setting, which WindowMode::OnD3DCreate
+		// rewrites before the window exists, so these parameters already match it.
 
 		// Same as the D3D9 hook: vsync is forced off and the game's own frame limiter paces the
 		// game instead. In D3D8 both FullScreen_* fields have to stay zero while windowed, so
@@ -507,6 +498,38 @@ namespace {
 		// presentation rate below the logic rate - the D3D9 games never had it.
 
 		draw_overlay();
+		// The in-game ImGui overlay, drawn before the game's own Present is passed on so thprac's
+		// overlay (which hooks further down) draws above it
+		if (OilpImgui::Enabled()) {
+			static bool imgui_ready = false;
+			if (!imgui_ready) {
+				// The window the device was created for, rather than whatever happens to be in the
+				// foreground when the first frame is drawn
+				D3DDEVICE_CREATION_PARAMETERS params = {};
+				HWND hwnd = nullptr;
+				if (SUCCEEDED(device->GetCreationParameters(&params)))
+					hwnd = params.hFocusWindow;
+				if (OilpImgui::Install(hwnd)) {
+					imgui_ready = true;
+					OilpImgui::Gui::ImplDX8Init(device);
+				}
+			}
+			if (imgui_ready) {
+				// Same as the D3D9 path: the display size is the caller's job
+				D3DSURFACE_DESC desc = {};
+				IDirect3DSurface8* back_buffer = nullptr;
+				if (SUCCEEDED(device->GetBackBuffer(0, D3DBACKBUFFER_TYPE_MONO, &back_buffer))) {
+					back_buffer->GetDesc(&desc);
+					back_buffer->Release();
+					ImGui::GetIO().DisplaySize = ImVec2((float)desc.Width, (float)desc.Height);
+				}
+				// Builds the font atlas on the first frame; NewFrame itself expects that to have happened
+				OilpImgui::Gui::ImplDX8NewFrame();
+				OilpImgui::NewFrame();
+				OilpImgui::Render();
+				OilpImgui::Gui::ImplDX8RenderDrawData(ImGui::GetDrawData());
+			}
+		}
 		// When the game is translated through D3D9, the final D3D9 Present applies the
 		// 4:3 composition instead. Doing it here as well would add the bars twice.
 		if (!d3d9_overlay_available())
@@ -553,6 +576,10 @@ namespace {
 			delete D3D8Overlay::Instance;
 			D3D8Overlay::Instance = nullptr;
 		}
+		// The imgui font texture lives in D3DPOOL_DEFAULT too; leaving it alive would make the
+		// reset fail. The next ImplDX8NewFrame builds it again for the new device.
+		if (OilpImgui::Enabled())
+			OilpImgui::Gui::ImplDX8InvalidateDeviceObjects();
 
 		auto ret = Reset_orig(device, present_params);
 
@@ -712,6 +739,11 @@ HRESULT d3d8_present_bypassing_hooks() {
 	draw_overlay();
 	if (!d3d9_overlay_available())
 		render_force_ratio_4_3(d3d8_device);
+	// The extra presentations go around the Present hook that draws the in-game ImGui overlay, so
+	// they redraw the last frame's draw data themselves. It is the same data RenderDrawData used on
+	// the game's own presentation, which keeps the panels on screen while the frames are re-shown.
+	if (OilpImgui::Enabled() && ImGui::GetDrawData() != nullptr)
+		OilpImgui::Gui::ImplDX8RenderDrawData(ImGui::GetDrawData());
 	LARGE_INTEGER present_start;
 	LARGE_INTEGER present_end;
 	QueryPerformanceCounter(&present_start);

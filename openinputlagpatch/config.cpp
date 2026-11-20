@@ -1,6 +1,8 @@
 #include <Windows.h>
 #include <shlwapi.h>
+#include <stdlib.h>
 #include <string.h>
+#include <string>
 #include "config.h"
 #include "default_ini.h"
 
@@ -15,6 +17,11 @@ BOOL Config::D3D9Ex = TRUE;
 TargetRefreshRate Config::FullscreenRefreshRate = TargetRefreshRate::Max;
 BOOL Config::ForceRatio43 = FALSE;
 int Config::ShowOverlay = 1;
+BOOL Config::UseInGameImguiOverlay = TRUE;
+BOOL Config::ShowPatchAppliedMessage = TRUE;
+char Config::OverlayKey[64] = "Ctrl+Shift+O";
+char Config::DiagKey[64] = "U";
+int Config::Language = 0;
 BOOL Config::DebugConsole = FALSE;
 BOOL Config::DebugWait = FALSE;
 BOOL Config::FixTH07CherryBonusDisplay = TRUE;
@@ -51,6 +58,16 @@ static const char default_global_ini[] =
     "; OpenInputLagPatch global settings.\r\n"
     "; This file is read before the game folder's openinputlagpatch.ini.\r\n"
     "; If the game folder has its own openinputlagpatch.ini, that file overrides these values.\r\n"
+    "\r\n"
+    "; In-game overlay: 0 turns it off completely, 1 shows the settings window (Ctrl+Shift+O).\r\n"
+    "; The overlay switch takes effect after a restart.\r\n"
+    "; OverlayKey/DiagKey are hotkeys written as text; Language is 0 (Simplified Chinese), 1 (English), 2 (Japanese).\r\n"
+    "[Imgui]\r\n"
+    "UseInGameImguiOverlay = 1\r\n"
+    "ShowPatchAppliedMessage = 1\r\n"
+    "OverlayKey = Ctrl+Shift+O\r\n"
+    "DiagKey = U\r\n"
+    "Language = 0\r\n"
     "\r\n"
     "[Rendering]\r\n"
     "FixBulletPixelSnapping = 1\r\n"
@@ -113,7 +130,6 @@ static bool ensure_global_config(wchar_t* path, size_t path_count) {
 
     if (PathFileExistsW(path))
         return true;
-
     HANDLE file = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE)
         return PathFileExistsW(path);
@@ -144,6 +160,74 @@ static bool ensure_global_config(wchar_t* path, size_t path_count) {
     }
     CloseHandle(file);
     return true;
+}
+
+// A file written before the overlay existed, or one an earlier build appended the section to the
+// end of, gets the [Imgui] section in front of every other one, written the same way as the rest
+// of the file.
+static void ensure_imgui_section(const wchar_t* path) {
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return;
+    DWORD size = GetFileSize(file, nullptr);
+    if (size == INVALID_FILE_SIZE || size > 1024 * 1024) {
+        CloseHandle(file);
+        return;
+    }
+    char* content = (char*)malloc(size + 1);
+    if (content == nullptr) {
+        CloseHandle(file);
+        return;
+    }
+    DWORD read = 0;
+    const bool read_ok = ReadFile(file, content, size, &read, nullptr) != FALSE;
+    CloseHandle(file);
+    if (!read_ok) {
+        free(content);
+        return;
+    }
+    content[read] = '\0';
+
+    static const char imgui_section[] =
+        "; In-game overlay: 0 turns it off completely, 1 shows the settings window (Ctrl+Shift+O).\r\n"
+        "; The overlay switch takes effect after a restart.\r\n"
+        "; OverlayKey/DiagKey are hotkeys written as text; Language is 0 (Simplified Chinese), 1 (English), 2 (Japanese).\r\n"
+        "[Imgui]\r\n"
+        "UseInGameImguiOverlay = 1\r\n"
+        "ShowPatchAppliedMessage = 1\r\n"
+        "OverlayKey = Ctrl+Shift+O\r\n"
+        "DiagKey = U\r\n"
+        "Language = 0\r\n"
+        "\r\n";
+
+    std::string text(content, read);
+    free(content);
+
+    size_t imgui_pos = text.find("[Imgui]");
+    const size_t first_section = text.find('[');
+    if (imgui_pos != std::string::npos && imgui_pos == first_section)
+        return;   // Already the first section
+
+    if (imgui_pos != std::string::npos) {
+        // Drop the one at the wrong place (the end of the file, usually)
+        size_t imgui_end = text.find('[', imgui_pos + 1);
+        if (imgui_end == std::string::npos)
+            imgui_end = text.size();
+        text.erase(imgui_pos, imgui_end - imgui_pos);
+    }
+
+    size_t insert_at = text.find('[');
+    if (insert_at == std::string::npos)
+        insert_at = text.size();
+    text.insert(insert_at, imgui_section);
+
+    HANDLE out = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (out == INVALID_HANDLE_VALUE)
+        return;
+    DWORD written = 0;
+    WriteFile(out, text.c_str(), (DWORD)text.size(), &written, nullptr);
+    CloseHandle(out);
 }
 
 // Helper macro for loading a specific setting value
@@ -201,6 +285,24 @@ static void load_config_file(const wchar_t* config_path) {
 	// Interpolation is read as text below, it has more than one form
 	LOAD_SETTING(AlwaysBlt);
 	LOAD_SETTING(GameOverride);
+
+	// The in-game overlay's own section. It sits at the top of the file, and its keys are read as
+	// text where they can be (the hotkeys are written the way they are shown).
+	Config::UseInGameImguiOverlay = (BOOL)GetPrivateProfileInt(
+		TEXT("Imgui"), TEXT("UseInGameImguiOverlay"), (int)Config::UseInGameImguiOverlay, config_path);
+	Config::ShowPatchAppliedMessage = (BOOL)GetPrivateProfileInt(
+		TEXT("Imgui"), TEXT("ShowPatchAppliedMessage"), (int)Config::ShowPatchAppliedMessage, config_path);
+	Config::Language = (int)GetPrivateProfileInt(
+		TEXT("Imgui"), TEXT("Language"), Config::Language, config_path);
+	{
+		wchar_t value[64] = {};
+		GetPrivateProfileStringW(TEXT("Imgui"), TEXT("OverlayKey"), L"", value, 64, config_path);
+		if (value[0] != L'\0')
+			WideCharToMultiByte(CP_UTF8, 0, value, -1, Config::OverlayKey, 64, nullptr, nullptr);
+		GetPrivateProfileStringW(TEXT("Imgui"), TEXT("DiagKey"), L"", value, 64, config_path);
+		if (value[0] != L'\0')
+			WideCharToMultiByte(CP_UTF8, 0, value, -1, Config::DiagKey, 64, nullptr, nullptr);
+	}
 
 	// Load the [Window] section
 	LOAD_WINDOW_SETTING(AskWindowMode, "AskWindowMode");
@@ -262,8 +364,10 @@ bool Config::Load() {
 	wchar_t global_config[1024] = {};
 	const bool global_loaded =
 		ensure_global_config(global_config, _countof(global_config));
-	if (global_loaded)
+	if (global_loaded) {
+		ensure_imgui_section(global_config);
 		load_config_file(global_config);
+	}
 	const bool game_loaded = PathFileExistsW(game_config) != FALSE;
 	if (game_loaded)
 		load_config_file(game_config);
@@ -286,7 +390,12 @@ bool Config::Load() {
 		Config::ReplaySkipFPS = 480;
 	if (Config::ReplaySlowFPS <= 0)
 		Config::ReplaySlowFPS = 30;
-	Config::BltPrepareTime = max(0, min(Config::BltPrepareTime, 16));
+	// Read as signed first: a negative value in the ini wraps around when it is stored into the
+	// unsigned key, so it has to be caught before the range is applied, not clamped from the top.
+	if ((int)Config::BltPrepareTime < 0)
+		Config::BltPrepareTime = 2;
+	else if (Config::BltPrepareTime > 16)
+		Config::BltPrepareTime = 16;
 	if ((int)Config::Sleep > (int)SleepType::Vpatch)
 		Config::Sleep = SleepType::Vpatch;
 	if ((int)Config::FullscreenRefreshRate > (int)TargetRefreshRate::MultipleOfSixty)

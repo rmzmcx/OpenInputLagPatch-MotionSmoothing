@@ -66,7 +66,7 @@ static void __declspec(naked) th10_finish_replay() {
 	}
 }
 
-static void th10_replay_present_tick() {
+static void th10_replay_tick() {
 	if (!th10_replay_exit_pending)
 		return;
 	if (--th10_replay_exit_frames != 0)
@@ -145,6 +145,7 @@ static void __declspec(naked) th10_stage_end_branch_hook() {
 
 int __stdcall th10_window_update_hook(void* self) {
 	Limiter::Tick();
+	th10_replay_tick();
 	return CWindowManager__Update(self);
 }
 
@@ -1631,7 +1632,6 @@ static HRESULT th10_present_hook() {
 		++th10_diag_count;
 	}
 
-	th10_replay_present_tick();
 	return result;
 }
 

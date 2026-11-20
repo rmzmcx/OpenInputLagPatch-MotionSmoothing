@@ -30,6 +30,7 @@ static const ReplayPracticeGuard th13_replay_practice_guard = {
 
 int __stdcall th13_window_update_hook(void* self) {
 	Limiter::Tick();
+	replay_practice_tick();
 	return CWindowManager__UpdateFast(self);
 }
 
@@ -1096,7 +1097,6 @@ static HRESULT th13_present_hook() {
 		++th13_diag_count;
 	}
 
-	replay_practice_present_tick();
 	return result;
 }
 

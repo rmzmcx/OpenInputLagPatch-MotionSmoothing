@@ -172,9 +172,7 @@ bool replay_practice_patch_finish_call(uintptr_t call_site, uintptr_t finish_rep
 	return true;
 }
 
-void replay_practice_present_tick() {
-	if (!Config::FixPracModeReplayCrash)
-		return;
+void replay_practice_tick() {
 	if (pending_finish_frames == 0)
 		return;
 	if (--pending_finish_frames != 0)

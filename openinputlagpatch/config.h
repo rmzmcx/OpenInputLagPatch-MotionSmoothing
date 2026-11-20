@@ -38,6 +38,18 @@ public:
 	//      what BltPrepareTime is set to - this is the line that setting is tuned with)
 	//   3  both
 	static int ShowOverlay;
+
+	// In-game ImGui overlay (see imgui_overlay.cpp). Its own [Imgui] section sits at the top of the
+	// ini:
+	//   UseInGameImguiOverlay   0 turns the overlay off completely, leaving the game as it was
+	//   ShowPatchAppliedMessage whether the "patch is running" hint is shown on startup
+	//   OverlayKey / DiagKey    the hotkeys, written as text ("Ctrl+Shift+O", "U")
+	//   Language                0 = Simplified Chinese, 1 = English, 2 = Japanese
+	static BOOL UseInGameImguiOverlay;
+	static BOOL ShowPatchAppliedMessage;
+	static char OverlayKey[64];
+	static char DiagKey[64];
+	static int Language;
 	static BOOL DebugConsole;
 	static BOOL DebugWait;
 	static BOOL FixTH07CherryBonusDisplay;
