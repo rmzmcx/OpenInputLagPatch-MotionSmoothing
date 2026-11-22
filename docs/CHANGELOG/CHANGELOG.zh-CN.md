@@ -6,6 +6,213 @@
 
 只记录已经在游戏里实测确认可用的改动，因此本文件同时也是「哪些修改真正被验证过」的凭证。
 
+## 2026-11-23
+
+### 新增
+
+- **Developer 文本编辑器与 Release 文本烘焙**（`95a550e`）
+
+  以前改 overlay 文案要改 `imgui_overlay.cpp` 再重编译，改一句也要重启游戏确认。文案现在集中到
+  `ui_text.*`：每条文本有稳定 ID、中英日默认值和覆盖值，界面统一从 ID 取文字。Developer 构建里
+  `Ctrl+Shift+E` 打开文本编辑窗口，可按 ID 或文本搜索、修改当前语言、保存、重载、单项恢复和全部恢复；
+  主界面文字会随编辑立即变化。
+
+  覆盖值保存在 `%APPDATA%\ShanghaiAlice\oilp_custom\ui_text.ini`，按 `[zh]`、`[en]`、`[ja]` 分节。
+  `[Developer] TextEditor` 控制运行时是否启用编辑器，Developer 默认 1，设为 0 后重启即可关闭。
+
+  Release 不再读取 `ui_text.ini`。发布前运行
+  `powershell -NoProfile -ExecutionPolicy Bypass -File tools\bake_ui_text.ps1`，脚本把当前 ini 生成到
+  `openinputlagpatch\ui_text_baked.inc`，构建时通过 `UiText::ApplyBaked()` 编译进 DLL。解决方案新增
+  `Developer` 配置，编辑器源文件只在 `OILP_UI_TEXT_EDITOR` 下参与编译；Release 的编辑器入口、
+  `Ctrl+Shift+E` 和保存代码不会进入 DLL。`AGENTS.md` 已同步记录这套流程。
+
+  字体图集会收集覆盖后的当前语言文本，语言切换会重建字形；日语界面的简体中文选项改为
+  `簡体字中国語`，并补了对应字形。
+
+### 修复
+
+- **中文输入与 thprac 共存**（`95a550e`）
+
+  thprac 启动时会用 `ImmAssociateContext(hwnd, 0)` 关闭 IME，而且它自己的 Win32 后端没有处理
+  `WM_IME_COMPOSITION`。编辑窗口现在只在打开时建立 IME 上下文，关闭时恢复原状，中文结果从
+  `WM_IME_COMPOSITION` 的 `GCS_RESULTSTR` 读取；同时设置 `io.ImeWindowHandle`，让候选窗跟随输入框。
+
+  输入法提交后，同一按键产生的 ANSI `WM_CHAR` 回显会在 50ms 内被跳过，双字节等待状态也会清空，
+  避免多出冒号、问号或乱码。编辑器打开时，`editor_input.cpp` 同时钩住 DirectInput 键盘的
+  `GetDeviceState` 和 `GetDeviceData`，清空游戏键盘状态，防止打字触发退出等游戏按键；关闭后恢复转发。
+  vtable 只安装一次，并加了递归保护，避免和 thprac 的钩子形成递归把栈耗尽。
+
+- **Overlay 布局、帧率应用和 ini 写回**（`95a550e`）
+
+  按键页两个热键框改成固定标签列，两行控件从同一列开始。`游戏逻辑帧率`、`replay 快进帧率` 和
+  `replay 慢放帧率` 使用同一标签列；慢放滑块与快进滑块同为 300 宽，不再把后面的自由调整勾选框算进长度。
+  三项帧率改成草稿值，拖动时不写 `Config`，修改任意一项后在慢放下方显示“应用”，点击才同时写回并保存。
+
+  `GameOverride` 单独允许 `-1`，其它整数选项仍保持 0 下限。overlay 写 ini 后统一把目标行规范成
+  `key = value`，能处理已有的 `key =0`、`key= 0` 等半截空格，只改目标行并保留其它内容和编码。
+  `子弹像素对齐` 移到补帧上方，和 `[Rendering]` 的 ini 顺序一致。
+
+### 已知问题
+
+这一批是 Developer 分支的检查点。文本编辑器、输入法回显过滤、DirectInput 屏蔽和布局仍需继续实测；
+编辑器只用于开发阶段，发布前必须烘焙文本并确认 Release 不含编辑器入口。已有问题仍包括：
+
+- 按键页仍只能把 A-Z/0-9 作为主键，捕获 `F1`、方向键会退回默认 `O`。
+- `DiagKey` 只显示和写回 ini，诊断热键仍写死为 `U`。
+- 字体路径写死为 `C:\Windows\Fonts\msyh.ttc` 和 `msgothic.ttc`，缺字体时可能显示不全。
+- `Trace()` 仍会在游戏目录生成 `<游戏名>.imgui.log`。
+
+## 2026-11-21
+
+### 新增
+
+- **游戏内 ImGui 设置界面**（`ac6c61f`）
+
+  以前改补帧、帧率和窗口设置都要退出游戏、编辑 ini、再重启。这个提交把配置页搬进游戏，按
+  `Ctrl+Shift+O` 打开，改动立即写入 `%APPDATA%\ShanghaiAlice\oilp_custom\openinputlagpatch.ini`。
+  游戏目录里的同名 ini 仍在启动时覆盖全局值，所以使用局部配置时，面板里的改动会被下一次启动读回的值盖掉。
+
+  新增 `[Imgui]` 五项：`UseInGameImguiOverlay` 是整个界面的总开关（首次读取后缓存，重启生效）；
+  `ShowPatchAppliedMessage` 控制启动时右下角三秒的提示；`OverlayKey` 与 `DiagKey` 存热键文本；
+  `Language` 为 0 简体中文、1 English、2 日本語。旧全局 ini 没有这一节，或这一节不在最前面时，
+  `ensure_imgui_section()` 会把它移到文件第一个区块之前，避免已有配置永远读不到默认值。
+
+  面板有三个页签。配置页按 ini 区块重建补帧模式、帧率滑块、布尔开关、数值输入和单选按钮，
+  只读数值留在信息页；每个键有中英日名称，有说明的键在悬停 `(?)` 时显示；只在启动时读取的项在
+  名称后显示「重启后生效」。按键页可以点击热键框后直接按组合键捕获，语言切换会清空字体图集，
+  重新用 FreeType 生成当前语言的字形，并释放 D3D8/D3D9 的设备相关对象。信息页显示逻辑帧率、
+  呈现目标和实际呈现帧率。
+
+  界面以 720p 为基准缩放，限制在 0.8 到 2.0 倍；字体按分辨率重新光栅化，窗口居中且限制在画面
+  92% 以内。打开面板时解除光标裁剪并显示软件光标，关闭后把光标放回窗口中心。
+
+  关键代码的作用：
+
+  | 文件 | 作用 |
+  |---|---|
+  | `imgui_overlay.cpp` / `.h` | 创建 ImGui 上下文、安装窗口钩子、三页面板、配置写回、热键捕获、语言与字体切换、界面缩放、启动提示、`Trace()` 调试日志 |
+  | `imgui/` | Dear ImGui 1.82 核心、DX8/DX9/Win32 后端、FreeType 字体图集构建器 |
+  | `freetype/` | FreeType 2.13.3 头文件和静态库 `freetype.lib`，由 `imgui_freetype.cpp` 使用 |
+  | `d3d8_hook.cpp` / `d3d9_hook.cpp` | 在 Present/EndScene 初始化并绘制面板；Reset 时释放字体纹理和顶点/索引缓冲；补帧额外呈现绕开 Present 钩子时重画上一帧的 UI |
+  | `config.cpp` / `config.h` | `[Imgui]` 的默认值、读取与 `ensure_imgui_section()` 迁移 |
+  | `openinputlagpatch.ini` | 把 `[Imgui]` 放到参考配置最前面，列出五个新键 |
+  | `common.cpp` / `common.h` | 新的全屏模式提示文字，消息框多语言与光标释放 |
+  | `openinputlagpatch.vcxproj` | 加入 ImGui 源文件、FreeType 头文件路径和 `freetype.lib` 链接项 |
+
+  `Trace()` 会在游戏目录生成 `th10.imgui.log` 这样的 `<游戏名>.imgui.log`，记录字体图集、安装状态
+  和前十帧的显示尺寸；这是开发期定位字体的痕迹，不是用户功能。
+
+- **消息框支持日文并按系统语言选择**（`ac6c61f`）
+
+  `UiMessageText` 从英中两列扩成英中日三列，所有启动、设备创建、分辨率和调试提示都补了日文。
+  语言选择从「是否中文，否则英文」改成依次检查用户界面语言、系统界面语言和系统区域设置，
+  支持简体中文、日文和英文。打开消息框时会取消光标裁剪并临时显示光标，框关闭后按原来的计数恢复；
+  这样鼠标不会被游戏窗口限制在框外。
+
+  同时新增「显示器不支持该独占全屏分辨率，已改为窗口模式启动」的警告。`D3D9 CreateDevice` 在
+  修改后的参数、游戏原参数、窗口模式三次尝试后仍失败时，才按 D3D9Ex 或普通 D3D9 报对应的创建失败。
+
+### 修复
+
+- **练习 replay 的收尾计时改回逻辑帧**（`ac6c61f`）
+
+  `b211b97` 把收尾挂起写进 th10 与 th13-th17 的练习 replay，但释放计时的函数只在各作的 present
+  钩子里调用，而 present 钩子整体包在 `if (Config::Interpolation || Config::InterpolationFPS)`
+  里。补帧关闭时补丁仍然挂起 hold，计时却从不运行，pending 永远不清除，关卡推进被抑制，表现为
+  对话结束后动画不结束。补帧开启时计数又按 present 帧递减，120 或 90 个逻辑帧被拆成多次呈现，
+  停留时间被缩短数倍。
+
+  现在 `replay_practice_present_tick()` 改名为 `replay_practice_tick()`，从 present 钩子移到
+  th10、th13、th14、th15、th16、th17 的 `window_update_hook`，和 `Limiter::Tick()` 一样每个逻辑帧
+  执行一次；th10 自己的 `th10_replay_present_tick()` 同样改名为 `th10_replay_tick()` 并移入
+  `th10_window_update_hook`。tick 内部不再检查 `Config::FixPracModeReplayCrash`，因为补丁是否装上
+  已经由启动时的开关决定，运行中关掉开关不能让已经挂起的 hold 失去释放路径。
+
+  因此 `ReplayPracticeScoreDisplayFrames = 120` 和 th10 的 90 现在真的按逻辑帧计算；th10 的
+  `th10_finish_replay()` 也改在窗口更新里调用，不再从渲染路径异步改状态。th07 樱点/符卡分、
+  th10 replay 重存、th12 分数和练习 replay 四项是一次性写入代码的补丁，面板里改为显示
+  「重启后生效」，避免让人以为当次运行立即生效。
+
+- **D3D9/D3D8 不再用呈现参数强行改窗口模式**（`ac6c61f`）
+
+  `modify_presentation_parameters()` 和 D3D8 的 `apply_window_override()` 原来会根据启动时的选择
+  再写一次 `D3DPRESENT_PARAMETERS::Windowed`。窗口已经按游戏自己的设置创建，只改呈现参数会让
+  后台缓冲和真实窗口不一致；在虚拟显示器或远程桌面上，D3D9 还可能要求一个适配器没有列出的
+  全屏模式，于是 `CreateDevice` 直接失败。需要启动时选择的 th06-th095 现在由
+  `WindowMode::OnD3DCreate()` 在游戏读完配置、创建窗口前改写游戏自己的 windowed 标志，呈现参数
+  不再二次改写窗口模式。
+
+  D3D9 还只在作品没有自带 Fast 输入方式时把 `PresentationInterval` 设为 immediate。th11 起的
+  Fast 输入已经不等垂直同步，再改 interval 会和它打架。`CreateDevice_hook` 保留一份游戏原参数，
+  依次尝试修改后参数、游戏原参数和窗口模式；`Reset_hook` 在重置前释放 ImGui 的字体纹理与缓冲，
+  D3D8 的 Reset 也做同样处理。D3D8 的额外呈现绕开 Present 钩子时重画上一帧的 ImGui 数据，
+  避免面板在补帧时闪烁。
+
+  `BltPrepareTime` 从 ini 读成无符号时，负值会先回绕；现在按有符号判断，负数回到 2ms，超过
+  16ms 才截到 16ms。
+
+### 已知问题
+
+`ac6c61f` 只是这个分支的开发留底，仍有大量 BUG，不能当作稳定版。仅从当前代码就能确认的包括：
+
+- 按键页能捕获 `F1`、方向键等键，但 `ParseHotkey()` 只把末尾的 A-Z/0-9 当作主键；捕获这些键会
+  退回默认的 `O`，显示与实际热键不一致。
+- `DiagKey` 目前只被显示和写回 ini，D3D8/D3D9 的诊断热键仍然写死为 `U`。
+- 面板只写全局 ini，游戏目录里的 ini 会覆盖它；局部配置用户会看到改动在重启后消失。
+- 字体路径写死为 `C:\Windows\Fonts\msyh.ttc` 和 `msgothic.ttc`，缺字体时回退内置字体，中日文
+  可能显示不全。
+- `Trace()` 会在游戏目录生成 `<游戏名>.imgui.log`，目前没有开关。
+
+`docs/KNOWN_ISSUES.md` 里记录的其它问题也没有全部解决，这份列表同样不是完整清单。
+
+## 2026-11-20
+
+### 修复
+
+- **D3D8 作品不再隔帧丢弃呈现，补帧只在 replay 快进时停止**（`4796aed`）
+
+  D3D8 的 Present 钩子原来在目标帧率高于刷新率时用 `ShouldPresent()` 丢掉部分呈现，并把 D3D8
+  补帧一起关掉。呈现间隔改成 immediate 后，Present 不再按显示器阻塞，这套隔帧只把输出压到逻辑
+  帧率以下：90 逻辑帧、`*2`、60Hz 实际只出 90 帧，隔帧生效后甚至只有 45 帧。
+
+  现在 `ShouldPresent()`、`present_every` 和 `PresentingEveryNthFrame()` 全部删除，
+  `Present_hook` 每个游戏帧都交给原始 Present，并增加 `present_calls` 计数。`InterpolationAllowed()`
+  只剩 `!replay_skipping`，只有 `UpdateTargetFPS()` 识别到 `FPSTarget::ReplaySkip` 时才关闭补帧，
+  避免额外呈现和快进抢同一个逻辑帧。
+
+  th07、th08、th095 的补帧门同步改为 `InterpolationAllowed()`；每次统计额外呈现和因截止时间
+  被丢弃的次数，`oilp_diag.txt` 会输出 asked、dropped 和 D3D8 present 调用数。th06 在同一提交
+  之后由 `be76e77` 补上。乘法、跟随刷新率和最大整数倍现在都不会再因为逻辑帧高于刷新率而停掉
+  补帧。
+
+- **th06 修改 GameFPS 后游戏速度不再停在 60**（`be76e77`）
+
+  th06 每帧的逻辑步长乘 `g_Supervisor.framerateMultiplier`（`0x6C6EC4`）。游戏的刷新率检测会把它
+  设成 `60 / 实测帧率`，全屏分支还会在一帧耗时处于 60fps 帧长的 0.6 到 0.865 倍之间时写成 0.8。
+  OilP 用 13.3ms 跑 75 帧时正好落进这个区间，75 帧各走 0.8，实际仍是 60 的速度。菜单里留下的
+  0.857 或 0.8 也会让回到 60 后仍然偏慢，并让 `ReplayManager` 因低于 0.99 拒绝登记。
+
+  `th6_update_calc_chain_hook` 现在每帧把 `0x6C6EC4` 写回 `1.0`，与 vpatch 跳过
+  `0x420896` 的窗口/全屏判断后走 `framerateMultiplier = 1.0` 分支的作用一致，同时覆盖已经变慢
+  的 60fps 情况。th06 的补帧门也换成 `InterpolationAllowed()`，并和其它 D3D8 作品一样记录额外
+  呈现数、丢弃数和 Present 调用数。
+
+## 2026-11-19
+
+### 修复
+
+- **强制呈现帧率在其余 13 个 D3D9 作品放行**（`f435a3a`）
+
+  `90dd457` 只改了 th15。th10、11、12、12.5、13、14、14.3、16、17、18、18.5、19、20 的 present
+  钩子仍调用旧的 `!Limiter::PresentingEveryNthFrame()`，同样的 90 逻辑帧、`*240`、60Hz 仍会停在
+  90fps。这 13 处全部换成 `Limiter::InterpolationAllowed()`。
+
+  th06、07、08、095 当时没有改，因为它们的补帧还同时受 `Limiter::ShouldPresent()` 控制，和 D3D8
+  呈现钩子用的是同一道门；只改补帧判断会让额外呈现只剩三分之一。这一块留给 `4796aed` 一起处理。
+
+  实测 90 逻辑帧、`*240`、60Hz：th11、12.5、12（逻辑帧 105）、13、14.3、14、16、17、18.5、18
+  都在 240fps 的半个百分点内，th10 为 237.5，th19 为 230.6，th20 为 234.8。
+
 ## 2026-11-18
 
 ### 新增
@@ -81,6 +288,17 @@
   第三份及以后写出的数值与第一份一致。第一次保存不受影响，那时帧数还是 0。
 
   实机确认：同一局连存四份，帧数都正确、内容都能还原、右下角读数稳定。
+
+- **th15 的强制呈现帧率不再被显示刷新率拦掉**（`90dd457`）
+
+  补帧原先在 `PresentingEveryNthFrame()` 为真时整段跳过。这个判断按逻辑帧率是否高于显示器
+  刷新率计算，所以 60Hz、75 逻辑帧、`*240` 会被当成「逻辑帧高于刷新率」，把补帧全部停掉，
+  最后只剩 75fps。实际要求的 240 次呈现与逻辑帧率无关。
+
+  `Limiter::InterpolationAllowed()` 把这条规则改成：存在固定目标 `*N` 时，只有逻辑帧率达到 N
+  才让位，否则继续补帧。th15 的 present 钩子先改用这个判断。实测 60Hz、75 逻辑帧、`*240`
+  从 1.000 次/帧、75.3fps 提升到 3.14 次/帧、236fps；60 逻辑帧、`*240` 仍是 4.000 次/帧、
+  240fps。这个中间规则后来被 `4796aed` 整体替换，最终只在 replay 快进时禁止补帧。
 
 ## 2026-11-17
 
