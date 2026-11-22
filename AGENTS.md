@@ -102,12 +102,27 @@ When you are writing, please
   `& 'E:\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe' openinputlagpatch.sln /m /p:Configuration=Release /v:minimal /nologo`
 - 产物在 `build/`：`openinputlagpatch.dll`、`oilp_loader.exe`（以及 pdb / lib / exp）。
 - 改完代码要**部署到游戏目录**再让用户实测。
+- 不要由 AI 启动游戏；部署后让用户自己启动和测试。
 - 例如：th15 的目录：
   `E:\东方MotionSmoothing相关\原版游戏\[th15] 东方绀珠传 (汉化版+日文版)\`
   （游戏正在运行时复制会失败，需先让用户关掉游戏。）
 - 用户实测后按 `U` 会在游戏目录导出 `oilp_diag.txt`；先看这个文件再下结论，不要凭猜测下判断。
 - 游戏版本：th15 日文原版 v1.00b，SHA256
   `67A642357C8777089F468AAB9C7A0AE346EBDB62849D842A7B7B18D1E6910364`。
+
+## ImGui 文本编辑：Release / Developer
+
+- Release 不定义 `OILP_UI_TEXT_EDITOR`。`ui_text_editor.cpp` 不参与编译，编辑窗口、`Ctrl+Shift+E`、保存和重置代码不会进入 DLL。发布只使用 Release。
+- Developer 定义 `OILP_UI_TEXT_EDITOR`，产物在 `build\developer\openinputlagpatch.dll`，不要放进 `Release/` 或发布 zip。
+- Developer 构建：
+  `& 'E:\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe' openinputlagpatch.sln /m /p:Configuration=Developer /v:minimal /nologo`
+- Developer 里默认 `[Developer] TextEditor = 1`。要临时关闭，把它设为 0 后重启；Release 忽略这个键。
+- Developer 的文本覆盖保存在 `%APPDATA%\ShanghaiAlice\oilp_custom\ui_text.ini`，按 `[zh]`、`[en]`、`[ja]` 分节。
+- Release 不读取 `ui_text.ini`。发布前运行 `powershell -NoProfile -ExecutionPolicy Bypass -File tools\bake_ui_text.ps1`，把当前 ini 生成到 `openinputlagpatch\ui_text_baked.inc`，再构建 Release；文本会编译进 DLL。
+- thprac 启动时会用 `ImmAssociateContext(hwnd, 0)` 关掉 IME；编辑窗口打开时重新建立上下文，关闭时恢复原状。中文输入走 `WM_IME_COMPOSITION` 的 `GCS_RESULTSTR`。
+- 编辑器打开时 `editor_input.cpp` 会把 DirectInput 键盘状态清零，防止打字触发游戏按键；IME 提交后短暂屏蔽同一按键的 ANSI `WM_CHAR` 回显，避免多出标点或乱码。
+- 默认文案在 `imgui_overlay.cpp` 的 `kStrings`、`kOptionName`、`kOptionHelp` 和选项数组里。运行时编辑和文本文件只覆盖这些默认值，不改代码。
+- 发布前检查 Release DLL 不含 `UI text editor (Developer)`、`Ctrl+Shift+E`、`Saved to ui_text.ini` 等编辑器字符串，并实际启动一次确认没有编辑入口。
 
 ## 逆向工具
 

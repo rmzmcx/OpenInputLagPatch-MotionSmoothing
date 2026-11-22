@@ -15,6 +15,9 @@
 #include "sha256.h"
 #include "common.h"
 #include "window_mode.h"
+#ifdef OILP_UI_TEXT_EDITOR
+#include "editor_input.h"
+#endif
 
 // Allocates a console for debugging purposes
 void create_console() {
@@ -402,6 +405,9 @@ void patcher_main() {
     printf("Force 4:3 presentation: %s\n",
         Config::ForceRatio43 ? "enabled" : "disabled");
     WindowMode::Hook();
+#ifdef OILP_UI_TEXT_EDITOR
+    EditorInput::Install();
+#endif
     check_vpatch();
     install_patches();
 

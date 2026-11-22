@@ -27,6 +27,9 @@
     <ClCompile Include="dllmain.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="editor_input.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="patch_util.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -55,6 +58,12 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="tool_state.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ui_text.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ui_text_editor.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="config.cpp">
@@ -212,6 +221,9 @@
     <ClInclude Include="d3dx9_hook.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="editor_input.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="games\touhou12.h">
       <Filter>Header Files\games</Filter>
     </ClInclude>
@@ -257,6 +269,12 @@
     <ClInclude Include="tool_state.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="ui_text.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ui_text_editor.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="games\touhou185.h">
       <Filter>Header Files\games</Filter>
     </ClInclude>
@@ -269,6 +287,9 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="openinputlagpatch.def">
+      <Filter>Source Files</Filter>
+    </None>
+    <None Include="ui_text_baked.inc">
       <Filter>Source Files</Filter>
     </None>
   </ItemGroup>

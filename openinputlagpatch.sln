@@ -10,15 +10,20 @@ EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x86 = Debug|x86
+		Developer|x86 = Developer|x86
 		Release|x86 = Release|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{1D39340C-CD95-4D8F-A2BA-22A6C9583F9C}.Debug|x86.ActiveCfg = Debug|Win32
 		{1D39340C-CD95-4D8F-A2BA-22A6C9583F9C}.Debug|x86.Build.0 = Debug|Win32
+		{1D39340C-CD95-4D8F-A2BA-22A6C9583F9C}.Developer|x86.ActiveCfg = Developer|Win32
+		{1D39340C-CD95-4D8F-A2BA-22A6C9583F9C}.Developer|x86.Build.0 = Developer|Win32
 		{1D39340C-CD95-4D8F-A2BA-22A6C9583F9C}.Release|x86.ActiveCfg = Release|Win32
 		{1D39340C-CD95-4D8F-A2BA-22A6C9583F9C}.Release|x86.Build.0 = Release|Win32
 		{3FAE6602-FD22-4955-A562-373C8BEAC172}.Debug|x86.ActiveCfg = Debug|Win32
 		{3FAE6602-FD22-4955-A562-373C8BEAC172}.Debug|x86.Build.0 = Debug|Win32
+		{3FAE6602-FD22-4955-A562-373C8BEAC172}.Developer|x86.ActiveCfg = Release|Win32
+		{3FAE6602-FD22-4955-A562-373C8BEAC172}.Developer|x86.Build.0 = Release|Win32
 		{3FAE6602-FD22-4955-A562-373C8BEAC172}.Release|x86.ActiveCfg = Release|Win32
 		{3FAE6602-FD22-4955-A562-373C8BEAC172}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection

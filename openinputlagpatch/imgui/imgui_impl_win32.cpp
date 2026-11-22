@@ -23,6 +23,7 @@
 #include <string>
 #include <tchar.h>
 #include <windows.h>
+#include <imm.h>
 
 namespace OilpImgui {
 namespace Gui {
@@ -42,6 +43,7 @@ namespace Gui {
     static ImGuiMouseCursor g_LastMouseCursor = ImGuiMouseCursor_COUNT;
     static bool g_HasGamepad = false;
     static bool g_WantUpdateHasGamepad = true;
+    static DWORD g_LastImeCommit;
     struct WndKeyStatus {
         unsigned int hold = 0;
         int frame = 0;
@@ -49,6 +51,16 @@ namespace Gui {
     } g_wndKeyStatus[256] = {};
     unsigned int g_wndKeyFrameStatus[256] = {};
     bool g_isFullscreenCache = false;
+
+    static bool ImeIsOpen(HWND hwnd)
+    {
+        HIMC context = ImmGetContext(hwnd);
+        if (context == nullptr)
+            return false;
+        const bool open = ImmGetOpenStatus(context) != FALSE;
+        ImmReleaseContext(hwnd, context);
+        return open;
+    }
 
     // Key
     void ImplWin32UpdKeyStatus(UINT msg, WPARAM wParam, LPARAM lParam)
@@ -353,9 +365,49 @@ namespace Gui {
             if (wParam < 256)
                 io.KeysDown[wParam] = 0;
             return 0;
+        case WM_IME_COMPOSITION: {
+            isDoubleByte = false;
+            if (lParam & GCS_RESULTSTR) {
+                HIMC context = ImmGetContext(hwnd);
+                if (context != nullptr) {
+                    const LONG bytes = ImmGetCompositionStringW(context, GCS_RESULTSTR, nullptr, 0);
+                    if (bytes > 0) {
+                        std::wstring text((size_t)bytes / sizeof(wchar_t), L'\0');
+                        if (ImmGetCompositionStringW(context, GCS_RESULTSTR, &text[0], bytes) == bytes) {
+                            for (size_t i = 0; i < text.size(); ++i) {
+                                unsigned int codepoint = text[i];
+                                if (codepoint >= 0xD800 && codepoint <= 0xDBFF && i + 1 < text.size()) {
+                                    const unsigned int low = text[i + 1];
+                                    if (low >= 0xDC00 && low <= 0xDFFF) {
+                                        codepoint = 0x10000 + ((codepoint - 0xD800) << 10) + (low - 0xDC00);
+                                        ++i;
+                                    }
+                                }
+                                io.AddInputCharacter(codepoint);
+                            }
+                            g_LastImeCommit = GetTickCount();
+                        }
+                    }
+                    ImmReleaseContext(hwnd, context);
+                }
+            }
+            return 0;
+        }
         // ZUN use ANSI charset in all his games so WM_UNICHAR isn't a option.
         // Simple workaround here: user both WM_CHAR and WM_IME_CHAR.
         case WM_CHAR:
+            // The IME result already came through WM_IME_COMPOSITION. The ANSI WM_CHAR
+            // that follows it carries the same bytes again and produces punctuation or
+            // broken glyphs when read through CP_OEMCP.
+            if (io.WantTextInput && g_LastImeCommit != 0 &&
+                GetTickCount() - g_LastImeCommit < 50) {
+                isDoubleByte = false;
+                return 0;
+            }
+            if (io.WantTextInput && ImeIsOpen(hwnd)) {
+                isDoubleByte = false;
+                return 0;
+            }
             // You can also use ToAscii()+GetKeyboardState() to retrieve characters.
             if (isDoubleByte) {
                 isDoubleByte = false;
@@ -531,7 +583,7 @@ namespace Gui {
         io.BackendFlags |= ImGuiBackendFlags_HasMouseCursors; // We can honor GetMouseCursor() values (optional)
         io.BackendFlags |= ImGuiBackendFlags_HasSetMousePos; // We can honor io.WantSetMousePos requests (optional, rarely used)
         io.BackendPlatformName = "OilpImgui_gui_impl_win32";
-        //io.ImeWindowHandle = hwnd;
+        io.ImeWindowHandle = hwnd;
 
         // Keyboard mapping. ImGui will use those indices to peek into the io.KeysDown[] array that we will update during the application lifetime.
         /*

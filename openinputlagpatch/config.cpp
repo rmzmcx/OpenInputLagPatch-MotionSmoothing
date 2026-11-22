@@ -22,6 +22,11 @@ BOOL Config::ShowPatchAppliedMessage = TRUE;
 char Config::OverlayKey[64] = "Ctrl+Shift+O";
 char Config::DiagKey[64] = "U";
 int Config::Language = 0;
+#ifdef OILP_UI_TEXT_EDITOR
+BOOL Config::DeveloperTextEditor = TRUE;
+#else
+BOOL Config::DeveloperTextEditor = FALSE;
+#endif
 BOOL Config::DebugConsole = FALSE;
 BOOL Config::DebugWait = FALSE;
 BOOL Config::FixTH07CherryBonusDisplay = TRUE;
@@ -294,6 +299,8 @@ static void load_config_file(const wchar_t* config_path) {
 		TEXT("Imgui"), TEXT("ShowPatchAppliedMessage"), (int)Config::ShowPatchAppliedMessage, config_path);
 	Config::Language = (int)GetPrivateProfileInt(
 		TEXT("Imgui"), TEXT("Language"), Config::Language, config_path);
+	Config::DeveloperTextEditor = (BOOL)GetPrivateProfileInt(
+		TEXT("Developer"), TEXT("TextEditor"), (int)Config::DeveloperTextEditor, config_path);
 	{
 		wchar_t value[64] = {};
 		GetPrivateProfileStringW(TEXT("Imgui"), TEXT("OverlayKey"), L"", value, 64, config_path);
@@ -406,6 +413,8 @@ bool Config::Load() {
 		Config::ShowOverlay = 0;
 	else if (Config::ShowOverlay > 3)
 		Config::ShowOverlay = 3;
+	if (Config::Language < 0 || Config::Language > 2)
+		Config::Language = 0;
 
 	return true;
 }

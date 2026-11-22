@@ -50,6 +50,9 @@ public:
 	static char OverlayKey[64];
 	static char DiagKey[64];
 	static int Language;
+	// Developer-only overlay text editor. Release builds compile the editor out; this key lets a
+	// Developer build turn it off without rebuilding.
+	static BOOL DeveloperTextEditor;
 	static BOOL DebugConsole;
 	static BOOL DebugWait;
 	static BOOL FixTH07CherryBonusDisplay;

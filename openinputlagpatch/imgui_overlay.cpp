@@ -4,9 +4,8 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include <fstream>
 #include <string>
-#include <vector>
-#include <algorithm>
 #include "config.h"
 #include "limiter.h"
 #include "overlay.h"
@@ -16,6 +15,10 @@
 #include "imgui/imgui_impl_win32.h"
 #include "imgui/imgui_freetype.h"
 #include "imgui_overlay.h"
+#include "ui_text.h"
+#ifdef OILP_UI_TEXT_EDITOR
+#include "ui_text_editor.h"
+#endif
 
 namespace OilpImgui {
 	static bool installed = false;
@@ -77,23 +80,18 @@ namespace OilpImgui {
 		},
 	};
 
-	static const Strings& S() {
-		int language = Config::Language;
-		if (language < 0 || language > 2)
-			language = 0;
-		return kStrings[language];
+	static const char* T(const char* id) {
+		const char* text = UiText::Get(id);
+		return text != nullptr ? text : id;
 	}
 
-	// 0 = English, 1 = Simplified Chinese, 2 = Japanese, the order the tables store their text in.
-	static int LanguageIndex() {
-		switch (Config::Language) {
-		case 0:
-			return 1;
-		case 2:
-			return 2;
-		default:
-			return 0;
-		}
+	static Strings S() {
+		return {
+			T("tab.keys"), T("tab.info"), T("tab.config"),
+			T("keys.overlay"), T("keys.diag"), T("keys.language"), T("keys.restart"),
+			T("hint.startup"), T("keys.capture_hint"), T("label.free_adjust"),
+			T("info.logic"), T("info.present"), T("info.shown"),
+		};
 	}
 
 	// The name each ini key is shown under. The key itself stays the label the code passes around,
@@ -150,20 +148,10 @@ namespace OilpImgui {
 	};
 
 	static const char* OptionDisplayName(const char* key) {
-		const int language = LanguageIndex();
-		for (const OptionName& name : kOptionName) {
-			if (strcmp(name.key, key) == 0) {
-				switch (language) {
-				case 1:
-					return name.zh;
-				case 2:
-					return name.ja;
-				default:
-					return name.en;
-				}
-			}
-		}
-		return key;
+		char id[192] = {};
+		sprintf_s(id, "option.%s.name", key);
+		const char* text = UiText::Get(id);
+		return text != nullptr ? text : key;
 	}
 
 	// The description behind the (?) marker, also per language. Keys that are left out simply have
@@ -217,17 +205,9 @@ namespace OilpImgui {
 	};
 
 	static const char* OptionDescription(const char* key) {
-		for (const OptionHelp& help : kOptionHelp) {
-			if (strcmp(help.key, key) == 0) {
-				const int language = LanguageIndex();
-				if (language == 1)
-					return help.zh;
-				if (language == 2)
-					return help.ja;
-				return help.en;
-			}
-		}
-		return nullptr;
+		char id[192] = {};
+		sprintf_s(id, "option.%s.help", key);
+		return UiText::Get(id);
 	}
 
 	// The labels of the radio buttons, in the same three languages
@@ -259,8 +239,65 @@ namespace OilpImgui {
 		{ "On top while active", "活动时置顶", "アクティブ時のみ最前面" },
 	};
 
+	static void RegisterChoices(const char* group, const char* const (*choices)[3], int count) {
+		for (int i = 0; i < count; ++i) {
+			char id[160] = {};
+			sprintf_s(id, "choice.%s.%d", group, i);
+			UiText::Register(id, choices[i][1], choices[i][0], choices[i][2]);
+		}
+	}
+
+	static void RegisterTexts() {
+		static bool registered = false;
+		if (registered)
+			return;
+		registered = true;
+
+		UiText::Register("tab.keys", kStrings[0].keys, kStrings[1].keys, kStrings[2].keys);
+		UiText::Register("tab.info", kStrings[0].info, kStrings[1].info, kStrings[2].info);
+		UiText::Register("tab.config", kStrings[0].config, kStrings[1].config, kStrings[2].config);
+		UiText::Register("keys.overlay", kStrings[0].overlay_key, kStrings[1].overlay_key, kStrings[2].overlay_key);
+		UiText::Register("keys.diag", kStrings[0].diag_key, kStrings[1].diag_key, kStrings[2].diag_key);
+		UiText::Register("keys.language", kStrings[0].language, kStrings[1].language, kStrings[2].language);
+		UiText::Register("keys.restart", kStrings[0].restart, kStrings[1].restart, kStrings[2].restart);
+		UiText::Register("hint.startup", kStrings[0].hint, kStrings[1].hint, kStrings[2].hint);
+		UiText::Register("keys.capture_hint", kStrings[0].capture_hint, kStrings[1].capture_hint, kStrings[2].capture_hint);
+		UiText::Register("label.free_adjust", kStrings[0].free_adjust, kStrings[1].free_adjust, kStrings[2].free_adjust);
+		UiText::Register("info.logic", kStrings[0].info_logic, kStrings[1].info_logic, kStrings[2].info_logic);
+		UiText::Register("info.present", kStrings[0].info_present, kStrings[1].info_present, kStrings[2].info_present);
+		UiText::Register("info.shown", kStrings[0].info_shown, kStrings[1].info_shown, kStrings[2].info_shown);
+		UiText::Register("button.apply", "应用", "Apply", "適用");
+
+		for (const OptionName& name : kOptionName) {
+			char id[192] = {};
+			sprintf_s(id, "option.%s.name", name.key);
+			UiText::Register(id, name.zh, name.en, name.ja);
+		}
+		for (const OptionHelp& help : kOptionHelp) {
+			char id[192] = {};
+			sprintf_s(id, "option.%s.help", help.key);
+			UiText::Register(id, help.zh, help.en, help.ja, true);
+		}
+
+		RegisterChoices("Interpolation", kInterpolationForms, 5);
+		RegisterChoices("Sleep", kSleepChoices, 2);
+		RegisterChoices("FullscreenRefreshRate", kRefreshChoices, 3);
+		RegisterChoices("ShowOverlay", kOverlayChoices, 4);
+		RegisterChoices("CoverTaskbar", kTaskbarChoices, 3);
+	}
+
+	static void AppendLanguageLabels(ImVector<ImWchar>& range) {
+		static const ImWchar labels[] = {
+			0x7B80, 0x7B80, 0x4F53, 0x4F53, 0x4E2D, 0x4E2D, 0x6587, 0x6587,
+			0x65E5, 0x65E5, 0x672C, 0x672C, 0x8A9E, 0x8A9E,
+			0x7C21, 0x7C21, 0x5B57, 0x5B57, 0x56FD, 0x56FD, 0
+		};
+		for (const ImWchar* p = labels; *p; p++)
+			range.push_back(*p);
+	}
+
 	// Every character the panels can draw, so the atlas holds them all. The common Chinese set
-	// covers most of it; the rest comes from the tables above and the labels.
+	// covers most of it; the editable text and the labels add the rest.
 	static ImVector<ImWchar> chinese_range;
 	static const ImWchar* ChineseRange() {
 		ImFontAtlas* atlas = ImGui::GetIO().Fonts;
@@ -268,66 +305,8 @@ namespace OilpImgui {
 		const ImWchar* common = atlas->GetGlyphRangesChineseSimplifiedCommon();
 		for (const ImWchar* p = common; *p; p++)
 			chinese_range.push_back(*p);
-
-		std::vector<const char*> texts;
-		texts.push_back(kStrings[0].keys);
-		texts.push_back(kStrings[0].info);
-		texts.push_back(kStrings[0].config);
-		texts.push_back(kStrings[0].overlay_key);
-		texts.push_back(kStrings[0].diag_key);
-		texts.push_back(kStrings[0].language);
-		texts.push_back(kStrings[0].restart);
-		texts.push_back(kStrings[0].hint);
-		texts.push_back(kStrings[0].capture_hint);
-		texts.push_back(kStrings[0].info_logic);
-		texts.push_back(kStrings[0].info_present);
-		texts.push_back(kStrings[0].info_shown);
-		for (const OptionName& name : kOptionName)
-			texts.push_back(name.zh);
-		for (const OptionHelp& help : kOptionHelp)
-			texts.push_back(help.zh);
-		for (int i = 0; i < 5; ++i)
-			texts.push_back(kInterpolationForms[i][1]);
-		for (int i = 0; i < 2; ++i)
-			texts.push_back(kSleepChoices[i][1]);
-		for (int i = 0; i < 3; ++i)
-			texts.push_back(kRefreshChoices[i][1]);
-		for (int i = 0; i < 4; ++i)
-			texts.push_back(kOverlayChoices[i][1]);
-		for (int i = 0; i < 3; ++i)
-			texts.push_back(kTaskbarChoices[i][1]);
-		// The language names are drawn from the radio buttons
-		texts.push_back("简体中文");
-		texts.push_back("日本語");
-
-		std::vector<unsigned int> extra;
-		for (const char* text : texts) {
-			const unsigned char* p = (const unsigned char*)text;
-			while (*p) {
-				unsigned int codepoint = 0;
-				if (*p < 0x80) {
-					++p;
-					continue;
-				} else if ((*p & 0xE0) == 0xC0) {
-					codepoint = ((*p & 0x1Fu) << 6) | (p[1] & 0x3Fu);
-					p += 2;
-				} else if ((*p & 0xF0) == 0xE0) {
-					codepoint = ((*p & 0x0Fu) << 12) | ((p[1] & 0x3Fu) << 6) | (p[2] & 0x3Fu);
-					p += 3;
-				} else {
-					++p;
-					continue;
-				}
-				if (codepoint >= 0x7F && codepoint <= 0xFFFF)
-					extra.push_back(codepoint);
-			}
-		}
-		std::sort(extra.begin(), extra.end());
-		extra.erase(std::unique(extra.begin(), extra.end()), extra.end());
-		for (unsigned int codepoint : extra) {
-			chinese_range.push_back((ImWchar)codepoint);
-			chinese_range.push_back((ImWchar)codepoint);
-		}
+		UiText::AppendGlyphs(chinese_range, 0);
+		AppendLanguageLabels(chinese_range);
 		chinese_range.push_back(0);
 		return chinese_range.Data;
 	}
@@ -341,12 +320,8 @@ namespace OilpImgui {
 		const ImWchar* latin = atlas->GetGlyphRangesDefault();
 		for (const ImWchar* p = latin; *p; p++)
 			english_range.push_back(*p);
-		const ImWchar extra[] = {
-			0x7B80, 0x7B80, 0x4F53, 0x4F53, 0x4E2D, 0x4E2D, 0x6587, 0x6587,
-			0x65E5, 0x65E5, 0x672C, 0x672C, 0x8A9E, 0x8A9E, 0
-		};
-		for (const ImWchar* p = extra; *p; p++)
-			english_range.push_back(*p);
+		UiText::AppendGlyphs(english_range, 1);
+		AppendLanguageLabels(english_range);
 		english_range.push_back(0);
 		return english_range.Data;
 	}
@@ -359,9 +334,8 @@ namespace OilpImgui {
 		const ImWchar* japanese = atlas->GetGlyphRangesJapanese();
 		for (const ImWchar* p = japanese; *p; p++)
 			japanese_range.push_back(*p);
-		const ImWchar extra[] = { 0x7B80, 0x7B80, 0x4F53, 0x4F53, 0x4E2D, 0x4E2D, 0x6587, 0x6587, 0 };
-		for (const ImWchar* p = extra; *p; p++)
-			japanese_range.push_back(*p);
+		UiText::AppendGlyphs(japanese_range, 2);
+		AppendLanguageLabels(japanese_range);
 		japanese_range.push_back(0);
 		return japanese_range.Data;
 	}
@@ -453,44 +427,139 @@ namespace OilpImgui {
 	}
 
 	bool WantsMouse() {
+	#ifdef OILP_UI_TEXT_EDITOR
+		return open || UiTextEditor::IsOpen();
+	#else
 		return open;
+	#endif
 	}
 
 	void Toggle() {
 		open = !open;
 	}
 
-	// Writes one value back to the global ini, so a change made here survives the restart.
-	static void SaveSetting(const wchar_t* section, const wchar_t* key, int value) {
+	static bool GlobalIniPath(wchar_t* path) {
 		wchar_t appdata[MAX_PATH] = {};
 		if (FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appdata)))
-			return;
+			return false;
 		wchar_t directory[MAX_PATH] = {};
 		wcscpy_s(directory, appdata);
-		PathAppendW(directory, L"ShanghaiAlice\\oilp_custom");
+		PathAppendW(directory, L"ShanghaiAlice");
 		CreateDirectoryW(directory, nullptr);
-		wchar_t path[MAX_PATH] = {};
-		wcscpy_s(path, directory);
+		PathAppendW(directory, L"oilp_custom");
+		CreateDirectoryW(directory, nullptr);
+		wcscpy_s(path, MAX_PATH, directory);
 		PathAppendW(path, L"openinputlagpatch.ini");
+		return true;
+	}
+
+	template <typename Char>
+	static std::basic_string<Char> TrimIniText(const std::basic_string<Char>& text) {
+		size_t begin = 0;
+		while (begin < text.size() && (text[begin] == Char(' ') || text[begin] == Char('\t')))
+			++begin;
+		size_t end = text.size();
+		while (end > begin && (text[end - 1] == Char(' ') || text[end - 1] == Char('\t')))
+			--end;
+		return text.substr(begin, end - begin);
+	}
+
+	template <typename Char>
+	static bool NormalizeIniLine(std::basic_string<Char>& line, const std::basic_string<Char>& key) {
+		bool carriage_return = !line.empty() && line.back() == Char('\r');
+		if (carriage_return)
+			line.pop_back();
+		const size_t equals = line.find(Char('='));
+		if (equals == std::basic_string<Char>::npos)
+			return false;
+		if (TrimIniText(line.substr(0, equals)) != key)
+			return false;
+
+		std::basic_string<Char> normalized = key;
+		normalized.push_back(Char(' '));
+		normalized.push_back(Char('='));
+		normalized.push_back(Char(' '));
+		normalized += TrimIniText(line.substr(equals + 1));
+		if (carriage_return)
+			normalized.push_back(Char('\r'));
+		line.swap(normalized);
+		return true;
+	}
+
+	template <typename Char>
+	static bool NormalizeIniText(std::basic_string<Char>& text, const std::basic_string<Char>& key) {
+		std::basic_string<Char> normalized;
+		normalized.reserve(text.size() + 8);
+		bool changed = false;
+		size_t start = 0;
+		while (start <= text.size()) {
+			size_t end = text.find(Char('\n'), start);
+			if (end == std::basic_string<Char>::npos)
+				end = text.size();
+			std::basic_string<Char> line = text.substr(start, end - start);
+			if (NormalizeIniLine(line, key))
+				changed = true;
+			normalized += line;
+			if (end < text.size())
+				normalized.push_back(Char('\n'));
+			else
+				break;
+			start = end + 1;
+		}
+		if (changed)
+			text.swap(normalized);
+		return changed;
+	}
+
+	// WritePrivateProfileString writes "key=value" and keeps existing whitespace unpredictably.
+	// Rebuild the line as "key = value" so every overlay write has the same shape.
+	static void AddIniSpacing(const wchar_t* path, const wchar_t* key) {
+		std::ifstream input(path, std::ios::binary);
+		if (!input)
+			return;
+		std::string data((std::istreambuf_iterator<char>(input)),
+			std::istreambuf_iterator<char>());
+		input.close();
+		if (data.size() >= 2 && (unsigned char)data[0] == 0xFF && (unsigned char)data[1] == 0xFE) {
+			const size_t count = (data.size() - 2) / sizeof(wchar_t);
+			std::wstring text(count, L'\0');
+			if (count != 0)
+				memcpy(&text[0], data.data() + 2, count * sizeof(wchar_t));
+			if (!NormalizeIniText(text, std::wstring(key)))
+				return;
+			std::ofstream output(path, std::ios::binary | std::ios::trunc);
+			output.write("\xFF\xFE", 2);
+			output.write((const char*)text.data(), (std::streamsize)(text.size() * sizeof(wchar_t)));
+			return;
+		}
+
+		char key_ansi[128] = {};
+		WideCharToMultiByte(CP_ACP, 0, key, -1, key_ansi, sizeof(key_ansi), nullptr, nullptr);
+		if (!NormalizeIniText(data, std::string(key_ansi)))
+			return;
+		std::ofstream output(path, std::ios::binary | std::ios::trunc);
+		output.write(data.data(), (std::streamsize)data.size());
+	}
+
+	static void WriteIniValue(const wchar_t* section, const wchar_t* key, const wchar_t* value) {
+		wchar_t path[MAX_PATH] = {};
+		if (!GlobalIniPath(path))
+			return;
+		WritePrivateProfileStringW(section, key, value, path);
+		AddIniSpacing(path, key);
+	}
+
+	// Writes one value back to the global ini, so a change made here survives the restart.
+	static void SaveSetting(const wchar_t* section, const wchar_t* key, int value) {
 		wchar_t text[32] = {};
 		swprintf_s(text, L"%d", value);
-		WritePrivateProfileStringW(section, key, text, path);
+		WriteIniValue(section, key, text);
 	}
 
 	static void SaveString(const wchar_t* section, const wchar_t* key, const char* value) {
 		wchar_t wide[128] = {};
 		MultiByteToWideChar(CP_UTF8, 0, value, -1, wide, 128);
-		wchar_t appdata[MAX_PATH] = {};
-		if (FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appdata)))
-			return;
-		wchar_t directory[MAX_PATH] = {};
-		wcscpy_s(directory, appdata);
-		PathAppendW(directory, L"ShanghaiAlice\\oilp_custom");
-		CreateDirectoryW(directory, nullptr);
-		wchar_t path[MAX_PATH] = {};
-		wcscpy_s(path, directory);
-		PathAppendW(path, L"openinputlagpatch.ini");
-		WritePrivateProfileStringW(section, key, wide, path);
+		WriteIniValue(section, key, wide);
 	}
 
 	// "Ctrl+Shift+O" -> the modifiers and the key it ends with
@@ -554,12 +623,13 @@ namespace OilpImgui {
 	}
 
 	static void OptionInt(const char* label, int* value, const wchar_t* section,
-		const wchar_t* key, int step, int step_fast, bool restart, int maximum = 0x7FFFFFFF) {
+		const wchar_t* key, int step, int step_fast, bool restart,
+		int maximum = 0x7FFFFFFF, int minimum = 0) {
 		// These keys are unsigned counts or indexes stored through an int pointer, so the value is
 		// held inside its range both before it is drawn and before it goes back to the ini.
-		auto clamp = [maximum](int* v) {
-			if (*v < 0)
-				*v = 0;
+		auto clamp = [maximum, minimum](int* v) {
+			if (*v < minimum)
+				*v = minimum;
 			else if (*v > maximum)
 				*v = maximum;
 		};
@@ -581,17 +651,68 @@ namespace OilpImgui {
 	// rate in the slider text, plus a free-drag mode for an exact value.
 	static bool free_game_fps = false;
 	static bool free_skip_fps = false;
+	static bool rate_drafts_ready = false;
+	static bool rate_drafts_dirty = false;
+	static int draft_game_fps;
+	static int draft_skip_fps;
+	static int draft_slow_fps;
 
-	static void FrameRateSetting(const char* label, int* value, const wchar_t* section, const wchar_t* key,
+	static void SyncRateDrafts() {
+		if (rate_drafts_dirty)
+			return;
+		draft_game_fps = Config::GameFPS;
+		draft_skip_fps = Config::ReplaySkipFPS;
+		draft_slow_fps = Config::ReplaySlowFPS;
+		rate_drafts_ready = true;
+	}
+
+	static void ApplyRateDrafts() {
+		if (!rate_drafts_ready)
+			return;
+		if (draft_game_fps < 60)
+			draft_game_fps = 60;
+		if (draft_game_fps > 6000)
+			draft_game_fps = 6000;
+		if (draft_skip_fps < 60)
+			draft_skip_fps = 60;
+		if (draft_skip_fps > 6000)
+			draft_skip_fps = 6000;
+		if (draft_slow_fps < 1)
+			draft_slow_fps = 1;
+		if (draft_slow_fps > 60)
+			draft_slow_fps = 60;
+
+		Config::GameFPS = draft_game_fps;
+		Config::ReplaySkipFPS = draft_skip_fps;
+		Config::ReplaySlowFPS = draft_slow_fps;
+		SaveSetting(L"Option", L"GameFPS", Config::GameFPS);
+		SaveSetting(L"Option", L"ReplaySkipFPS", Config::ReplaySkipFPS);
+		SaveSetting(L"Option", L"ReplaySlowFPS", Config::ReplaySlowFPS);
+		rate_drafts_dirty = false;
+	}
+
+	static float RateLabelWidth() {
+		const ImGuiStyle& style = ImGui::GetStyle();
+		const float game = ImGui::CalcTextSize(OptionDisplayName("GameFPS")).x;
+		const float skip = ImGui::CalcTextSize(OptionDisplayName("ReplaySkipFPS")).x;
+		const float slow = ImGui::CalcTextSize(OptionDisplayName("ReplaySlowFPS")).x;
+		const float widest = game > skip ? (game > slow ? game : slow) : (skip > slow ? skip : slow);
+		return widest + style.ItemSpacing.x;
+	}
+
+	static void FrameRateSetting(const char* label, int* value,
 		int step, int step_count, int max_free, bool infinite_last, bool* free_mode) {
+		ImGui::TableNextRow();
+		ImGui::TableNextColumn();
+		ImGui::AlignTextToFramePadding();
 		ImGui::TextUnformatted(OptionDisplayName(label));
-		ImGui::SameLine();
+		ImGui::TableNextColumn();
 		ImGui::SetNextItemWidth(300.0f);
 		char id[192] = {};
 		sprintf_s(id, "##%s", label);
 		if (*free_mode) {
 			if (ImGui::DragInt(id, value, 1.0f, 60, max_free))
-				SaveSetting(section, key, *value);
+				rate_drafts_dirty = true;
 			if (!ImGui::IsItemActive()) {
 				if (*value < 60)
 					*value = 60;
@@ -611,7 +732,7 @@ namespace OilpImgui {
 				sprintf_s(text, "x%.2f (%dfps)", (60.0f + index * step) / 60.0f, 60 + index * step);
 			if (ImGui::SliderInt(id, &index, 0, step_count, text)) {
 				*value = 60 + index * step;
-				SaveSetting(section, key, *value);
+				rate_drafts_dirty = true;
 			}
 		}
 		ImGui::SameLine();
@@ -624,14 +745,17 @@ namespace OilpImgui {
 	}
 
 	// The replay slow rate is its own range, shown with the ratio against normal speed
-	static void SlowRateSetting() {
+	static void SlowRateSetting(int* value) {
+		ImGui::TableNextRow();
+		ImGui::TableNextColumn();
+		ImGui::AlignTextToFramePadding();
 		ImGui::TextUnformatted(OptionDisplayName("ReplaySlowFPS"));
-		ImGui::SameLine();
-		ImGui::SetNextItemWidth(340.0f);
+		ImGui::TableNextColumn();
+		ImGui::SetNextItemWidth(300.0f);
 		char text[64] = {};
-		sprintf_s(text, "x%.2f (%dfps)", Config::ReplaySlowFPS / 60.0f, Config::ReplaySlowFPS);
-		if (ImGui::SliderInt("##ReplaySlowFPS", &Config::ReplaySlowFPS, 1, 60, text))
-			SaveSetting(L"Option", L"ReplaySlowFPS", Config::ReplaySlowFPS);
+		sprintf_s(text, "x%.2f (%dfps)", *value / 60.0f, *value);
+		if (ImGui::SliderInt("##ReplaySlowFPS", value, 1, 60, text))
+			rate_drafts_dirty = true;
 		HelpMarker("ReplaySlowFPS");
 	}
 
@@ -639,12 +763,17 @@ namespace OilpImgui {
 		const char* const (*choices)[3], int count) {
 		ImGui::TextUnformatted(OptionDisplayName(label));
 		bool changed = false;
-		const int language = LanguageIndex();
+		const int column = Config::Language == 0 ? 1 : Config::Language == 1 ? 0 : 2;
 		for (int i = 0; i < count; ++i) {
 			if (i != 0)
 				ImGui::SameLine();
+			char choice_id[160] = {};
+			sprintf_s(choice_id, "choice.%s.%d", label, i);
+			const char* text = UiText::Get(choice_id);
+			if (text == nullptr)
+				text = choices[i][column];
 			char id[192] = {};
-			sprintf_s(id, "%s##%s%d", choices[i][language], label, i);
+			sprintf_s(id, "%s##%s%d", text, label, i);
 			if (ImGui::RadioButton(id, *value == i)) {
 				*value = i;
 				SaveSetting(section, key, i);
@@ -732,36 +861,69 @@ namespace OilpImgui {
 	}
 
 	static void DrawKeysTab() {
-		ImGui::TextUnformatted(S().overlay_key);
-		ImGui::SameLine();
-		if (ImGui::Button(Config::OverlayKey, ImVec2(240.0f, 0.0f)))
-			capturing = capturing == 1 ? 0 : 1;
-		ImGui::SameLine();
-		ImGui::TextDisabled("(?)");
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Ctrl+Shift+O");
-		if (capturing == 1) {
-			ImGui::SameLine();
-			ImGui::TextDisabled("%s", S().capture_hint);
-		}
+		const ImGuiStyle& style = ImGui::GetStyle();
+		const float overlay_label = ImGui::CalcTextSize(S().overlay_key).x;
+		const float diag_label = ImGui::CalcTextSize(S().diag_key).x;
+		const float label_width = (overlay_label > diag_label ? overlay_label : diag_label) +
+			style.ItemSpacing.x;
 
-		ImGui::TextUnformatted(S().diag_key);
-		ImGui::SameLine();
-		if (ImGui::Button(Config::DiagKey, ImVec2(240.0f, 0.0f)))
-			capturing = capturing == 2 ? 0 : 2;
-		if (capturing == 2) {
+		if (ImGui::BeginTable("##key_fields", 2, ImGuiTableFlags_SizingFixedFit)) {
+			ImGui::TableSetupColumn("##key_labels", ImGuiTableColumnFlags_WidthFixed, label_width);
+			ImGui::TableSetupColumn("##key_values", ImGuiTableColumnFlags_WidthStretch);
+
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted(S().overlay_key);
+			ImGui::TableNextColumn();
+			ImGui::PushID("overlay_key");
+			if (ImGui::Button(Config::OverlayKey, ImVec2(240.0f, 0.0f)))
+				capturing = capturing == 1 ? 0 : 1;
+			ImGui::PopID();
 			ImGui::SameLine();
-			ImGui::TextDisabled("%s", S().capture_hint);
+			ImGui::TextDisabled("(?)");
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("Ctrl+Shift+O");
+			if (capturing == 1) {
+				ImGui::SameLine();
+				ImGui::TextDisabled("%s", S().capture_hint);
+			}
+
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted(S().diag_key);
+			ImGui::TableNextColumn();
+			ImGui::PushID("diag_key");
+			if (ImGui::Button(Config::DiagKey, ImVec2(240.0f, 0.0f)))
+				capturing = capturing == 2 ? 0 : 2;
+			ImGui::PopID();
+			if (capturing == 2) {
+				ImGui::SameLine();
+				ImGui::TextDisabled("%s", S().capture_hint);
+			}
+			ImGui::EndTable();
 		}
 
 		ImGui::Separator();
 		ImGui::TextUnformatted(S().language);
 		int language = Config::Language;
-		if (ImGui::RadioButton("简体中文", language == 0)) { SetLanguage(0); SaveSetting(L"Imgui", L"Language", 0); }
+		if (ImGui::RadioButton(UiText::LanguageLabel(0), language == 0)) { SetLanguage(0); SaveSetting(L"Imgui", L"Language", 0); }
 		ImGui::SameLine();
-		if (ImGui::RadioButton("English", language == 1)) { SetLanguage(1); SaveSetting(L"Imgui", L"Language", 1); }
+		if (ImGui::RadioButton(UiText::LanguageLabel(1), language == 1)) { SetLanguage(1); SaveSetting(L"Imgui", L"Language", 1); }
 		ImGui::SameLine();
-		if (ImGui::RadioButton("日本語", language == 2)) { SetLanguage(2); SaveSetting(L"Imgui", L"Language", 2); }
+		if (ImGui::RadioButton(UiText::LanguageLabel(2), language == 2)) { SetLanguage(2); SaveSetting(L"Imgui", L"Language", 2); }
+
+#ifdef OILP_UI_TEXT_EDITOR
+		if (UiTextEditor::Enabled()) {
+			ImGui::Separator();
+			ImGui::TextDisabled("Developer");
+			if (ImGui::Button("Text editor"))
+				UiTextEditor::Toggle();
+			ImGui::SameLine();
+			ImGui::TextDisabled("Ctrl+Shift+E");
+		}
+#endif
 	}
 
 	static void DrawInfoTab() {
@@ -778,6 +940,7 @@ namespace OilpImgui {
 		OptionBool("ShowPatchAppliedMessage", &Config::ShowPatchAppliedMessage, L"Imgui", L"ShowPatchAppliedMessage", false);
 
 		ImGui::TextDisabled("[Rendering]");
+		OptionBool("FixBulletPixelSnapping", &Config::FixBulletPixelSnapping, L"Rendering", L"FixBulletPixelSnapping", false);
 		{
 			int form = 3;
 			if (Config::InterpolationFPS > 0)
@@ -790,12 +953,17 @@ namespace OilpImgui {
 				form = 2;
 
 			ImGui::TextUnformatted(OptionDisplayName("Interpolation"));
-			const int language = LanguageIndex();
+			const int column = Config::Language == 0 ? 1 : Config::Language == 1 ? 0 : 2;
 			for (int i = 0; i < 5; ++i) {
 				if (i != 0)
 					ImGui::SameLine();
+				char choice_id[160] = {};
+				sprintf_s(choice_id, "choice.Interpolation.%d", i);
+				const char* text = UiText::Get(choice_id);
+				if (text == nullptr)
+					text = kInterpolationForms[i][column];
 				char id[160] = {};
-				sprintf_s(id, "%s##interpolation%d", kInterpolationForms[i][language], i);
+				sprintf_s(id, "%s##interpolation%d", text, i);
 				if (ImGui::RadioButton(id, form == i)) {
 					form = i;
 					switch (i) {
@@ -853,16 +1021,34 @@ namespace OilpImgui {
 				}
 			}
 		}
-		OptionBool("FixBulletPixelSnapping", &Config::FixBulletPixelSnapping, L"Rendering", L"FixBulletPixelSnapping", false);
 		OptionBool("PlayerBody", &Config::InterpolatePlayerBody, L"Rendering", L"PlayerBody", false);
 		OptionBool("PlayerShots", &Config::InterpolatePlayerShots, L"Rendering", L"PlayerShots", false);
 		OptionBool("BulletsAndLasers", &Config::InterpolateBulletsAndLasers, L"Rendering", L"BulletsAndLasers", false);
 
 		ImGui::TextDisabled("[Option]");
-		FrameRateSetting("GameFPS", &Config::GameFPS, L"Option", L"GameFPS", 15, 8, 6000, false, &free_game_fps);
+		SyncRateDrafts();
+		const float rate_label_width = RateLabelWidth();
+		if (ImGui::BeginTable("##game_rate", 2, ImGuiTableFlags_SizingFixedFit)) {
+			ImGui::TableSetupColumn("##game_rate_labels", ImGuiTableColumnFlags_WidthFixed, rate_label_width);
+			ImGui::TableSetupColumn("##game_rate_values", ImGuiTableColumnFlags_WidthStretch);
+			FrameRateSetting("GameFPS", &draft_game_fps, 15, 8, 6000, false, &free_game_fps);
+			ImGui::EndTable();
+		}
 		OptionBool("ReplaySpeedControl", &Config::ReplaySpeedControl, L"Option", L"ReplaySpeedControl", false);
-		FrameRateSetting("ReplaySkipFPS", &Config::ReplaySkipFPS, L"Option", L"ReplaySkipFPS", 60, 20, 6000, true, &free_skip_fps);
-		SlowRateSetting();
+		if (ImGui::BeginTable("##replay_rates", 2, ImGuiTableFlags_SizingFixedFit)) {
+			ImGui::TableSetupColumn("##replay_rate_labels", ImGuiTableColumnFlags_WidthFixed, rate_label_width);
+			ImGui::TableSetupColumn("##replay_rate_values", ImGuiTableColumnFlags_WidthStretch);
+			FrameRateSetting("ReplaySkipFPS", &draft_skip_fps, 60, 20, 6000, true, &free_skip_fps);
+			SlowRateSetting(&draft_slow_fps);
+			if (rate_drafts_dirty) {
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn();
+				ImGui::TableNextColumn();
+				if (ImGui::Button(T("button.apply")))
+					ApplyRateDrafts();
+			}
+			ImGui::EndTable();
+		}
 		OptionInt("BltPrepareTime", (int*)&Config::BltPrepareTime, L"Option", L"BltPrepareTime", 1, 10, false, 16);
 		{
 			int sleep = (int)Config::Sleep;
@@ -890,7 +1076,8 @@ namespace OilpImgui {
 		OptionBool("FixInputGlitching", &Config::FixInputGlitching, L"Option", L"FixInputGlitching", false);
 		OptionBool("CalcFPS", &Config::CalcFPS, L"Option", L"CalcFPS", false);
 		OptionBool("AlwaysBlt", &Config::AlwaysBlt, L"Option", L"AlwaysBlt", false);
-		OptionInt("GameOverride", (int*)&Config::GameOverride, L"Option", L"GameOverride", 1, 1, true);
+		OptionInt("GameOverride", (int*)&Config::GameOverride, L"Option", L"GameOverride", 1, 1, true,
+			0x7FFFFFFF, -1);
 
 		ImGui::TextDisabled("[Window]");
 		OptionBool("AskWindowMode", &Config::AskWindowMode, L"Window", L"AskWindowMode", true);
@@ -939,6 +1126,13 @@ namespace OilpImgui {
 			return false;
 		installed = true;
 
+		RegisterTexts();
+#ifdef OILP_UI_TEXT_EDITOR
+		UiText::Load();
+		UiTextEditor::SetWindow(hwnd);
+#else
+		UiText::ApplyBaked();
+#endif
 		IMGUI_CHECKVERSION();
 		ImGui::CreateContext();
 		ImGuiIO& io = ImGui::GetIO();
@@ -974,7 +1168,6 @@ namespace OilpImgui {
 			&& (GetAsyncKeyState(key.vk) & 0x8000) != 0;
 		if (down && !hotkey_down) {
 			open = !open;
-			SetMouseFree(open);
 		}
 		hotkey_down = down;
 	}
@@ -1002,7 +1195,19 @@ namespace OilpImgui {
 		ApplyPendingLanguage();
 		PollCapture();
 		PollHotkey();
-		SetMouseFree(open);
+#ifdef OILP_UI_TEXT_EDITOR
+		UiTextEditor::PollHotkey();
+		const bool editor_open = UiTextEditor::IsOpen();
+#else
+		const bool editor_open = false;
+#endif
+		static unsigned int font_revision = UiText::FontRevision();
+		if (font_revision != UiText::FontRevision()) {
+			font_revision = UiText::FontRevision();
+			pending_language = Config::Language;
+		}
+		const bool menu_active = open || editor_open;
+		SetMouseFree(menu_active);
 		if (!base_style_saved) {
 			base_style = ImGui::GetStyle();
 			base_style_saved = true;
@@ -1014,7 +1219,7 @@ namespace OilpImgui {
 		// software cursor entirely on a 480p screen
 		style.MouseCursorScale = scale;
 		ImGui::GetStyle() = style;
-		Gui::ImplWin32NewFrame(open);
+		Gui::ImplWin32NewFrame(menu_active);
 		ImGui::NewFrame();
 	}
 
@@ -1071,6 +1276,9 @@ namespace OilpImgui {
 			ImGui::End();
 		}
 
+#ifdef OILP_UI_TEXT_EDITOR
+		UiTextEditor::Draw();
+#endif
 		ImGui::Render();
 	}
 }
